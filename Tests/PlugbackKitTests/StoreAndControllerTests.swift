@@ -65,8 +65,11 @@ final class PlugbackControllerTests: XCTestCase {
         super.tearDown()
     }
 
+    private lazy var testDefaults = UserDefaults(suiteName: "plugback-tests-\(UUID().uuidString)")!
+
     private func makeController() -> PlugbackController {
-        PlugbackController(gateway: gateway, screenProvider: screens, store: ProfileStore(directory: dir))
+        PlugbackController(gateway: gateway, screenProvider: screens,
+                           store: ProfileStore(directory: dir), defaults: testDefaults)
     }
 
     func testCaptureThenRestoreRoundTrip() {
@@ -195,6 +198,80 @@ final class PlugbackControllerTests: XCTestCase {
 
         XCTAssertTrue(controller.identityMismatch)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testAutoModeRestoresWhenScreenAppears() {
+        // 외장 화면이 연결되면 자동으로 복원된다 (US-001, F-01.1)
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        controller.externalScreensAppeared(["ext-1"])
+        XCTAssertEqual(controller.lastResult?.movedCount, 1)
+    }
+
+    func testManualModeDoesNotRestoreOnConnect() {
+        // 수동 모드에서는 연결돼도 복원되지 않는다 (US-007 AC-4)
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+        controller.restoreMode = .manual
+
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        controller.externalScreensAppeared(["ext-1"])
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testUnauthorizedBlocksAutoRestore() {
+        // 권한이 없으면 복원을 시도하지 않는다 (US-010 AC-2)
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+        controller.isAuthorized = { false }
+
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        controller.externalScreensAppeared(["ext-1"])
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testRestoreModePersists() {
+        // 복원 모드 설정은 재시작을 넘어 보존된다 (F-05.4)
+        let first = makeController()
+        first.restoreMode = .manual
+        let second = makeController()
+        XCTAssertEqual(second.restoreMode, .manual)
+    }
+
+    func testRemoveProfileDeletesAndPersists() {
+        // 프로필 통째 삭제 — 되살아나지 않고, 재연결 시 프로필 없는 화면 (US-012 AC-2·3)
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+        XCTAssertEqual(controller.allProfiles.count, 1)
+
+        controller.removeProfile("ext-1")
+        XCTAssertTrue(controller.allProfiles.isEmpty)
+        XCTAssertNil(controller.profile)
+
+        let relaunched = makeController()
+        relaunched.refresh()
+        XCTAssertNil(relaunched.profile)
     }
 
     func testCaptureSetsConfirmationAndRefreshClearsIt() {

@@ -2,6 +2,11 @@ import Combine
 import CoreGraphics
 import Foundation
 
+/// 복원 모드 (F-05.4). 저장은 항상 수동이므로 설정이 없다.
+public enum RestoreMode: String, Sendable {
+    case automatic, manual
+}
+
 /// 헤드리스 파사드 — UI 없이 완결된다. UI는 이 상태의 표현일 뿐이다 (docs/ARCHITECTURE.md).
 @MainActor
 public final class PlugbackController: ObservableObject {
@@ -21,6 +26,14 @@ public final class PlugbackController: ObservableObject {
     /// 프로필 파일이 손상돼 백업 후 초기화된 경우 그 위치 (F-04.2 알림용)
     @Published public private(set) var corruptionBackupURL: URL?
 
+    /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
+    @Published public var restoreMode: RestoreMode {
+        didSet { defaults.set(restoreMode.rawValue, forKey: "restoreMode") }
+    }
+
+    /// 권한 게이트 — 권한이 없으면 자동 복원을 시도조차 하지 않는다 (US-010 AC-2). 앱이 주입한다.
+    public var isAuthorized: () -> Bool = { true }
+
     @Published private var profiles: [String: Profile]
     @Published private var resultsByScreen: [String: RestoreResult] = [:]
 
@@ -32,12 +45,17 @@ public final class PlugbackController: ObservableObject {
     private let gateway: WindowGateway
     private let screenProvider: ScreenProvider
     private let store: ProfileStore
+    private let defaults: UserDefaults
     private var externalScreens: [ScreenInfo] = []
+    private var watcher: DisplayWatcher?
 
-    public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore) {
+    public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore,
+                defaults: UserDefaults = .standard) {
         self.gateway = gateway
         self.screenProvider = screenProvider
         self.store = store
+        self.defaults = defaults
+        restoreMode = defaults.string(forKey: "restoreMode").flatMap(RestoreMode.init) ?? .automatic
         let outcome = store.load()
         profiles = outcome.profiles
         corruptionBackupURL = outcome.corruptionBackupURL
@@ -47,6 +65,26 @@ public final class PlugbackController: ObservableObject {
             currentScreen = ScreenInfo(id: stored.screenID, name: stored.screenName,
                                        frame: .zero, isBuiltin: false)
         }
+    }
+
+    /// 화면 연결 감시 시작 (M4). 새 외장 화면이 나타나면 자동 모드일 때 복원한다 (F-01.1).
+    public func startWatching(debounceInterval: TimeInterval = 1.5) {
+        guard watcher == nil else { return }
+        let w = DisplayWatcher(provider: screenProvider, debounceInterval: debounceInterval) { [weak self] ids in
+            self?.externalScreensAppeared(ids)
+        }
+        w.start()
+        watcher = w
+    }
+
+    // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
+    func externalScreensAppeared(_ ids: [String]) {
+        refresh()
+        guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
+        guard isAuthorized() else { return }            // 권한 없이 기능을 시도하지 않는다 (US-010 AC-2)
+        // 새 화면에 프로필이 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
+        // 이미 제자리인 창은 건너뛰므로 기존 화면까지 포함해 복원해도 창이 흔들리지 않는다 (F-02.2).
+        restoreNow()
     }
 
     /// 카드가 열릴 때 호출 — 화면·실행 상태를 동기화한다.
@@ -108,6 +146,17 @@ public final class PlugbackController: ObservableObject {
     /// 명시적 삭제 — 프로필에서 완전히 제거한다 (US-006 AC-4).
     public func removeApp(_ bundleID: String) {
         mutateProfile { p in p.apps.removeAll { $0.bundleID == bundleID } }
+    }
+
+    /// 저장된 모든 프로필 — 연결되지 않은 화면 포함 (F-05.6, US-012 AC-1).
+    public var allProfiles: [Profile] {
+        profiles.values.sorted { $0.screenName < $1.screenName }
+    }
+
+    /// 프로필 통째 삭제 (F-05.6). 그 화면을 다시 연결하면 프로필 없는 화면이다 (US-012 AC-3).
+    public func removeProfile(_ screenID: String) {
+        profiles.removeValue(forKey: screenID)
+        persist()
     }
 
     public func isAppRunning(_ bundleID: String) -> Bool { gateway.isRunning(bundleID: bundleID) }

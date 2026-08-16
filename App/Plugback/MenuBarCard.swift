@@ -148,10 +148,12 @@ private struct Card: View {
     private var footer: some View {
         zone {
             HStack(spacing: 12) {
-                // ponytail: 자동 복원은 M4(DisplayWatcher)에서 활성화
-                Toggle("자동 복원", isOn: .constant(false))
-                    .toggleStyle(.switch).controlSize(.mini).disabled(true)
+                Toggle("자동 복원", isOn: Binding(
+                    get: { controller.restoreMode == .automatic },
+                    set: { controller.restoreMode = $0 ? .automatic : .manual }))
+                    .toggleStyle(.switch).controlSize(.mini)
                 Spacer()
+                SettingsButton()
                 Button("종료") { NSApp.terminate(nil) }.font(.system(size: 12))
             }
         }
@@ -197,6 +199,34 @@ private struct AppRow: View {
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
         }
+    }
+}
+
+// 설정 창 열기 — macOS 13은 셀렉터 경로, 14+는 공식 환경 액션.
+private struct SettingsButton: View {
+    var body: some View {
+        if #available(macOS 14.0, *) {
+            ModernSettingsButton()
+        } else {
+            Button("설정") {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+            .font(.system(size: 12))
+        }
+    }
+}
+
+@available(macOS 14.0, *)
+private struct ModernSettingsButton: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button("설정") {
+            NSApp.activate(ignoringOtherApps: true)
+            openSettings()
+        }
+        .font(.system(size: 12))
     }
 }
 
