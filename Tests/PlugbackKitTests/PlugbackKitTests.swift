@@ -230,11 +230,22 @@ final class RestoreEngineTests: XCTestCase {
         XCTAssertEqual(result.screenID, external.id)
     }
 
-    func testRunningAppWithNoWindowOnThisScreenIsSkipped() {
+    func testWindowOnBuiltinIsPulledBackToExternal() {
+        // 기본 원칙: 저장된 앱의 창은 어디 있든 데려온다 — 연결 해제로 내장에 내려온 창 포함
+        // (요구사항 다, US-001 핵심 시나리오)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [window(1, "com.chrome", x: 100, y: 100, w: 800, h: 600)] // 내장에만 있음
         let result = RestoreEngine.restore(profile: profileWith(("com.chrome", leftHalf)), on: external, using: gateway)
-        XCTAssertEqual(result.entries[0].outcome, .skipped(.noWindowOnScreen))
+        XCTAssertEqual(result.entries[0].outcome, .moved)
+        XCTAssertEqual(gateway.moveCalls[0].target, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
+    }
+
+    func testRunningAppWithNoWindowsIsSkipped() {
+        // 실행 중인데 표준 창이 하나도 없으면 건너뛴다
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = []
+        let result = RestoreEngine.restore(profile: profileWith(("com.chrome", leftHalf)), on: external, using: gateway)
+        XCTAssertEqual(result.entries[0].outcome, .skipped(.noWindow))
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 }

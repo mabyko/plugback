@@ -113,7 +113,8 @@ public enum SkipReason: Equatable, Sendable {
     case fullscreen
     case minimized
     case alreadyInPlace
-    case noWindowOnScreen
+    /// 앱은 실행 중인데 표준 창이 하나도 없다.
+    case noWindow
 }
 
 /// 복원 결과 (F-05.1: 이동 n · 건너뜀 n · 실패 n + 사유).

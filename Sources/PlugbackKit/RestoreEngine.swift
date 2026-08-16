@@ -24,10 +24,15 @@ public enum RestoreEngine {
     ) -> RestoreResult.Outcome {
         guard gateway.isRunning(bundleID: app.bundleID) else { return .skipped(.appNotRunning) }
 
-        // 이 외장 화면에 중심점이 있는 창만 대상이다 — 내장 화면의 창은 건드리지 않는다 (F-02.5)
-        let candidates = gateway.standardWindows(of: [app.bundleID])
-            .filter { screen.contains($0) }
-        guard !candidates.isEmpty else { return .skipped(.noWindowOnScreen) }
+        let all = gateway.standardWindows(of: [app.bundleID])
+        guard !all.isEmpty else { return .skipped(.noWindow) }
+
+        // 창 선택 (F-02.1의 4, 요구사항 다): 대상 화면의 창이 있으면 그중에서 —
+        // 없으면 첫 표준 창을 어디서든 데려온다. 케이블을 뽑으면 macOS가 창을 내장으로
+        // 옮겨두므로, 데려오지 못하면 핵심 시나리오가 성립하지 않는다.
+        // 옮기는 건 앱당 이 한 창뿐 — 내장 화면의 나머지 창은 건드리지 않는다.
+        let onScreen = all.filter { screen.contains($0) }
+        let candidates = onScreen.isEmpty ? all : onScreen
 
         // 이동 가능한 첫 창. 전부 이동 불가면 사유는 창 순서와 무관하게 전체화면 우선 —
         // 창 순서는 불안정하다 (FUNCTIONAL_SPEC 부록 3)

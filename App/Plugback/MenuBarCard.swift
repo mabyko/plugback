@@ -167,7 +167,7 @@ private struct Card: View {
         case .skipped(.fullscreen): return "전체화면이라 건너뜀"
         case .skipped(.minimized): return "최소화되어 건너뜀"
         case .skipped(.alreadyInPlace): return "이미 제자리"
-        case .skipped(.noWindowOnScreen): return "이 화면에 창이 없어 건너뜀"
+        case .skipped(.noWindow): return "창이 없어 건너뜀"
         }
     }
 
