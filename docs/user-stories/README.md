@@ -22,6 +22,7 @@ Plugback의 사용자 관점 시나리오 카드.
 | [US-009](./US-009-sleep-and-clamshell.md) | 덮개를 여닫아도 창이 튀지 않는다 | P0 |
 | [US-010](./US-010-permission-onboarding.md) | 처음 켰을 때 무엇을 해야 하는지 안다 | P1 |
 | [US-011](./US-011-launch-at-login.md) | 켜두면 알아서 돌아간다 | P2 |
+| [US-012](./US-012-manage-saved-profiles.md) | 저장된 프로필을 한눈에 관리한다 | P2 |
 
 ## 카드 형식
 
