@@ -1,2 +1,5 @@
 .DS_Store
 .serena/
+.build/
+xcuserdata/
+DerivedData/
