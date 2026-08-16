@@ -1,0 +1,244 @@
+<!-- PROTOTYPE — throwaway UI mockup for Plugback dropdown card. Not production code. -->
+<title>Plugback 드롭다운 목업</title>
+<style>
+  :root{
+    --bg:#d9dde4; --desk1:#c9d2de; --desk2:#aebccd;
+    --bar-bg:rgba(250,250,252,.82); --bar-text:#1d1d1f;
+    --card:#f4f4f6; --card-border:rgba(0,0,0,.14); --card-shadow:0 18px 44px rgba(20,30,50,.28);
+    --text:#1d1d1f; --text2:#71717a; --hair:rgba(0,0,0,.09);
+    --row-hover:rgba(0,0,0,.045);
+    --accent:#f5a200; --accent-text:#8a5d00; --accent-soft:rgba(245,162,0,.16);
+    --ok-dot:#f5a200; --off-dot:#b6b6bc; --fail:#c93a30;
+    --btn:#fff; --btn-border:rgba(0,0,0,.16); --btn-disabled:#9a9aa0;
+    --pill:#1d1d1f; --pill-text:#f5f5f7;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#191b1f; --desk1:#23272e; --desk2:#161a21;
+      --bar-bg:rgba(38,38,42,.86); --bar-text:#f5f5f7;
+      --card:#2b2b2f; --card-border:rgba(255,255,255,.13); --card-shadow:0 18px 44px rgba(0,0,0,.55);
+      --text:#f5f5f7; --text2:#98989d; --hair:rgba(255,255,255,.1);
+      --row-hover:rgba(255,255,255,.06);
+      --accent:#f5a200; --accent-text:#ffc14d; --accent-soft:rgba(245,162,0,.2);
+      --ok-dot:#f5a200; --off-dot:#5b5b60; --fail:#ff6b5e;
+      --btn:#3a3a3f; --btn-border:rgba(255,255,255,.16); --btn-disabled:#6c6c72;
+      --pill:#f5f5f7; --pill-text:#1d1d1f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#191b1f; --desk1:#23272e; --desk2:#161a21;
+    --bar-bg:rgba(38,38,42,.86); --bar-text:#f5f5f7;
+    --card:#2b2b2f; --card-border:rgba(255,255,255,.13); --card-shadow:0 18px 44px rgba(0,0,0,.55);
+    --text:#f5f5f7; --text2:#98989d; --hair:rgba(255,255,255,.1);
+    --row-hover:rgba(255,255,255,.06);
+    --accent:#f5a200; --accent-text:#ffc14d; --accent-soft:rgba(245,162,0,.2);
+    --ok-dot:#f5a200; --off-dot:#5b5b60; --fail:#ff6b5e;
+    --btn:#3a3a3f; --btn-border:rgba(255,255,255,.16); --btn-disabled:#6c6c72;
+    --pill:#f5f5f7; --pill-text:#1d1d1f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo",sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center;
+  }
+  .stage{
+    width:min(680px,94vw); margin:40px 0 120px; border-radius:14px; overflow:hidden;
+    background:linear-gradient(160deg,var(--desk1),var(--desk2));
+    border:1px solid var(--hair); position:relative; min-height:560px;
+  }
+  .menubar{
+    display:flex; justify-content:flex-end; align-items:center; gap:16px;
+    padding:5px 14px; background:var(--bar-bg); color:var(--bar-text);
+    font-size:12.5px; backdrop-filter:blur(10px);
+  }
+  .menubar .glyph{
+    display:flex; align-items:center; padding:2px 6px; border-radius:5px;
+    background:var(--accent-soft);
+  }
+  .menubar .glyph svg{display:block}
+  .menubar .dim{opacity:.75}
+  .card-anchor{display:flex; justify-content:flex-end; padding:6px 10px 0 0}
+  .card{
+    width:296px; background:var(--card); border:1px solid var(--card-border);
+    border-radius:12px; box-shadow:var(--card-shadow);
+    font-size:13px; overflow:hidden;
+  }
+  .zone{padding:10px 14px}
+  .zone + .zone{border-top:1px solid var(--hair)}
+  .hdr{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+  .hdr .name{font-weight:600; font-size:13px}
+  .hdr .sub{font-size:11px; color:var(--text2)}
+  .hdr .sub.on{color:var(--accent-text); font-weight:500}
+  .result{font-size:12px; color:var(--text2); display:flex; flex-direction:column; gap:4px}
+  .result .line{color:var(--text); font-variant-numeric:tabular-nums}
+  .result .line b{font-weight:600}
+  .result .why{display:flex; gap:6px; align-items:baseline}
+  .result .why .mark{color:var(--accent-text)}
+  .result .fail-mark{color:var(--fail)}
+  .rows{display:flex; flex-direction:column}
+  .row{display:flex; align-items:center; gap:9px; padding:6px 14px; margin:0 -14px}
+  .row:hover{background:var(--row-hover)}
+  .cb{
+    width:15px; height:15px; border-radius:4px; flex:none;
+    border:1.5px solid var(--btn-border); display:grid; place-items:center;
+    font-size:11px; color:#fff; line-height:1;
+  }
+  .cb.on{background:var(--accent); border-color:var(--accent)}
+  .row .app{flex:1; min-width:0}
+  .row .app .note{font-size:11px; color:var(--text2)}
+  .dot{width:7px; height:7px; border-radius:50%; flex:none}
+  .dot.on{background:var(--ok-dot)}
+  .dot.off{background:var(--off-dot)}
+  .run{font-size:11px; color:var(--text2); flex:none}
+  .actions{display:flex; gap:8px}
+  .btn{
+    flex:1; text-align:center; padding:6px 0; border-radius:7px; font-size:12.5px; font-weight:500;
+    background:var(--btn); border:1px solid var(--btn-border); color:var(--text); cursor:default;
+  }
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#231a00}
+  .btn.disabled{color:var(--btn-disabled); opacity:.65}
+  .foot{display:flex; align-items:center; gap:12px; font-size:12px; color:var(--text2)}
+  .foot .grow{flex:1}
+  .switch{width:26px; height:15px; border-radius:8px; background:var(--off-dot); position:relative; flex:none}
+  .switch.on{background:var(--accent)}
+  .switch::after{
+    content:""; position:absolute; top:1.5px; left:2px; width:12px; height:12px;
+    border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+  .switch.on::after{left:auto; right:2px}
+  .empty{padding:18px 16px; text-align:center; display:flex; flex-direction:column; gap:8px; align-items:center}
+  .empty .t{font-weight:600}
+  .empty .d{font-size:12px; color:var(--text2); line-height:1.5}
+  .empty svg{opacity:.8}
+  .caption{
+    position:absolute; left:14px; bottom:12px; font-size:11px; color:var(--bar-text);
+    opacity:.55; letter-spacing:.04em; text-transform:uppercase;
+  }
+  .ctl{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:var(--pill); color:var(--pill-text); border-radius:999px;
+    display:flex; align-items:center; gap:4px; padding:6px 10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.35); font-size:12.5px; white-space:nowrap;
+  }
+  .ctl button{
+    background:none; border:0; color:inherit; font:inherit; cursor:pointer;
+    padding:4px 9px; border-radius:999px; opacity:.75;
+  }
+  .ctl button:hover{opacity:1}
+  .ctl button.cur{background:var(--accent); color:#231a00; opacity:1; font-weight:600}
+  .ctl .sep{opacity:.3; padding:0 2px}
+  .ctl .lbl{font-weight:600; padding:0 4px; min-width:150px; text-align:center}
+  .ctl button:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+</style>
+
+<div class="stage">
+  <div class="menubar">
+    <span class="glyph" id="glyph"></span>
+    <span class="dim">🔋 84%</span><span class="dim">📶</span><span class="dim">8월 15일 (금) 19:42</span>
+  </div>
+  <div class="card-anchor"><div class="card" id="card"></div></div>
+  <div class="caption">Prototype · <span id="cap"></span></div>
+</div>
+
+<div class="ctl">
+  <button id="prev" aria-label="이전 변형">←</button>
+  <span class="lbl" id="lbl"></span>
+  <button id="next" aria-label="다음 변형">→</button>
+  <span class="sep">|</span>
+  <button data-s="restored">복원 직후</button>
+  <button data-s="noprofile">프로필 없음</button>
+  <button data-s="noscreen">화면 없음</button>
+  <button data-s="noperm">권한 없음</button>
+</div>
+
+<script>
+const GLYPH = w => `<svg width="${w}" height="${w*0.72}" viewBox="0 0 22 16" fill="none">
+  <rect x="1" y="1" width="20" height="14" rx="2.5" stroke="currentColor" stroke-width="1.6"/>
+  <rect x="12" y="5" width="6" height="6" rx="1" fill="currentColor"/></svg>`;
+document.getElementById('glyph').innerHTML = GLYPH(16);
+
+const zHeader = (name, sub, on) =>
+  `<div class="zone hdr"><span class="name">${name}</span><span class="sub ${on?'on':''}">${sub}</span></div>`;
+
+const zResult = `
+  <div class="zone result">
+    <div class="line">방금 자동 복원 · <b>이동 2</b> · 건너뜀 1 · 실패 0</div>
+    <div class="why"><span class="mark">⚠</span><span>Chrome — 전체화면이라 건너뜀</span></div>
+  </div>`;
+
+const zRows = `
+  <div class="zone rows">
+    <div class="row"><span class="cb on">✓</span>
+      <span class="app">Chrome<div class="note">전체화면이라 건너뜀</div></span>
+      <span class="dot on"></span><span class="run">실행 중</span></div>
+    <div class="row"><span class="cb on">✓</span><span class="app">VSCode</span>
+      <span class="dot on"></span><span class="run">실행 중</span></div>
+    <div class="row"><span class="cb on">✓</span><span class="app">Slack</span>
+      <span class="dot off"></span><span class="run">꺼짐</span></div>
+  </div>`;
+
+const zActions = (saveOn, restoreOn) => `
+  <div class="zone actions">
+    <span class="btn ${saveOn?'':'disabled'}">💾 지금 저장</span>
+    <span class="btn ${restoreOn?'primary':'disabled'}">⚡ 지금 복원</span>
+  </div>`;
+
+const zFoot = `
+  <div class="zone foot">
+    <span>자동 복원</span><span class="switch on"></span>
+    <span class="grow"></span><span>설정 ⚙</span><span>종료</span>
+  </div>`;
+
+const empty = (icon, t, d, btn) => `
+  <div class="empty">${icon}<div class="t">${t}</div><div class="d">${d}</div>
+  ${btn ? `<span class="btn primary" style="flex:none;padding:6px 14px">${btn}</span>` : ''}</div>`;
+
+// 변형 A: 목록 → 액션 (조사 표본의 공통 IA) / 변형 B: 액션 → 목록 (원안)
+function render(variant, state){
+  if (state === 'noperm') return zHeader('Plugback','권한 필요') + empty(GLYPH(34),
+    '손쉬운 사용 권한이 필요합니다',
+    '창을 읽고 옮기려면 이 권한 하나만 필요합니다.<br>화면 기록 권한은 요구하지 않습니다.',
+    '시스템 설정 열기') + zFoot;
+  if (state === 'noscreen') return zHeader('외장 화면 없음','') + empty(GLYPH(34),
+    '연결된 외장 화면이 없습니다',
+    '마지막 화면: LG UltraFine 27 · 대상 앱 3개<br>연결하면 자동으로 복원됩니다.') +
+    zActions(false,false) + zFoot;
+  if (state === 'noprofile') return zHeader('DELL U2723QE','프로필 없음') + empty(GLYPH(34),
+    '이 화면의 프로필이 없습니다',
+    '창을 원하는 자리에 배치한 뒤<br><b>지금 저장</b>을 누르면 여기에 대상 앱이 나타납니다.') +
+    zActions(true,false) + zFoot;
+  const mid = variant === 'A' ? zRows + zActions(true,true) : zActions(true,true) + zRows;
+  return zHeader('LG UltraFine 27','● 프로필 적용됨', true) + zResult + mid + zFoot;
+}
+
+const VARIANTS = {A:'A — 목록 위 · 액션 아래', B:'B — 액션 위 · 목록 아래'};
+const STATES = {restored:'복원 직후', noprofile:'프로필 없음', noscreen:'화면 없음', noperm:'권한 없음'};
+let variant = new URLSearchParams(location.search).get('variant') || 'A';
+if (!VARIANTS[variant]) variant = 'A';
+let state = 'restored';
+
+function update(){
+  document.getElementById('card').innerHTML = render(variant, state);
+  document.getElementById('lbl').textContent = VARIANTS[variant];
+  document.getElementById('cap').textContent = `변형 ${variant} · ${STATES[state]}`;
+  document.querySelectorAll('.ctl [data-s]').forEach(b =>
+    b.classList.toggle('cur', b.dataset.s === state));
+  const u = new URL(location); u.searchParams.set('variant', variant);
+  history.replaceState(null,'',u);
+}
+function cycle(d){
+  const keys = Object.keys(VARIANTS);
+  variant = keys[(keys.indexOf(variant)+d+keys.length)%keys.length];
+  update();
+}
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+document.querySelectorAll('.ctl [data-s]').forEach(b => b.onclick = () => { state = b.dataset.s; update(); });
+addEventListener('keydown', e => {
+  if (/input|textarea/i.test(e.target.tagName) || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+update();
+</script>
