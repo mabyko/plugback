@@ -3,3 +3,4 @@
 .build/
 xcuserdata/
 DerivedData/
+App/Config/Local.xcconfig

@@ -12,6 +12,7 @@
 
 /* Begin PBXFileReference section */
 		449761CF30319F7700AA4358 /* Plugback.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Plugback.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7B1DBAC00000000000000004 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -38,6 +39,7 @@
 			isa = PBXGroup;
 			children = (
 				449761D130319F7700AA4358 /* Plugback */,
+				7B1DBAC00000000000000004 /* Base.xcconfig */,
 				449761D030319F7700AA4358 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -268,6 +270,7 @@
 		};
 		449761DB30319F7800AA4358 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -284,7 +287,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mabyko.Plugback;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLUGBACK_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -298,6 +301,7 @@
 		};
 		449761DC30319F7800AA4358 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -314,7 +318,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mabyko.Plugback;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLUGBACK_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
