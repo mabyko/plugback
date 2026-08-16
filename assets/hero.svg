@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 340" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Plugback</title>
+  <desc id="desc">Unplugged: windows pile up crooked on the MacBook screen while the external display sits empty. Plug back in: Plugback returns them to their saved places on the external display; the MacBook's own window never moves.</desc>
+
+  <!-- 팔레트: 중간 회색 #8E8E93 (라이트/다크 공용), 앰버 #F5A200 (브랜딩 악센트 1색) -->
+
+  <!-- ══ 왼쪽: 분리 상태 — 창들이 맥북으로 내려와 뒤엉킴 ══ -->
+  <!-- 외장 화면 (분리됨, 비어 있음) -->
+  <rect x="70" y="36" width="240" height="146" rx="10" stroke="#8E8E93" stroke-width="3" stroke-dasharray="7 7" opacity="0.5"/>
+  <rect x="176" y="186" width="28" height="8" rx="2" fill="#8E8E93" opacity="0.35"/>
+  <!-- 맥북 -->
+  <rect x="95" y="218" width="190" height="88" rx="6" stroke="#8E8E93" stroke-width="3"/>
+  <path d="M75 310 h230 l-14 12 h-202 z" fill="#8E8E93" opacity="0.35"/>
+  <!-- 맥북의 원래 창 (계속 이 자리) -->
+  <rect x="128" y="268" width="84" height="30" rx="4" fill="#8E8E93" opacity="0.28"/>
+  <!-- 내려온 창들 (뒤엉킴) -->
+  <rect x="112" y="234" width="66" height="42" rx="4" fill="#F5A200" opacity="0.92" transform="rotate(-7 145 255)"/>
+  <rect x="170" y="246" width="58" height="36" rx="4" fill="#8E8E93" opacity="0.55" transform="rotate(5 199 264)"/>
+  <rect x="218" y="232" width="52" height="32" rx="4" fill="#8E8E93" opacity="0.42" transform="rotate(-4 244 248)"/>
+
+  <!-- ══ 가운데: 꽂기 → ══ -->
+  <path d="M424 118 l-13 22 h10 l-6 20 16 -24 h-10 z" fill="#F5A200"/>
+  <g stroke="#8E8E93" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M372 172 H478"/>
+    <path d="M460 154 L482 172 L460 190"/>
+  </g>
+
+  <!-- ══ 오른쪽: 연결 상태 — 저장된 자리로 복원, 맥북 창은 그대로 ══ -->
+  <!-- 외장 화면 (연결됨) -->
+  <rect x="560" y="36" width="240" height="146" rx="10" stroke="#8E8E93" stroke-width="3"/>
+  <rect x="666" y="186" width="28" height="8" rx="2" fill="#8E8E93" opacity="0.6"/>
+  <!-- 제자리로 돌아온 창들 -->
+  <rect x="572" y="48" width="108" height="122" rx="4" fill="#F5A200" opacity="0.95"/>
+  <rect x="688" y="48" width="100" height="57" rx="4" fill="#8E8E93" opacity="0.55"/>
+  <rect x="688" y="113" width="100" height="57" rx="4" fill="#8E8E93" opacity="0.42"/>
+  <!-- 맥북 — 원래 창이 같은 자리에 그대로 -->
+  <rect x="585" y="218" width="190" height="88" rx="6" stroke="#8E8E93" stroke-width="3"/>
+  <path d="M565 310 h230 l-14 12 h-202 z" fill="#8E8E93" opacity="0.35"/>
+  <rect x="618" y="268" width="84" height="30" rx="4" fill="#8E8E93" opacity="0.28"/>
+  <!-- 케이블 (연결) -->
+  <path d="M775 260 C 822 260 822 206 801 184" stroke="#8E8E93" stroke-width="3"/>
+  <circle cx="801" cy="184" r="5.5" fill="#F5A200"/>
+</svg>

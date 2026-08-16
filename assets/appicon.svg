@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Plugback 앱 아이콘 (BRANDING 4장) — 외장 모니터(스탠드)와 우측 베젤에 안착한 창 하나.
+       개념 1개, 앰버 1색, 결과(안착)를 그린다. 2026-08-16 3자 교차 검증(Claude·Codex) 확정. -->
+  <rect x="70" y="70" width="884" height="884" rx="200" fill="#26262A"/>
+  <!-- 우측 베젤에 닿아 멈춘 창 — 수직 중앙 (글리프 모티프 일치) -->
+  <rect x="557" y="335" width="260" height="176" rx="18" fill="#F5A200"/>
+  <rect x="192" y="218" width="640" height="410" rx="40" stroke="#F5F5F7" stroke-width="30" fill="none"/>
+  <!-- 스탠드: 목+받침 — 외장 모니터의 표준 도상 -->
+  <rect x="478" y="640" width="68" height="76" fill="#F5F5F7" opacity="0.9"/>
+  <rect x="372" y="716" width="280" height="34" rx="16" fill="#F5F5F7" opacity="0.9"/>
+</svg>
