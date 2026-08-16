@@ -31,15 +31,30 @@ public struct UnitRect: Codable, Equatable, Sendable {
     }
 }
 
-/// 화면 하나. id는 화면 식별자 — 안정성(재연결·포트 변경)은 M3의 ScreenID가 책임진다.
+/// 화면 지문 — 키가 아니라 검증용이다 (ARCHITECTURE ScreenID).
+/// UUID는 같은데 지문이 다르면 "OS가 UUID 배정을 바꿨다"는 신호이므로 복원하지 않는다.
+public struct ScreenFingerprint: Codable, Equatable, Sendable {
+    public let vendor: UInt32
+    public let model: UInt32
+    public let serial: UInt32
+
+    public init(vendor: UInt32, model: UInt32, serial: UInt32) {
+        self.vendor = vendor; self.model = model; self.serial = serial
+    }
+}
+
+/// 화면 하나. id는 화면 식별자(WindowServer UUID) — 포트 변경·동일 모델 안정성은 M3 스파이크로 검증한다.
 public struct ScreenInfo: Equatable, Sendable {
     public let id: String
     public let name: String
     public let frame: CGRect
     public let isBuiltin: Bool
+    public let fingerprint: ScreenFingerprint?
 
-    public init(id: String, name: String, frame: CGRect, isBuiltin: Bool) {
+    public init(id: String, name: String, frame: CGRect, isBuiltin: Bool,
+                fingerprint: ScreenFingerprint? = nil) {
         self.id = id; self.name = name; self.frame = frame; self.isBuiltin = isBuiltin
+        self.fingerprint = fingerprint
     }
 
     /// 창의 소속 화면 판정 — 중심점 규칙 (F-03.2). 저장과 복원이 이 하나의 규칙을 공유한다.
@@ -82,9 +97,13 @@ public struct Profile: Codable, Equatable, Sendable {
     public let screenID: String
     public var screenName: String
     public var apps: [TargetApp]
+    /// 저장 당시 화면 지문. 복원 직전 검증에 쓴다 — 없으면(구버전 파일) 검증을 건너뛴다.
+    public var fingerprint: ScreenFingerprint?
 
-    public init(screenID: String, screenName: String, apps: [TargetApp] = []) {
+    public init(screenID: String, screenName: String, apps: [TargetApp] = [],
+                fingerprint: ScreenFingerprint? = nil) {
         self.screenID = screenID; self.screenName = screenName; self.apps = apps
+        self.fingerprint = fingerprint
     }
 }
 

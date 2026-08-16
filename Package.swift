@@ -6,10 +6,13 @@ let package = Package(
     name: "plugback",
     platforms: [.macOS(.v13)],
     products: [
-        .library(name: "PlugbackKit", targets: ["PlugbackKit"])
+        .library(name: "PlugbackKit", targets: ["PlugbackKit"]),
+        // 화면 식별자 실기기 스파이크용 프로브 (docs/ARCHITECTURE.md 마일스톤 M3)
+        .executable(name: "screen-probe", targets: ["screen-probe"])
     ],
     targets: [
         .target(name: "PlugbackKit"),
+        .executableTarget(name: "screen-probe"),
         .testTarget(name: "PlugbackKitTests", dependencies: ["PlugbackKit"])
     ]
 )

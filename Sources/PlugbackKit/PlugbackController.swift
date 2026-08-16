@@ -5,13 +5,15 @@ import Foundation
 /// 헤드리스 파사드 — UI 없이 완결된다. UI는 이 상태의 표현일 뿐이다 (docs/ARCHITECTURE.md).
 @MainActor
 public final class PlugbackController: ObservableObject {
-    /// 마지막으로 본 외장 화면. 분리돼도 지우지 않는다 —
+    /// 카드가 보여주는 화면(첫 외장). 분리돼도 지우지 않는다 —
     /// 빈 상태에서도 카드는 비지 않는다 (ARCHITECTURE 고정 결정).
-    /// ponytail: M2는 첫 외장 화면 하나만 본다 — 다중 화면은 M3(F-01.6).
     @Published public private(set) var currentScreen: ScreenInfo?
     /// currentScreen이 지금 실제로 연결되어 있는가.
     @Published public private(set) var isConnected = false
-    @Published public private(set) var lastResult: RestoreResult?
+    /// 지금 연결된 외장 화면 수 (다중 화면 표시용).
+    @Published public private(set) var connectedScreenCount = 0
+    /// UUID는 맞는데 지문이 다른 화면이 있었다 — 복원하지 않았다 (F-01.4).
+    @Published public private(set) var identityMismatch = false
     /// 프로필 대상 앱 중 지금 실행 중인 것들 (US-006 AC-1 표시용).
     @Published public private(set) var runningBundleIDs: Set<String> = []
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
@@ -20,13 +22,17 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var corruptionBackupURL: URL?
 
     @Published private var profiles: [String: Profile]
+    @Published private var resultsByScreen: [String: RestoreResult] = [:]
 
     /// 파생 상태 — 수동 동기화 지점을 두지 않는다.
     public var profile: Profile? { currentScreen.flatMap { profiles[$0.id] } }
+    /// 카드가 보여주는 화면의 마지막 복원 결과.
+    public var lastResult: RestoreResult? { currentScreen.flatMap { resultsByScreen[$0.id] } }
 
     private let gateway: WindowGateway
     private let screenProvider: ScreenProvider
     private let store: ProfileStore
+    private var externalScreens: [ScreenInfo] = []
 
     public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore) {
         self.gateway = gateway
@@ -46,8 +52,10 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 열릴 때 호출 — 화면·실행 상태를 동기화한다.
     public func refresh() {
         lastCaptureCount = nil
-        if let live = screenProvider.screens().first(where: { !$0.isBuiltin }) {
-            currentScreen = live
+        externalScreens = screenProvider.screens().filter { !$0.isBuiltin }
+        connectedScreenCount = externalScreens.count
+        if let first = externalScreens.first {
+            currentScreen = first
             isConnected = true
         } else {
             isConnected = false // currentScreen은 유지 — 마지막 화면 정보
@@ -55,23 +63,37 @@ public final class PlugbackController: ObservableObject {
         updateRunningStates()
     }
 
-    /// [💾 지금 레이아웃 저장] (F-03). 저장 시점은 항상 사용자가 정한다.
+    /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
     public func captureNow() {
-        guard isConnected, let screen = currentScreen else { return }
-        let merged = CaptureEngine.capture(windows: gateway.standardWindows(of: nil),
-                                           on: screen, merging: profiles[screen.id])
-        profiles[screen.id] = merged
-        lastCaptureCount = merged.apps.count
+        guard isConnected else { return }
+        let windows = gateway.standardWindows(of: nil)
+        for screen in externalScreens {
+            var merged = CaptureEngine.capture(windows: windows, on: screen, merging: profiles[screen.id])
+            merged.fingerprint = screen.fingerprint
+            profiles[screen.id] = merged
+        }
+        lastCaptureCount = profile?.apps.count
         persist()
         updateRunningStates()
     }
 
-    /// [⚡ 지금 레이아웃 복원] (F-02). 프로필 없는 화면에서는 아무 창도 움직이지 않는다 (US-007 AC-5).
+    /// [⚡ 지금 레이아웃 복원] (F-02). 연결된 모든 외장 화면에 각 프로필을 적용한다.
+    /// 같은 앱이 여러 프로필에 있으면 식별자 정렬 순서상 첫 화면만 적용한다 — 한 창을 두 번 옮기지 않는다 (F-01.6).
     public func restoreNow() {
-        guard isConnected, let screen = currentScreen, let profile = profiles[screen.id] else { return }
-        // ponytail: 동기 실행 — 게이트웨이의 요소별 250ms 한도가 최악을 막는다.
-        // 자동 복원이 생기는 M4에서 별도 실행 흐름으로 옮긴다 (F-02.4).
-        lastResult = RestoreEngine.restore(profile: profile, on: screen, using: gateway)
+        guard isConnected else { return }
+        identityMismatch = false
+        var claimed = Set<String>()
+        for screen in externalScreens.sorted(by: { $0.id < $1.id }) {
+            guard var profile = profiles[screen.id] else { continue }
+            // UUID 일치 + 지문 불일치 = OS가 배정을 바꿨다는 신호. 오작동 대신 무작동 (F-01.4).
+            if let saved = profile.fingerprint, let live = screen.fingerprint, saved != live {
+                identityMismatch = true
+                continue
+            }
+            profile.apps.removeAll { claimed.contains($0.bundleID) }
+            resultsByScreen[screen.id] = RestoreEngine.restore(profile: profile, on: screen, using: gateway)
+            claimed.formUnion(profile.apps.filter(\.isEnabled).map(\.bundleID))
+        }
         updateRunningStates()
     }
 
@@ -87,6 +109,8 @@ public final class PlugbackController: ObservableObject {
     public func removeApp(_ bundleID: String) {
         mutateProfile { p in p.apps.removeAll { $0.bundleID == bundleID } }
     }
+
+    public func isAppRunning(_ bundleID: String) -> Bool { gateway.isRunning(bundleID: bundleID) }
 
     private func mutateProfile(_ change: (inout Profile) -> Void) {
         guard let id = currentScreen?.id, var p = profiles[id] else { return }

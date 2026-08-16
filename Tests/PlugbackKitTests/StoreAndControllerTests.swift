@@ -142,6 +142,61 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(second.currentScreen?.name, "LG UltraFine 27")
     }
 
+    func testMultiScreenDedupRestoresSharedAppOnce() {
+        // 같은 앱이 두 프로필에 있으면 식별자 정렬 순서상 첫 화면만 적용한다 (F-01.6, US-003 AC-5)
+        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [
+            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),  // ext-1 좌측
+            WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),   // ext-2 좌측
+        ]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow() // 두 화면 모두 chrome이 프로필에 등록됨
+
+        // 두 창 모두 어질러짐
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.windowsList[1] = WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 4500, y: 300, width: 800, height: 600))
+        controller.restoreNow()
+
+        // ext-1(정렬상 첫 화면)의 창만 이동, ext-2의 창은 그대로 — 한 앱을 두 번 옮기지 않는다
+        XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1])
+        XCTAssertEqual(gateway.windowsList[1].frame, CGRect(x: 4500, y: 300, width: 800, height: 600))
+    }
+
+    func testFingerprintMismatchBlocksRestore() {
+        // UUID는 같은데 지문이 다르면 복원하지 않는다 — 오작동 대신 무작동 (F-01.4)
+        let fpA = ScreenFingerprint(vendor: 1, model: 2, serial: 3)
+        let fpB = ScreenFingerprint(vendor: 1, model: 2, serial: 999)
+        let screenA = ScreenInfo(id: "ext-1", name: "LG", frame: external.frame,
+                                 isBuiltin: false, fingerprint: fpA)
+        screens.screensList = [builtin, screenA]
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+        XCTAssertEqual(controller.profile?.fingerprint, fpA) // 저장 시 지문 기록
+
+        // 같은 UUID, 다른 지문의 화면으로 교체 (OS가 배정을 바꾼 상황)
+        screens.screensList = [builtin, ScreenInfo(id: "ext-1", name: "LG", frame: external.frame,
+                                                   isBuiltin: false, fingerprint: fpB)]
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        controller.refresh()
+        controller.restoreNow()
+
+        XCTAssertTrue(controller.identityMismatch)
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
     func testCaptureSetsConfirmationAndRefreshClearsIt() {
         // 저장됐다는 것을 화면에서 확인할 수 있다 (US-002 AC-1)
         gateway.runningBundleIDs = ["com.chrome"]

@@ -35,6 +35,14 @@ private struct Card: View {
                 Divider()
                 corruptionNotice(backupURL)
             }
+            if controller.identityMismatch {
+                Divider()
+                zone {
+                    // UUID는 맞는데 지문이 다름 — 잘못된 화면에 옮기는 대신 아무것도 안 했다 (F-01.4)
+                    Text("⚠ 화면 정보가 저장 당시와 달라 복원하지 않았습니다.\n지금 배치가 맞다면 저장을 다시 눌러 갱신하세요.")
+                        .font(.system(size: 12)).foregroundStyle(.orange)
+                }
+            }
             if let result = controller.lastResult,
                controller.isConnected, result.screenID == controller.currentScreen?.id {
                 Divider()
@@ -51,9 +59,12 @@ private struct Card: View {
 
     // 빈 상태에서도 카드는 비지 않는다 — 마지막 화면과 프로필 유무를 남긴다 (ARCHITECTURE 고정 결정)
     private var header: some View {
-        zone {
+        let name = controller.currentScreen?.name ?? "외장 화면 없음"
+        let extra = controller.isConnected && controller.connectedScreenCount > 1
+            ? " 외 \(controller.connectedScreenCount - 1)대" : ""
+        return zone {
             HStack(alignment: .firstTextBaseline) {
-                Text(controller.currentScreen?.name ?? "외장 화면 없음")
+                Text(name + extra)
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 if controller.isConnected {
