@@ -1,0 +1,133 @@
+import CoreGraphics
+import Foundation
+
+// 용어는 CONTEXT.md를 따른다. 모든 프레임은 통일 좌표계(좌상단 원점, 전역)다 —
+// 좌표계 변환은 WindowGateway 어댑터 안에서 한 번만 일어난다 (FUNCTIONAL_SPEC 부록 2).
+
+/// 비율 좌표 — 소속 화면 크기에 대한 비율 (F-03.4). 픽셀 절대 좌표는 저장하지 않는다.
+public struct UnitRect: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x; self.y = y; self.width = width; self.height = height
+    }
+
+    /// 화면이 음수 좌표 영역에 있어도 원점 차로 계산하므로 올바르다 (F-03.4).
+    public init(_ frame: CGRect, in screen: CGRect) {
+        x = (frame.minX - screen.minX) / screen.width
+        y = (frame.minY - screen.minY) / screen.height
+        width = frame.width / screen.width
+        height = frame.height / screen.height
+    }
+
+    public func frame(in screen: CGRect) -> CGRect {
+        CGRect(x: screen.minX + x * screen.width,
+               y: screen.minY + y * screen.height,
+               width: width * screen.width,
+               height: height * screen.height)
+    }
+}
+
+/// 화면 하나. id는 화면 식별자 — 안정성(재연결·포트 변경)은 M3의 ScreenID가 책임진다.
+public struct ScreenInfo: Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let frame: CGRect
+    public let isBuiltin: Bool
+
+    public init(id: String, name: String, frame: CGRect, isBuiltin: Bool) {
+        self.id = id; self.name = name; self.frame = frame; self.isBuiltin = isBuiltin
+    }
+
+    /// 창의 소속 화면 판정 — 중심점 규칙 (F-03.2). 저장과 복원이 이 하나의 규칙을 공유한다.
+    public func contains(_ window: WindowInfo) -> Bool { frame.contains(window.center) }
+}
+
+/// 표준 창 하나. id는 게이트웨이 세션 한정이다 — 앱 재시작을 넘는 창 식별자는 없다 (FUNCTIONAL_SPEC 부록 3).
+public struct WindowInfo: Equatable, Sendable {
+    public let id: Int
+    public let appBundleID: String
+    public let appName: String
+    public let frame: CGRect
+    public let isFullscreen: Bool
+    public let isMinimized: Bool
+
+    public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
+                isFullscreen: Bool = false, isMinimized: Bool = false) {
+        self.id = id; self.appBundleID = appBundleID; self.appName = appName
+        self.frame = frame; self.isFullscreen = isFullscreen; self.isMinimized = isMinimized
+    }
+
+    public var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
+}
+
+/// 대상 앱 항목 (F-04.1). 비율 좌표는 앱당 하나 — 복원은 첫 표준 창에 한다 (US-005 AC-3).
+public struct TargetApp: Codable, Equatable, Sendable {
+    public let bundleID: String
+    public var displayName: String
+    public var isEnabled: Bool
+    public var unitRect: UnitRect
+
+    public init(bundleID: String, displayName: String, isEnabled: Bool = true, unitRect: UnitRect) {
+        self.bundleID = bundleID; self.displayName = displayName
+        self.isEnabled = isEnabled; self.unitRect = unitRect
+    }
+}
+
+/// 프로필 — 화면 식별자 하나당 하나 (F-04.1).
+public struct Profile: Codable, Equatable, Sendable {
+    public let screenID: String
+    public var screenName: String
+    public var apps: [TargetApp]
+
+    public init(screenID: String, screenName: String, apps: [TargetApp] = []) {
+        self.screenID = screenID; self.screenName = screenName; self.apps = apps
+    }
+}
+
+/// 건너뜀 사유 (F-02.2). 사용자가 이해할 문구로의 변환은 UI의 몫이다.
+public enum SkipReason: Equatable, Sendable {
+    case appNotRunning
+    case fullscreen
+    case minimized
+    case alreadyInPlace
+    case noWindowOnScreen
+}
+
+/// 복원 결과 (F-05.1: 이동 n · 건너뜀 n · 실패 n + 사유).
+/// 어느 화면의 결과인지 함께 기록한다 — 다른 화면의 카드에 이 결과를 보여주면 안 된다 (US-007 AC-5).
+public struct RestoreResult: Equatable, Sendable {
+    public let screenID: String
+
+    public enum Outcome: Equatable, Sendable {
+        case moved
+        case skipped(SkipReason)
+        case failed
+    }
+
+    public struct Entry: Equatable, Sendable {
+        public let bundleID: String
+        public let displayName: String
+        public let outcome: Outcome
+
+        public init(bundleID: String, displayName: String, outcome: Outcome) {
+            self.bundleID = bundleID; self.displayName = displayName; self.outcome = outcome
+        }
+    }
+
+    public var entries: [Entry]
+
+    public init(screenID: String, entries: [Entry] = []) {
+        self.screenID = screenID
+        self.entries = entries
+    }
+
+    public var movedCount: Int { entries.filter { $0.outcome == .moved }.count }
+    public var failedCount: Int { entries.filter { $0.outcome == .failed }.count }
+    public var skippedCount: Int {
+        entries.filter { if case .skipped = $0.outcome { return true } else { return false } }.count
+    }
+}
