@@ -1,11 +1,11 @@
 // Plugback 빌드 설정 기본값.
 //
 // 번들 ID 가드레일: 이 레포를 클론해서 그냥 빌드하면 희생용 ID(forked.plugback.local)가 쓰인다.
-// canonical(com.mabyko.plugback)은 레포 어디에도 없다 — 자동 서명이 실수로 등록할 수 없다.
+// canonical 번들 ID는 이 레포 어디에도 없다 — 자동 서명이 실수로 등록할 수 없다.
 // 팀원/개인 빌드는 옆에 Local.xcconfig(비추적)를 만들어 자기 네임스페이스로 덮어쓴다:
 //
-//   PLUGBACK_BUNDLE_ID = com.mabyko.plugback.<github핸들>
-//   PLUGBACK_BUNDLE_ID[config=Debug] = com.mabyko.plugback.<github핸들>.dev
+//   PLUGBACK_BUNDLE_ID = com.example.plugback.<github핸들>
+//   PLUGBACK_BUNDLE_ID[config=Debug] = com.example.plugback.<github핸들>.dev
 //
 PLUGBACK_BUNDLE_ID = forked.plugback.local
 
