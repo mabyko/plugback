@@ -18,6 +18,62 @@ you return to comes back exactly the way you left it.
 Status: pre-release, documentation-first stage. Design documents live in
 [docs/](docs/) (currently written in Korean).
 
+## Build from source
+
+Requires macOS 13+ and Xcode 15+. There is no signed release yet, so building
+it yourself is the only way to run it.
+
+```sh
+git clone git@github.com:mabyko/plugback.git
+cd plugback
+xcodebuild -project App/Plugback.xcodeproj -scheme Plugback \
+  -configuration Release -derivedDataPath build build
+ditto build/Build/Products/Release/Plugback.app /Applications/Plugback.app
+open /Applications/Plugback.app
+```
+
+On first launch, grant Accessibility permission in System Settings > Privacy &
+Security > Accessibility. It is the only permission Plugback asks for, and it
+is what lets it read and move windows.
+
+That build is signed to run locally, which is enough to try it out. macOS ties
+both the Accessibility grant and the saved profiles to the app's bundle ID and
+signature, so an ad-hoc signature can make you re-approve the permission after
+a rebuild. To keep a stable identity, add `App/Config/Local.xcconfig` — it is
+gitignored, so your identity never lands in a commit:
+
+```
+PLUGBACK_BUNDLE_ID = com.example.plugback.<your-handle>
+PLUGBACK_BUNDLE_ID[config=Debug] = com.example.plugback.<your-handle>.dev
+DEVELOPMENT_TEAM = <your-team-id>
+```
+
+Your team ID is in Xcode > Settings > Accounts (a free Apple ID works). Without
+this file the build falls back to `forked.plugback.local`; the canonical bundle
+ID is deliberately absent from the repo so that no fork can register it by
+accident.
+
+Tests are in the Swift package, independent of the app target:
+
+```sh
+swift test
+```
+
+## Contributing
+
+Issues and pull requests are welcome. A few things worth knowing before you
+open one:
+
+- Read [CONTEXT.md](CONTEXT.md) first. It fixes the vocabulary — profile,
+  target app, restore — and the code and docs use those words exactly.
+- The design documents in [docs/](docs/) are written in Korean and lead the
+  implementation. If a change alters intended behavior, update the relevant
+  document in the same pull request.
+- Scope is a feature, not a limitation. Plugback moves the windows you asked
+  for and nothing else; proposals that broaden that default are likely to be
+  declined. [docs/BRANDING.md](docs/BRANDING.md) explains the reasoning.
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org).
+
 ## Open core
 
 Plugback and its core package, PlugbackKit, are open source under the

@@ -1,6 +1,7 @@
 .DS_Store
 .serena/
 .build/
+build/
 xcuserdata/
 DerivedData/
 App/Config/Local.xcconfig
