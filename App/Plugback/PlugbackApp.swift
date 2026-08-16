@@ -1,17 +1,12 @@
-//
-//  PlugbackApp.swift
-//  Plugback
-//
-//  Created by Eugene Jeon on 8/16/26.
-//
-
 import SwiftUI
 
 @main
 struct PlugbackApp: App {
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        // ponytail: 글리프는 SF Symbol 플레이스홀더. BRANDING.md의 커스텀 템플릿 이미지로 교체 예정.
+        MenuBarExtra("Plugback", systemImage: "display") {
+            MenuBarCard()
         }
+        .menuBarExtraStyle(.window)
     }
 }
