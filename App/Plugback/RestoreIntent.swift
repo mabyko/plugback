@@ -10,21 +10,9 @@ struct RestoreLayoutIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        // 반환값이 곧 결과다 — published 상태에서 추론하지 않는다
-        switch await AppServices.controller.restoreNow() {
-        case .notAuthorized:
-            return .result(dialog: "손쉬운 사용 권한이 필요합니다. 메뉴바에서 Plugback을 여세요.")
-        case .notConnected:
-            return .result(dialog: "외장 화면이 연결되어 있지 않습니다.")
-        case .alreadyRestoring:
-            return .result(dialog: "이미 복원 중입니다.")
-        case .restored(let results):
-            guard !results.isEmpty else { return .result(dialog: "복원할 프로필이 없습니다.") }
-            let moved = results.map(\.movedCount).reduce(0, +)
-            let skipped = results.map(\.skippedCount).reduce(0, +)
-            let failed = results.map(\.failedCount).reduce(0, +)
-            return .result(dialog: "이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
-        }
+        // 반환값이 곧 결과다 — published 상태에서 추론하지 않는다. 문구 분기는 CardPresentation의 것.
+        let outcome = await AppServices.controller.restoreNow()
+        return .result(dialog: "\(CardPresentation.intentDialog(for: outcome))")
     }
 }
 

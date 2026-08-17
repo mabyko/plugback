@@ -8,17 +8,24 @@
 
 /* Begin PBXBuildFile section */
 		7B1DBAC00000000000000001 /* PlugbackKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7B1DBAC00000000000000002 /* PlugbackKit */; };
+		7B1DBAC00000000000000011 /* PlugbackKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7B1DBAC00000000000000012 /* PlugbackKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		449761CF30319F7700AA4358 /* Plugback.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Plugback.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B1DBAC00000000000000004 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
+		7B1DBAC00000000000000013 /* PlugbackTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PlugbackTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		449761D130319F7700AA4358 /* Plugback */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Plugback;
+			sourceTree = "<group>";
+		};
+		7B1DBAC00000000000000014 /* PlugbackTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PlugbackTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +39,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7B1DBAC00000000000000015 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B1DBAC00000000000000011 /* PlugbackKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -39,6 +54,7 @@
 			isa = PBXGroup;
 			children = (
 				449761D130319F7700AA4358 /* Plugback */,
+				7B1DBAC00000000000000014 /* PlugbackTests */,
 				7B1DBAC00000000000000004 /* Base.xcconfig */,
 				449761D030319F7700AA4358 /* Products */,
 			);
@@ -48,6 +64,7 @@
 			isa = PBXGroup;
 			children = (
 				449761CF30319F7700AA4358 /* Plugback.app */,
+				7B1DBAC00000000000000013 /* PlugbackTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -78,6 +95,29 @@
 			productReference = 449761CF30319F7700AA4358 /* Plugback.app */;
 			productType = "com.apple.product-type.application";
 		};
+		7B1DBAC00000000000000016 /* PlugbackTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7B1DBAC00000000000000017 /* Build configuration list for PBXNativeTarget "PlugbackTests" */;
+			buildPhases = (
+				7B1DBAC00000000000000018 /* Sources */,
+				7B1DBAC00000000000000015 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7B1DBAC00000000000000019 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7B1DBAC00000000000000014 /* PlugbackTests */,
+			);
+			name = PlugbackTests;
+			packageProductDependencies = (
+				7B1DBAC00000000000000012 /* PlugbackKit */,
+			);
+			productName = PlugbackTests;
+			productReference = 7B1DBAC00000000000000013 /* PlugbackTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -90,6 +130,9 @@
 				TargetAttributes = {
 					449761CE30319F7700AA4358 = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					7B1DBAC00000000000000016 = {
+						TestTargetID = 449761CE30319F7700AA4358;
 					};
 				};
 			};
@@ -111,6 +154,7 @@
 			projectRoot = "";
 			targets = (
 				449761CE30319F7700AA4358 /* Plugback */,
+				7B1DBAC00000000000000016 /* PlugbackTests */,
 			);
 		};
 /* End PBXProject section */
@@ -133,7 +177,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7B1DBAC00000000000000018 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		7B1DBAC0000000000000001A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 449761C730319F7700AA4358 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 449761CE30319F7700AA4358;
+			remoteInfo = Plugback;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		7B1DBAC00000000000000019 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 449761CE30319F7700AA4358 /* Plugback */;
+			targetProxy = 7B1DBAC0000000000000001A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCLocalSwiftPackageReference section */
 		7B1DBAC00000000000000003 /* XCLocalSwiftPackageReference ".." */ = {
@@ -144,6 +213,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		7B1DBAC00000000000000002 /* PlugbackKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PlugbackKit;
+		};
+		7B1DBAC00000000000000012 /* PlugbackKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PlugbackKit;
 		};
@@ -330,6 +403,46 @@
 			};
 			name = Release;
 		};
+		7B1DBAC0000000000000001B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLUGBACK_BUNDLE_ID).tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Plugback.app/Contents/MacOS/Plugback";
+			};
+			name = Debug;
+		};
+		7B1DBAC0000000000000001C /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLUGBACK_BUNDLE_ID).tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Plugback.app/Contents/MacOS/Plugback";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -347,6 +460,15 @@
 			buildConfigurations = (
 				449761DB30319F7800AA4358 /* Debug */,
 				449761DC30319F7800AA4358 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7B1DBAC00000000000000017 /* Build configuration list for PBXNativeTarget "PlugbackTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B1DBAC0000000000000001B /* Debug */,
+				7B1DBAC0000000000000001C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

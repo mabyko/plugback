@@ -54,25 +54,18 @@ private struct Card: View {
         }
     }
 
-    // 빈 상태에서도 카드는 비지 않는다 — 3상태는 컨트롤러의 것, 카드는 각 상태를 표현만 한다
+    // 빈 상태에서도 카드는 비지 않는다 — 문구는 CardPresentation의 것, 여기는 배치와 색뿐
     private var header: some View {
         zone {
             HStack(alignment: .firstTextBaseline) {
-                switch controller.screenPresence {
-                case .connected(let screen, let count):
-                    Text(count > 1 ? "\(screen.name) 외 \(count - 1)대" : screen.name)
-                        .font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Text(controller.profile == nil ? "프로필 없음" : "프로필 있음")
+                Text(CardPresentation.headerTitle(for: controller.screenPresence))
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if let badge = CardPresentation.headerBadge(for: controller.screenPresence,
+                                                           hasProfile: controller.profile != nil) {
+                    Text(badge.text)
                         .font(.system(size: 11))
-                        .foregroundStyle(controller.profile == nil ? Color.secondary : Color.orange)
-                case .remembered(_, let name):
-                    Text(name).font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Text("연결 해제됨").font(.system(size: 11)).foregroundStyle(.secondary)
-                case .none:
-                    Text("외장 화면 없음").font(.system(size: 13, weight: .semibold))
-                    Spacer()
+                        .foregroundStyle(badge.highlighted ? Color.orange : Color.secondary)
                 }
             }
         }
@@ -110,7 +103,7 @@ private struct Card: View {
                     .font(.system(size: 12)).monospacedDigit()
                 // 건너뜀·실패는 이유를 보여준다 — "왜 안 옮겨졌지?"의 유일한 답 (US-008)
                 ForEach(result.entries.filter { $0.outcome != .moved }, id: \.bundleID) { entry in
-                    Text("⚠ \(entry.displayName) — \(describe(entry.outcome))")
+                    Text("⚠ \(entry.displayName) — \(CardPresentation.describe(entry.outcome))")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
@@ -170,18 +163,6 @@ private struct Card: View {
         }
     }
 
-    private func describe(_ outcome: RestoreResult.Outcome) -> String {
-        switch outcome {
-        case .moved: return "이동"
-        case .failed: return "이동 실패"
-        case .skipped(.appNotRunning): return "꺼져 있어 건너뜀"
-        case .skipped(.fullscreen): return "전체화면이라 건너뜀"
-        case .skipped(.minimized): return "최소화되어 건너뜀"
-        case .skipped(.alreadyInPlace): return "이미 제자리"
-        case .skipped(.noWindow): return "창이 없어 건너뜀"
-        }
-    }
-
     private func zone(@ViewBuilder _ content: () -> some View) -> some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -202,9 +183,10 @@ private struct AppRow: View {
             }
             .toggleStyle(.checkbox)
             Spacer()
-            // 점은 엔진의 복원 예측을 그린다: 찬 주황=옮겨짐(또는 제자리), 빈 주황=건너뜀 예정, 회색=꺼짐
+            // 점은 엔진의 복원 예측을 그린다 — 스타일·문구 매핑은 CardPresentation의 것
             dot.frame(width: 7, height: 7)
-            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(CardPresentation.dotLabel(for: prediction))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
@@ -212,25 +194,10 @@ private struct AppRow: View {
     }
 
     @ViewBuilder private var dot: some View {
-        switch prediction {
-        case .willMove, .alreadyInPlace:
-            Circle().fill(Color.orange)
-        case .willSkip(.appNotRunning):
-            Circle().fill(Color.secondary.opacity(0.4))
-        case .willSkip:
-            Circle().strokeBorder(Color.orange, lineWidth: 1.5)
-        }
-    }
-
-    private var label: String {
-        switch prediction {
-        case .willMove: return "복원 대상"
-        case .alreadyInPlace: return "제자리"
-        case .willSkip(.appNotRunning): return "꺼짐"
-        case .willSkip(.noWindow): return "창 없음"
-        case .willSkip(.fullscreen): return "전체화면"
-        case .willSkip(.minimized): return "최소화"
-        case .willSkip(.alreadyInPlace): return "제자리" // 예측은 .alreadyInPlace 케이스로 오지만 방어
+        switch CardPresentation.dotStyle(for: prediction) {
+        case .filled: Circle().fill(Color.orange)
+        case .off: Circle().fill(Color.secondary.opacity(0.4))
+        case .hollow: Circle().strokeBorder(Color.orange, lineWidth: 1.5)
         }
     }
 }

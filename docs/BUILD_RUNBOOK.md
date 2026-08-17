@@ -37,13 +37,21 @@ Debug에서 준 권한은 Release 빌드에 적용되지 않는다.
 ln -s /path/to/main/checkout/App/Config/Local.xcconfig App/Config/Local.xcconfig
 ```
 
-## 2. 단위 테스트 (앱 빌드 없이)
+## 2. 단위 테스트
 
 ```bash
-swift test
+swift test   # PlugbackKit — 정책 전부, 앱 빌드 없이
 ```
 
-판정: `Executed 42 tests, with 0 failures`. 2초 안에 끝난다. 실패하면 3번으로 넘어가지 않는다.
+판정: `Executed N tests, with 0 failures`. 2초 안에 끝난다. 실패하면 3번으로 넘어가지 않는다.
+
+앱 쪽 표현 매핑(문구·점·헤더·단축어 다이얼로그)은 별도 테스트 타깃이 지킨다:
+
+```bash
+xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback -destination 'platform=macOS'
+```
+
+판정: `** TEST SUCCEEDED **`. 앱을 빌드해 호스트로 띄우므로 3번 빌드까지 겸한다.
 
 ## 3. 앱 빌드
 
