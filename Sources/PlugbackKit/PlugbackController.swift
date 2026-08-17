@@ -10,13 +10,23 @@ public enum RestoreMode: String, Sendable {
 /// 헤드리스 파사드 — UI 없이 완결된다. UI는 이 상태의 표현일 뿐이다 (docs/ARCHITECTURE.md).
 @MainActor
 public final class PlugbackController: ObservableObject {
-    /// 카드가 보여주는 화면(첫 외장). 분리돼도 지우지 않는다 —
+    /// 카드가 보여주는 화면 상태 (3상태). 분리돼도 기억으로 강등될 뿐 지워지지 않는다 —
     /// 빈 상태에서도 카드는 비지 않는다 (ARCHITECTURE 고정 결정).
-    @Published public private(set) var currentScreen: ScreenInfo?
-    /// currentScreen이 지금 실제로 연결되어 있는가.
-    @Published public private(set) var isConnected = false
-    /// 지금 연결된 외장 화면 수 (다중 화면 표시용).
-    @Published public private(set) var connectedScreenCount = 0
+    @Published public private(set) var screenPresence: ScreenPresence = .none
+
+    /// 파생 편의 — 저장 플래그가 아니라 screenPresence에서 계산되므로 어긋날 수 없다.
+    public var isConnected: Bool {
+        if case .connected = screenPresence { return true } else { return false }
+    }
+
+    /// 카드가 가리키는 화면의 식별자 — 연결됐든 기억이든.
+    private var currentScreenID: String? {
+        switch screenPresence {
+        case .connected(let screen, _): return screen.id
+        case .remembered(let screenID, _): return screenID
+        case .none: return nil
+        }
+    }
     /// 복원 진행 중 — 재진입 가드이자 버튼 비활성용 UI 상태.
     @Published public private(set) var isRestoring = false
     /// 프로필 대상 앱 중 지금 실행 중인 것들 (US-006 AC-1 표시용).
@@ -70,9 +80,9 @@ public final class PlugbackController: ObservableObject {
     @Published private var resultsByScreen: [String: RestoreResult] = [:]
 
     /// 파생 상태 — 수동 동기화 지점을 두지 않는다.
-    public var profile: Profile? { currentScreen.flatMap { profiles[$0.id] } }
+    public var profile: Profile? { currentScreenID.flatMap { profiles[$0] } }
     /// 카드가 보여주는 화면의 마지막 복원 결과.
-    public var lastResult: RestoreResult? { currentScreen.flatMap { resultsByScreen[$0.id] } }
+    public var lastResult: RestoreResult? { currentScreenID.flatMap { resultsByScreen[$0] } }
 
     private let gateway: WindowGateway
     private let screenProvider: ScreenProvider
@@ -94,10 +104,8 @@ public final class PlugbackController: ObservableObject {
         profiles = outcome.profiles
         corruptionBackupURL = outcome.corruptionBackupURL
         // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다.
-        // frame은 연결 전엔 쓰이지 않는다(모든 동작이 isConnected로 막힘).
         if let stored = outcome.profiles.values.first {
-            currentScreen = ScreenInfo(id: stored.screenID, name: stored.screenName,
-                                       frame: .zero, isBuiltin: false)
+            screenPresence = .remembered(screenID: stored.screenID, name: stored.screenName)
         }
     }
 
@@ -135,12 +143,10 @@ public final class PlugbackController: ObservableObject {
     /// 화면 상태 동기화. 명령이 스스로 호출한다 — 호출자에게 순서 의식이 없다.
     private func syncScreens() {
         externalScreens = screenProvider.screens().filter { !$0.isBuiltin }
-        connectedScreenCount = externalScreens.count
         if let first = externalScreens.first {
-            currentScreen = first
-            isConnected = true
-        } else {
-            isConnected = false // currentScreen은 유지 — 마지막 화면 정보
+            screenPresence = .connected(first, count: externalScreens.count)
+        } else if case .connected(let last, _) = screenPresence {
+            screenPresence = .remembered(screenID: last.id, name: last.name) // 마지막 화면은 기억으로
         }
     }
 
@@ -196,13 +202,14 @@ public final class PlugbackController: ObservableObject {
     /// 프로필 통째 삭제 (F-05.6). 그 화면을 다시 연결하면 프로필 없는 화면이다 (US-012 AC-3).
     public func removeProfile(_ screenID: String) {
         profiles.removeValue(forKey: screenID)
+        resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
         persist()
     }
 
     public func isAppRunning(_ bundleID: String) -> Bool { gateway.isRunning(bundleID: bundleID) }
 
     private func mutateProfile(_ change: (inout Profile) -> Void) {
-        guard let id = currentScreen?.id, var p = profiles[id] else { return }
+        guard let id = currentScreenID, var p = profiles[id] else { return }
         change(&p)
         profiles[id] = p
         persist()

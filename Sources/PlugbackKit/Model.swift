@@ -61,6 +61,17 @@ public struct ScreenInfo: Equatable, Sendable {
     public func contains(_ window: WindowInfo) -> Bool { frame.contains(window.center) }
 }
 
+/// 카드 헤더의 화면 상태 — 상태는 이 셋뿐이다 (ARCHITECTURE 고정 결정: 빈 상태에서도 카드는 비지 않는다).
+/// 기억 상태는 식별자와 이름만 든다 — frame을 지어낸 가짜 ScreenInfo를 만들지 않기 위해서다.
+public enum ScreenPresence: Equatable, Sendable {
+    /// 외장 화면이 지금 연결되어 있다. count는 연결된 외장 화면 수 (다중 화면 표시용).
+    case connected(ScreenInfo, count: Int)
+    /// 연결된 화면은 없지만 마지막 화면을 기억한다 — 이름과 프로필 유무를 보여주기 위해.
+    case remembered(screenID: String, name: String)
+    /// 아는 화면이 없다 — 첫 실행.
+    case none
+}
+
 /// 표준 창 하나. id는 게이트웨이 세션 한정이다 — 앱 재시작을 넘는 창 식별자는 없다 (FUNCTIONAL_SPEC 부록 3).
 public struct WindowInfo: Equatable, Sendable {
     public let id: Int

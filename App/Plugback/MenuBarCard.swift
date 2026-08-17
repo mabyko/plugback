@@ -40,8 +40,8 @@ private struct Card: View {
                         .font(.system(size: 12)).foregroundStyle(.orange)
                 }
             }
-            if let result = controller.lastResult, result.screenSkipReason == nil,
-               controller.isConnected, result.screenID == controller.currentScreen?.id {
+            // lastResult는 지금 화면의 것만 온다 — 인터페이스가 보증하므로 재확인하지 않는다
+            if controller.isConnected, let result = controller.lastResult, result.screenSkipReason == nil {
                 Divider()
                 resultStrip(result)
             }
@@ -54,22 +54,25 @@ private struct Card: View {
         }
     }
 
-    // 빈 상태에서도 카드는 비지 않는다 — 마지막 화면과 프로필 유무를 남긴다 (ARCHITECTURE 고정 결정)
+    // 빈 상태에서도 카드는 비지 않는다 — 3상태는 컨트롤러의 것, 카드는 각 상태를 표현만 한다
     private var header: some View {
-        let name = controller.currentScreen?.name ?? "외장 화면 없음"
-        let extra = controller.isConnected && controller.connectedScreenCount > 1
-            ? " 외 \(controller.connectedScreenCount - 1)대" : ""
-        return zone {
+        zone {
             HStack(alignment: .firstTextBaseline) {
-                Text(name + extra)
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                if controller.isConnected {
+                switch controller.screenPresence {
+                case .connected(let screen, let count):
+                    Text(count > 1 ? "\(screen.name) 외 \(count - 1)대" : screen.name)
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
                     Text(controller.profile == nil ? "프로필 없음" : "프로필 있음")
                         .font(.system(size: 11))
                         .foregroundStyle(controller.profile == nil ? Color.secondary : Color.orange)
-                } else if controller.currentScreen != nil {
+                case .remembered(_, let name):
+                    Text(name).font(.system(size: 13, weight: .semibold))
+                    Spacer()
                     Text("연결 해제됨").font(.system(size: 11)).foregroundStyle(.secondary)
+                case .none:
+                    Text("외장 화면 없음").font(.system(size: 13, weight: .semibold))
+                    Spacer()
                 }
             }
         }

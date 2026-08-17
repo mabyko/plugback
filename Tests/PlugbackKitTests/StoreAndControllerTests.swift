@@ -120,8 +120,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         screens.screensList = [builtin] // 외장 화면 분리
         controller.cardOpened()
-        XCTAssertFalse(controller.isConnected)
-        XCTAssertEqual(controller.currentScreen?.name, "LG UltraFine 27")
+        XCTAssertEqual(controller.screenPresence, .remembered(screenID: "ext-1", name: "LG UltraFine 27"))
         XCTAssertEqual(controller.profile?.apps.count, 1)
     }
 
@@ -169,8 +168,7 @@ final class PlugbackControllerTests: XCTestCase {
         screens.screensList = [builtin]
         let second = makeController()
         second.cardOpened()
-        XCTAssertFalse(second.isConnected)
-        XCTAssertEqual(second.currentScreen?.name, "LG UltraFine 27")
+        XCTAssertEqual(second.screenPresence, .remembered(screenID: "ext-1", name: "LG UltraFine 27"))
     }
 
     // 다중 화면 중복 제거(F-01.6)는 이제 엔진 정책 — RestoreEngineTests가 검증한다.
@@ -288,6 +286,22 @@ final class PlugbackControllerTests: XCTestCase {
         let relaunched = makeController()
         relaunched.cardOpened()
         XCTAssertNil(relaunched.profile)
+    }
+
+    func testRemoveProfileAlsoDropsItsResult() async {
+        // 결과 수명 = 프로필 수명. 같은 화면에 프로필을 다시 만들어도 전생의 결과가 보이면 안 된다
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 2500, y: 500, width: 800, height: 600))]
+        let controller = makeController()
+        controller.captureNow()
+        await controller.restoreNow()
+        XCTAssertNotNil(controller.lastResult)
+
+        controller.removeProfile("ext-1")
+        XCTAssertNil(controller.lastResult)
+        controller.captureNow() // 새 삶 — 결과는 아직 없어야 한다
+        XCTAssertNil(controller.lastResult)
     }
 
     func testCaptureConfirmationExpiresOnCardOpen() {
