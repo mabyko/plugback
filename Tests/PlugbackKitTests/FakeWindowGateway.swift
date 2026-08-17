@@ -58,12 +58,18 @@ final class FakeWindowGateway: WindowGateway {
         return true
     }
 
-    func unminimize(windowID: Int) -> Bool {
-        guard let i = windowsList.firstIndex(where: { $0.id == windowID }) else { return false }
+    /// 앱이 최소화 해제를 거부하는 상황 (unminimize → nil)
+    var unminimizeFails = false
+    /// Dock에서 나오며 프레임이 바뀌는 상황 — 열거 스냅샷과 재판독의 괴리를 흉내낸다
+    var frameOnUnminimize: [Int: CGRect] = [:]
+
+    func unminimize(windowID: Int) -> CGRect? {
+        guard !unminimizeFails, let i = windowsList.firstIndex(where: { $0.id == windowID }) else { return nil }
         let old = windowsList[i]
+        let frame = frameOnUnminimize[windowID] ?? old.frame
         windowsList[i] = WindowInfo(id: old.id, appBundleID: old.appBundleID, appName: old.appName,
-                                    frame: old.frame, isFullscreen: old.isFullscreen, isMinimized: false)
-        return true
+                                    frame: frame, isFullscreen: old.isFullscreen, isMinimized: false)
+        return frame
     }
 }
 

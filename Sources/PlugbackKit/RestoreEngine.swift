@@ -85,13 +85,16 @@ public enum RestoreEngine {
                 ?? (options.restoreMinimized ? movable.first : nil) else {
             return .skipped(candidates.contains(where: \.isFullscreen) ? .fullscreen : .minimized)
         }
-        // Dock에서 먼저 꺼낸다 — 최소화 상태로는 이동 결과가 보이지 않는다 (F-02.2)
-        if window.isMinimized, !gateway.unminimize(windowID: window.id) {
-            return .skipped(.minimized)
+        // Dock에서 먼저 꺼낸다 — 최소화 상태로는 이동 결과가 보이지 않는다 (F-02.2).
+        // 꺼낸 뒤의 재판독 프레임으로 판정한다 — 열거 시점 스냅샷은 이미 스테일이다.
+        var currentFrame = window.frame
+        if window.isMinimized {
+            guard let fresh = gateway.unminimize(windowID: window.id) else { return .skipped(.minimized) }
+            currentFrame = fresh
         }
 
         let target = app.unitRect.frame(in: screen.frame)
-        if approximatelyEqual(window.frame, target) { return .skipped(.alreadyInPlace) }
+        if approximatelyEqual(currentFrame, target) { return .skipped(.alreadyInPlace) }
 
         // 이동 → 검증 → 1회 재시도 (F-02.3). 재시도도 실패하면 실패로 기록하고 멈추지 않는다.
         for _ in 0..<2 {

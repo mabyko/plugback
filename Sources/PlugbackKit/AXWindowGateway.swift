@@ -14,6 +14,9 @@ public final class AXWindowGateway: WindowGateway {
     }
 
     public func standardWindows(of bundleIDs: [String]?) -> [WindowInfo] {
+        // ID 수명 계약: 마지막 열거만 유효 — 이전 열거의 참조를 비워 죽은 ID가
+        // 조용히 성공하는 것을 막고, 장기 실행 시 refs의 무한 증식도 막는다.
+        refs.removeAll()
         var result: [WindowInfo] = []
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             guard let bundleID = app.bundleIdentifier else { continue }
@@ -56,9 +59,12 @@ public final class AXWindowGateway: WindowGateway {
         return frame(of: element)
     }
 
-    public func unminimize(windowID: Int) -> Bool {
-        guard let element = refs[windowID] else { return false }
-        return AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success
+    public func unminimize(windowID: Int) -> CGRect? {
+        guard let element = refs[windowID],
+              AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success
+        else { return nil }
+        // 성공 반환값을 믿지 않는다 — 실제 프레임을 다시 읽는다 (F-02.3과 같은 처방)
+        return frame(of: element)
     }
 
     @MainActor

@@ -6,6 +6,8 @@ import CoreGraphics
 public protocol WindowGateway {
     /// 실행 중인 앱들의 표준 창. bundleIDs가 nil이면 실행 중 전체.
     /// 실행 중이 아닌 앱은 결과에 나타나지 않는다 — 앱을 실행시키지 않는다 (F-02.1).
+    /// 창 ID의 수명: **마지막 열거가 돌려준 ID만 유효하다.** 다시 열거하면 이전 ID는
+    /// 죽은 것으로 취급하라 — 어댑터에 따라 조용히 다른 창을 가리킬 수 있다.
     func standardWindows(of bundleIDs: [String]?) -> [WindowInfo]
 
     /// 창을 목표 프레임으로 옮기고 실제 프레임을 다시 읽어 돌려준다 (F-02.3 검증).
@@ -17,9 +19,10 @@ public protocol WindowGateway {
     /// 창 열거와 같은 앱 집합을 봐야 한다. 화면 열거는 여기가 아니라 ScreenProvider의 일이다.
     func isRunning(bundleID: String) -> Bool
 
-    /// Dock에 최소화된 창을 꺼낸다. "최소화된 창도 복원" 설정이 켜졌을 때만 쓰인다.
-    /// false면 창이 사라졌거나 앱이 거부한 것 — 호출자는 건너뜀으로 처리한다.
-    func unminimize(windowID: Int) -> Bool
+    /// Dock에 최소화된 창을 꺼내고 **실제 프레임을 다시 읽어 돌려준다** — 꺼내는 순간
+    /// 프레임이 바뀔 수 있으므로 이전 스냅샷을 믿으면 안 된다 (move와 같은 처방).
+    /// nil이면 창이 사라졌거나 앱이 거부한 것 — 호출자는 건너뜀으로 처리한다.
+    func unminimize(windowID: Int) -> CGRect?
 
     /// 실행 중인데 창이 없는 앱에 새 창을 열게 하고(Dock 클릭과 동일한 reopen),
     /// 표준 창이 실제로 나타날 때까지 기다린다. 창이 비동기로 나타난다는 플랫폼 현실은

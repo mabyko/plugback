@@ -164,6 +164,29 @@ final class RestoreEngineTests: XCTestCase {
         XCTAssertTrue(gateway.windowsList[0].isMinimized)
     }
 
+    func testUnminimizeRefusalFallsBackToSkip() async {
+        // 앱이 최소화 해제를 거부하면 이동을 시도하지 않고 건너뜀으로 보고한다
+        gateway.runningBundleIDs = ["com.vscode"]
+        gateway.windowsList = [window(1, "com.vscode", x: 1600, y: 0, w: 800, h: 600, minimized: true)]
+        gateway.unminimizeFails = true
+        let result = await restore(profileWith(("com.vscode", leftHalf)),
+                                   options: RestoreOptions(restoreMinimized: true))
+        XCTAssertEqual(result.entries[0].outcome, .skipped(.minimized))
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testUnminimizedFrameIsJudgedFresh() async {
+        // Dock에서 나오며 프레임이 바뀌면 열거 스냅샷이 아니라 재판독 프레임으로 판정한다 —
+        // 이미 목표 자리로 나왔으면 흔들지 않는다 (F-02.2)
+        gateway.runningBundleIDs = ["com.vscode"]
+        gateway.windowsList = [window(1, "com.vscode", x: 2500, y: 500, w: 800, h: 600, minimized: true)]
+        gateway.frameOnUnminimize[1] = CGRect(x: 1512, y: 0, width: 1280, height: 1440) // 목표 자리
+        let result = await restore(profileWith(("com.vscode", leftHalf)),
+                                   options: RestoreOptions(restoreMinimized: true))
+        XCTAssertEqual(result.entries[0].outcome, .skipped(.alreadyInPlace))
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
     func testWindowAlreadyInPlaceIsNotMoved() async {
         // 불필요한 창 흔들림을 막는다 (F-02.2)
         gateway.runningBundleIDs = ["com.chrome"]
