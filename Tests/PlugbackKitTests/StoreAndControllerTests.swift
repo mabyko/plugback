@@ -21,10 +21,10 @@ final class ProfileStoreTests: XCTestCase {
             TargetApp(bundleID: "com.chrome", displayName: "Chrome",
                       unitRect: UnitRect(x: 0.5, y: 0, width: 0.5, height: 1)),
         ])]
-        try store.save(profiles)
+        store.save(profiles)
         let outcome = ProfileStore(directory: dir).load()
         XCTAssertEqual(outcome.profiles, profiles)
-        XCTAssertNil(outcome.corruptionBackupURL)
+        XCTAssertNil(outcome.trouble)
     }
 
     func testCorruptedFileIsBackedUpAndReset() throws {
@@ -34,9 +34,24 @@ final class ProfileStoreTests: XCTestCase {
 
         let outcome = ProfileStore(directory: dir).load()
         XCTAssertTrue(outcome.profiles.isEmpty)
-        let backupURL = try XCTUnwrap(outcome.corruptionBackupURL)
+        guard case .corruptionBackedUp(let backupURL) = try XCTUnwrap(outcome.trouble) else {
+            return XCTFail("\(String(describing: outcome.trouble))")
+        }
         XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("profiles.json").path))
+    }
+
+    func testUnreadableFileIsReportedNotTreatedAsFirstRun() throws {
+        // 읽기 실패 ≠ 첫 실행 — 파일을 건드리지 않고 보고한다 (덮어쓰기 데이터 손실 방지)
+        // profiles.json 자리에 디렉터리를 놓으면 "존재하지만 읽을 수 없음"이 결정적으로 재현된다
+        let fileAsDir = dir.appendingPathComponent("profiles.json")
+        try FileManager.default.createDirectory(at: fileAsDir, withIntermediateDirectories: true)
+
+        let outcome = ProfileStore(directory: dir).load()
+        XCTAssertTrue(outcome.profiles.isEmpty)
+        XCTAssertEqual(outcome.trouble, .unreadable)
+        // 파일(디렉터리)이 그대로 남아 있다 — 백업·초기화하지 않는다
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileAsDir.path))
     }
 }
 
@@ -392,6 +407,30 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertNil(controller.lastResult)
         controller.captureNow() // 새 삶 — 결과는 아직 없어야 한다
         XCTAssertNil(controller.lastResult)
+    }
+
+    func testUnreadableStoreNeverOverwritesTheFile() throws {
+        // 읽기 실패가 첫 실행으로 위장하면 다음 저장이 원본을 덮어쓴다 — 그 경로를 막는다.
+        // chmod 000: 읽기는 실패하지만 atomic 쓰기(rename)는 성공하는, 정확히 위험한 조합.
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("profiles.json")
+        try Data("소중한 원본".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        XCTAssertEqual(controller.storeNotice, .unreadable)
+
+        controller.captureNow()          // 메모리에서는 동작하지만
+        XCTAssertEqual(controller.profile?.apps.count, 1)
+        controller.dismissStoreNotice()  // 알림을 닫아도
+        controller.removeApp("com.chrome") // persist 경로를 하나 더 지나도
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본") // 원본 무사
     }
 
     func testCaptureConfirmationExpiresOnCardOpen() {

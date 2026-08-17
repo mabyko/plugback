@@ -45,8 +45,10 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var windowedBundleIDs: Set<String> = []
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
-    /// 프로필 파일이 손상돼 백업 후 초기화된 경우 그 위치 (F-04.2 알림용)
-    @Published public private(set) var corruptionBackupURL: URL?
+    /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
+    @Published public private(set) var storeNotice: ProfileStore.LoadOutcome.Trouble?
+    /// 읽지 못한 파일 위에 쓰지 않는다 — 알림을 닫아도 이 금지는 프로세스 수명 동안 유지된다.
+    private let saveBlocked: Bool
 
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
     @Published public var restoreMode: RestoreMode {
@@ -111,7 +113,8 @@ public final class PlugbackController: ObservableObject {
         reopenWindowless = defaults.bool(forKey: "reopenWindowless")
         let outcome = store.load()
         profiles = outcome.profiles
-        corruptionBackupURL = outcome.corruptionBackupURL
+        storeNotice = outcome.trouble
+        saveBlocked = outcome.trouble == .unreadable
         // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다.
         if let stored = outcome.profiles.values.first {
             screenPresence = .remembered(screenID: stored.screenID, name: stored.screenName)
@@ -251,8 +254,11 @@ public final class PlugbackController: ObservableObject {
         windowedBundleIDs = Set(gateway.standardWindows(of: targets).map(\.appBundleID))
     }
 
+    /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
+    public func dismissStoreNotice() { storeNotice = nil }
+
     private func persist() {
-        // ponytail: 저장 실패(디스크 가득 등)는 조용히 넘긴다. 실패 UI가 필요해지면 그때 알림을 단다.
-        try? store.save(profiles)
+        guard !saveBlocked else { return } // 읽기 실패를 첫 실행처럼 덮어쓰면 손상보다 나쁜 손실이다
+        store.save(profiles)
     }
 }

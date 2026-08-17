@@ -28,9 +28,9 @@ private struct Card: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if let backupURL = controller.corruptionBackupURL {
+            if let notice = controller.storeNotice {
                 Divider()
-                corruptionNotice(backupURL)
+                storeNotice(notice)
             }
             if controller.identityMismatch {
                 Divider()
@@ -78,16 +78,27 @@ private struct Card: View {
         }
     }
 
-    // 손상 복구를 조용히 넘기지 않는다 (F-04.2: 백업 후 초기화하고 사용자에게 알린다)
-    private func corruptionNotice(_ backupURL: URL) -> some View {
+    // 저장소 문제를 조용히 넘기지 않는다 (F-04.2). 확인하면 배너는 사라진다.
+    private func storeNotice(_ notice: ProfileStore.LoadOutcome.Trouble) -> some View {
         zone {
             VStack(alignment: .leading, spacing: 4) {
-                Text("프로필 파일이 손상되어 초기화했습니다")
-                    .font(.system(size: 12)).foregroundStyle(.orange)
-                Button("백업 파일 보기") {
-                    NSWorkspace.shared.activateFileViewerSelecting([backupURL])
+                switch notice {
+                case .corruptionBackedUp(let backupURL):
+                    Text("프로필 파일이 손상되어 초기화했습니다")
+                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    HStack(spacing: 8) {
+                        Button("백업 파일 보기") {
+                            NSWorkspace.shared.activateFileViewerSelecting([backupURL])
+                        }
+                        Button("확인") { controller.dismissStoreNotice() }
+                    }
+                    .font(.system(size: 11))
+                case .unreadable:
+                    Text("프로필 파일을 읽지 못해 이번 실행에서는 저장하지 않습니다.\n파일을 지키기 위해 덮어쓰기를 막았습니다 — 재시작하면 다시 시도합니다.")
+                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    Button("확인") { controller.dismissStoreNotice() }
+                        .font(.system(size: 11))
                 }
-                .font(.system(size: 11))
             }
         }
     }
