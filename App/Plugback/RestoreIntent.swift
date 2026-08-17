@@ -10,11 +10,11 @@ struct RestoreLayoutIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard PermissionGate.isTrusted else {
+        let controller = AppServices.controller
+        await controller.restoreNow() // 게이트·동기화 포함 — 완료까지 기다려 최종 결과를 보고한다
+        guard controller.isAuthorized else {
             return .result(dialog: "손쉬운 사용 권한이 필요합니다. 메뉴바에서 Plugback을 여세요.")
         }
-        let controller = AppServices.controller
-        await controller.restoreNow() // 스스로 동기화하고, 완료까지 기다려 최종 결과를 보고한다
         guard let result = controller.lastResult else {
             return .result(dialog: "복원할 프로필이 없습니다.")
         }

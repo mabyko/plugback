@@ -236,12 +236,32 @@ final class PlugbackControllerTests: XCTestCase {
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
         controller.captureNow()
-        controller.isAuthorized = { false }
+        controller.authorizationCheck = { false }
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
         await controller.externalScreensAppeared(["ext-1"])
         XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testUnauthorizedBlocksEveryCommand() async {
+        // 게이트는 자동 경로만이 아니라 모든 명령 내부에 있다 (US-010 AC-2) — published 상태도 갱신된다
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.captureNow() // 권한 있는 동안 프로필 확보
+        controller.authorizationCheck = { false }
+
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        await controller.restoreNow()
+        XCTAssertTrue(gateway.moveCalls.isEmpty)      // 수동 복원 차단
+        XCTAssertFalse(controller.isAuthorized)       // UI 바인딩용 상태 갱신
+
+        let before = controller.profile
+        controller.captureNow()                       // 저장도 차단 — 어질러진 배치로 덮어쓰지 않는다
+        XCTAssertEqual(controller.profile, before)
     }
 
     func testRestoreModePersists() {

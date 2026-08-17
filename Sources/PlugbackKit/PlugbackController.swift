@@ -51,8 +51,20 @@ public final class PlugbackController: ObservableObject {
         externalScreens.contains { resultsByScreen[$0.id]?.screenSkipReason == .fingerprintMismatch }
     }
 
-    /// 권한 게이트 — 권한이 없으면 자동 복원을 시도조차 하지 않는다 (US-010 AC-2). 앱이 주입한다.
-    public var isAuthorized: () -> Bool = { true }
+    /// 권한 판정 어댑터 — 앱이 주입한다 (US-010 AC-2). 기본 true — 페이크 없는 테스트 편의.
+    public var authorizationCheck: () -> Bool = { true }
+
+    /// 마지막으로 확인한 권한 상태. UI는 시스템 API를 직접 읽지 않고 여기 바인딩한다.
+    @Published public private(set) var isAuthorized = true
+
+    /// 권한을 다시 판정해 상태를 갱신한다. 모든 명령이 내부에서 이 게이트를 지난다 —
+    /// 새 호출자가 게이트를 잊을 방법이 없다.
+    @discardableResult
+    public func checkAuthorization() -> Bool {
+        let ok = authorizationCheck()
+        if ok != isAuthorized { isAuthorized = ok }
+        return ok
+    }
 
     @Published private var profiles: [String: Profile]
     @Published private var resultsByScreen: [String: RestoreResult] = [:]
@@ -105,7 +117,7 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         updateRunningStates() // 카드가 열려 있는 채로 연결돼도 점이 맞게
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
-        guard isAuthorized() else { return }            // 권한 없이 기능을 시도하지 않는다 (US-010 AC-2)
+        // 권한 게이트는 restoreNow 내부에 있다 — 여기서 중복 검사하지 않는다
         // 새 화면에 프로필이 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
         // 이미 제자리인 창은 건너뛰므로 기존 화면까지 포함해 복원해도 창이 흔들리지 않는다 (F-02.2).
         await restoreNow()
@@ -114,6 +126,7 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 열리는 순간의 통지 — 화면·실행 상태를 동기화하고,
     /// 일회성 저장 확인 표시를 만료시킨다 (US-002 AC-1: 카드를 다시 열면 사라진다).
     public func cardOpened() {
+        checkAuthorization()
         lastCaptureCount = nil
         syncScreens()
         updateRunningStates()
@@ -133,6 +146,7 @@ public final class PlugbackController: ObservableObject {
 
     /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
     public func captureNow() {
+        guard checkAuthorization() else { return } // 권한 없이 빈 열거로 저장하지 않는다
         syncScreens()
         guard isConnected else { return }
         let windows = gateway.standardWindows(of: nil)
@@ -149,6 +163,7 @@ public final class PlugbackController: ObservableObject {
     /// [⚡ 지금 레이아웃 복원] (F-02). 연결된 모든 외장 화면에 각 프로필을 적용한다.
     /// 반환 시점 = 완료 시점 — 정책은 전부 RestoreEngine의 일이고, 여기는 배선뿐이다.
     public func restoreNow() async {
+        guard checkAuthorization() else { return } // 수동 복원도 게이트를 지난다 (US-010 AC-2)
         syncScreens()
         guard isConnected, !isRestoring else { return }
         isRestoring = true

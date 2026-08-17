@@ -7,7 +7,8 @@ enum AppServices {
         let controller = PlugbackController(gateway: AXWindowGateway(),
                                             screenProvider: SystemScreenProvider(),
                                             store: ProfileStore())
-        controller.isAuthorized = { PermissionGate.isTrusted }
+        controller.authorizationCheck = { PermissionGate.isTrusted }
+        controller.checkAuthorization() // 첫 카드가 열리기 전에도 상태가 맞도록
         controller.startWatching()
         LoginItem.registerOnFirstLaunchIfNeeded()
         return controller

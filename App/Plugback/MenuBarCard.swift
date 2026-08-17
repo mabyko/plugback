@@ -5,22 +5,19 @@ import SwiftUI
 // 권한 미승인이면 카드를 통째로 교체한다 — 정상 카드에 배너를 얹지 않는다.
 struct MenuBarCard: View {
     @ObservedObject var controller: PlugbackController
-    @State private var trusted = PermissionGate.isTrusted
 
     var body: some View {
         Group {
-            if trusted {
+            if controller.isAuthorized {
                 Card(controller: controller)
             } else {
-                PermissionOnboarding(recheck: { trusted = PermissionGate.isTrusted })
+                // 시스템 프롬프트 열기(requestPermission)만 앱의 일 — 판정은 컨트롤러에 바인딩
+                PermissionOnboarding(recheck: { controller.checkAuthorization() })
             }
         }
         .frame(width: 296)
         // 카드를 열 때마다 권한·화면·프로필을 재확인한다 (US-010 AC-3)
-        .onAppear {
-            trusted = PermissionGate.isTrusted
-            controller.cardOpened()
-        }
+        .onAppear { controller.cardOpened() }
     }
 }
 
