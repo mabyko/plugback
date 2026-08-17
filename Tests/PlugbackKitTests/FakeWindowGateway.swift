@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 @testable import PlugbackKit
 
 /// 테스트용 페이크 — 이 심 하나로 두 엔진의 정책 전부를 실기기 없이 검증한다 (docs/ARCHITECTURE.md).
@@ -51,8 +52,14 @@ final class FakeWindowGateway: WindowGateway {
     var windowOnReopen: [String: WindowInfo] = [:]
     private(set) var openWindowCalls: [String] = []
 
+    /// 0보다 크면 openWindow가 그만큼 매달린다 — 복원 중 인터리빙 시나리오용 서스펜션 지점.
+    var openWindowDelay: TimeInterval = 0
+
     func openWindow(bundleID: String) async -> Bool {
         openWindowCalls.append(bundleID)
+        if openWindowDelay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(openWindowDelay * 1_000_000_000))
+        }
         guard let window = windowOnReopen[bundleID] else { return false }
         windowsList.append(window)
         return true

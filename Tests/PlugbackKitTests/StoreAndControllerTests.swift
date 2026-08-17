@@ -157,6 +157,95 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(gateway.windowsList.first?.frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
     }
 
+    // MARK: 복원 진행 중의 상호배제 — await가 연 틈으로 아무도 못 들어온다
+
+    /// 복원을 openWindow 지연에 매달아 두고 반환한다 — 인터리빙 시나리오의 공통 준비.
+    /// 창만 닫힌 chrome + 새 창 열기 옵션으로 서스펜션 지점에 진입시킨다.
+    private func startHangingRestore(_ controller: PlugbackController) async -> Task<RestoreOutcome, Never> {
+        gateway.windowsList = []
+        gateway.windowOnReopen["com.chrome"] = WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                                                          frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.openWindowDelay = 0.05
+        controller.reopenWindowless = true
+        let task = Task { await controller.restoreNow() }
+        while gateway.openWindowCalls.isEmpty { await Task.yield() } // 서스펜션 도달까지 양보
+        return task
+    }
+
+    func testCaptureDuringRestoreIsRejected() async {
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.captureNow()
+        controller.cardOpened() // 확인 표시 만료 — 아래 거부가 새 표시를 안 만드는지 보기 위해
+        let before = controller.profile
+
+        let restore = await startHangingRestore(controller)
+        // 복원이 매달린 사이 창이 엉뚱한 자리에 — 저장이 허용되면 이 배치가 박제된다
+        gateway.windowsList = [WindowInfo(id: 9, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
+        controller.captureNow()
+        XCTAssertEqual(controller.profile, before) // 반쯤 복원된 배치가 프로필을 오염시키지 않았다
+        XCTAssertNil(controller.lastCaptureCount)  // 저장 확인 표시도 뜨지 않는다
+        _ = await restore.value
+    }
+
+    func testRestoreDuringRestoreReportsBusy() async {
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.captureNow()
+
+        let restore = await startHangingRestore(controller)
+        let second = await controller.restoreNow()
+        XCTAssertEqual(second, .alreadyRestoring) // 조용한 무시가 아니라 명시적 거부
+        _ = await restore.value
+    }
+
+    func testRemoveProfileDuringRestoreDoesNotResurrectResult() async {
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.captureNow()
+
+        let restore = await startHangingRestore(controller)
+        controller.removeProfile("ext-1") // 복원이 매달린 사이 프로필 삭제
+        _ = await restore.value
+        XCTAssertNil(controller.lastResult) // await 뒤의 결과 쓰기가 삭제를 되돌리지 않는다
+    }
+
+    func testScreenConnectedDuringRestoreIsRestoredAfterward() async {
+        // 복원 중 연결된 화면은 조용히 소실되지 않는다 — 종료 직후 1회 재복원 (보류)
+        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.chrome", "com.slack"]
+        gateway.windowsList = [
+            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),  // ext-1
+            WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
+                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),   // ext-2
+        ]
+        let controller = makeController()
+        controller.captureNow() // 두 화면 모두 프로필 확보
+
+        screens.screensList = [builtin, external] // ext-2 분리
+        let restore = await startHangingRestore(controller)
+        screens.screensList = [builtin, external, external2] // 복원이 매달린 사이 ext-2 재연결
+        gateway.windowsList.append(WindowInfo(id: 3, appBundleID: "com.slack", appName: "Slack",
+                                              frame: CGRect(x: 4500, y: 300, width: 800, height: 600))) // 어질러짐
+        await controller.externalScreensAppeared(["ext-2"]) // isRestoring → 보류
+        let outcome = await restore.value
+
+        XCTAssertEqual(gateway.windowsList.first { $0.appBundleID == "com.slack" }?.frame,
+                       CGRect(x: 4072, y: 0, width: 960, height: 1080)) // 두 번째 바퀴에서 복원됨
+        guard case .restored(let results) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertTrue(results.contains { $0.screenID == "ext-2" })
+    }
+
     func testFreshLaunchShowsStoredScreenName() {
         // 재시작 직후 화면이 없어도 저장된 프로필의 화면 이름이 보인다
         gateway.runningBundleIDs = ["com.chrome"]
@@ -253,7 +342,8 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        await controller.restoreNow()
+        let outcome = await controller.restoreNow()
+        XCTAssertEqual(outcome, .notAuthorized)       // 반환값으로도 구별된다
         XCTAssertTrue(gateway.moveCalls.isEmpty)      // 수동 복원 차단
         XCTAssertFalse(controller.isAuthorized)       // UI 바인딩용 상태 갱신
 

@@ -133,7 +133,7 @@ private struct Card: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Button("💾 지금 레이아웃 저장") { controller.captureNow() }
-                        .disabled(!controller.isConnected)
+                        .disabled(!controller.isConnected || controller.isRestoring)
                     Button("⚡ 지금 레이아웃 복원") { Task { await controller.restoreNow() } }
                         .disabled(!controller.isConnected || controller.profile == nil || controller.isRestoring)
                 }

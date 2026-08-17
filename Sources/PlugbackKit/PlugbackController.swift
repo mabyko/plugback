@@ -7,6 +7,15 @@ public enum RestoreMode: String, Sendable {
     case automatic, manual
 }
 
+/// restoreNow의 반환 — 실행되지 않은 경로도 성공과 구별된다. 호출자는 published를 뒤져 추론하지 않는다.
+public enum RestoreOutcome: Equatable, Sendable {
+    /// 복원이 끝났다. 비어 있으면 프로필 있는 화면이 없었다는 뜻.
+    case restored([RestoreResult])
+    case notAuthorized
+    case notConnected
+    case alreadyRestoring
+}
+
 /// 헤드리스 파사드 — UI 없이 완결된다. UI는 이 상태의 표현일 뿐이다 (docs/ARCHITECTURE.md).
 @MainActor
 public final class PlugbackController: ObservableObject {
@@ -127,6 +136,10 @@ public final class PlugbackController: ObservableObject {
         updateRunningStates() // 카드가 열려 있는 채로 연결돼도 점이 맞게
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         // 권한 게이트는 restoreNow 내부에 있다 — 여기서 중복 검사하지 않는다
+        if isRestoring {
+            pendingRestore = true // 진행 중 복원이 끝난 직후 1회 재복원 — 새 화면이 조용히 소실되지 않는다
+            return
+        }
         // 새 화면에 프로필이 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
         // 이미 제자리인 창은 건너뛰므로 기존 화면까지 포함해 복원해도 창이 흔들리지 않는다 (F-02.2).
         await restoreNow()
@@ -154,6 +167,7 @@ public final class PlugbackController: ObservableObject {
     /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
     public func captureNow() {
         guard checkAuthorization() else { return } // 권한 없이 빈 열거로 저장하지 않는다
+        guard !isRestoring else { return }         // 반쯤 복원된 배치를 박제하지 않는다
         syncScreens()
         guard isConnected else { return }
         let windows = gateway.standardWindows(of: nil)
@@ -167,19 +181,35 @@ public final class PlugbackController: ObservableObject {
         updateRunningStates()
     }
 
+    /// 복원 중 새 화면이 연결됐다 — 지금 복원이 끝난 직후 1회 재복원한다 (조용한 소실 방지).
+    private var pendingRestore = false
+
     /// [⚡ 지금 레이아웃 복원] (F-02). 연결된 모든 외장 화면에 각 프로필을 적용한다.
-    /// 반환 시점 = 완료 시점 — 정책은 전부 RestoreEngine의 일이고, 여기는 배선뿐이다.
-    public func restoreNow() async {
-        guard checkAuthorization() else { return } // 수동 복원도 게이트를 지난다 (US-010 AC-2)
+    /// 반환 시점 = 완료 시점, 반환값 = 결과 — 정책은 전부 RestoreEngine의 일이고, 여기는 배선뿐이다.
+    @discardableResult
+    public func restoreNow() async -> RestoreOutcome {
+        guard checkAuthorization() else { return .notAuthorized } // 수동 복원도 게이트를 지난다 (US-010 AC-2)
         syncScreens()
-        guard isConnected, !isRestoring else { return }
+        guard isConnected else { return .notConnected }
+        guard !isRestoring else { return .alreadyRestoring }
         isRestoring = true
         defer { isRestoring = false }
-        let results = await RestoreEngine.restore(
-            profiles: profiles, screens: externalScreens, using: gateway,
-            options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
-        for result in results { resultsByScreen[result.screenID] = result }
+
+        var latest: [RestoreResult] = []
+        repeat {
+            pendingRestore = false
+            let results = await RestoreEngine.restore(
+                profiles: profiles, screens: externalScreens, using: gateway,
+                options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
+            // 결과 수명 = 프로필 수명 — 복원 중 삭제된 프로필의 결과를 부활시키지 않는다
+            for result in results where profiles[result.screenID] != nil {
+                resultsByScreen[result.screenID] = result
+            }
+            latest = results
+            if pendingRestore { syncScreens() } // 보류된 새 화면을 반영해 한 바퀴 더 (멱등이라 수렴)
+        } while pendingRestore && isConnected
         updateRunningStates()
+        return .restored(latest)
     }
 
     /// 체크 해제는 복원 제외일 뿐, 프로필에서 지우지 않는다 (US-006 AC-2).
