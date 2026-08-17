@@ -234,6 +234,24 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertNil(controller.lastResult) // await 뒤의 결과 쓰기가 삭제를 되돌리지 않는다
     }
 
+    func testCardOpenDuringRestoreDoesNotReenumerate() async {
+        // 복원 중 카드 열기 → 예측 갱신의 재열거가 진행 중 복원의 창 ID를 죽인다 —
+        // updatePredictions는 복원 중엔 양보해야 한다 (ID 수명 계약)
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        await controller.captureNow()
+
+        let restore = await startHangingRestore(controller)
+        let callsBefore = gateway.standardWindowsCalls
+        await controller.cardOpened() // 복원이 매달린 사이 카드 열림
+        XCTAssertEqual(gateway.standardWindowsCalls, callsBefore) // 재열거하지 않았다
+        let outcome = await restore.value
+        guard case .restored(let results) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(results.first?.entries.first?.outcome, .moved) // 복원은 무사히 끝난다
+    }
+
     func testScreenConnectedDuringRestoreIsRestoredAfterward() async {
         // 복원 중 연결된 화면은 조용히 소실되지 않는다 — 종료 직후 1회 재복원 (보류)
         let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",

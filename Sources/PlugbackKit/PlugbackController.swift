@@ -212,6 +212,7 @@ public final class PlugbackController: ObservableObject {
             latest = results
             if pendingRestore { syncScreens() } // 보류된 새 화면을 반영해 한 바퀴 더 (멱등이라 수렴)
         } while pendingRestore && isConnected
+        isRestoring = false // 예측 갱신 전에 해제 — updatePredictions는 복원 중엔 양보한다
         await updatePredictions()
         return .restored(latest)
     }
@@ -249,6 +250,9 @@ public final class PlugbackController: ObservableObject {
     }
 
     private func updatePredictions() async {
+        // 복원 진행 중엔 양보한다 — 여기의 재열거가 진행 중 복원이 든 창 ID를 무효화한다
+        // (ID 수명 계약: 마지막 열거만 유효). 복원이 끝나면 스스로 갱신하므로 잃는 것이 없다.
+        guard !isRestoring else { return }
         guard let profile else { predictions = [:]; return }
         let targets = profile.apps.map(\.bundleID)
         var running = Set<String>()

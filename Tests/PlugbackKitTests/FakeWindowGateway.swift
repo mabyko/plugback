@@ -15,12 +15,15 @@ final class FakeWindowGateway: WindowGateway {
 
     var windowsList: [WindowInfo] = []
     var runningBundleIDs: Set<String> = []
+    /// 열거 횟수 — "복원 중엔 재열거하지 않는다" 계약의 관측 지점.
+    private(set) var standardWindowsCalls = 0
     var moveBehavior: MoveBehavior = .honest
     var perWindowBehavior: [Int: MoveBehavior] = [:]
     private(set) var moveCalls: [(windowID: Int, target: CGRect)] = []
 
     func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
-        windowsList.filter { window in
+        standardWindowsCalls += 1
+        return windowsList.filter { window in
             runningBundleIDs.contains(window.appBundleID)
                 && (bundleIDs == nil || bundleIDs!.contains(window.appBundleID))
         }
