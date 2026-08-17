@@ -72,7 +72,7 @@ final class PlugbackControllerTests: XCTestCase {
                            store: ProfileStore(directory: dir), defaults: testDefaults)
     }
 
-    func testCaptureThenRestoreRoundTrip() {
+    func testCaptureThenRestoreRoundTrip() async {
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
@@ -84,7 +84,7 @@ final class PlugbackControllerTests: XCTestCase {
         // 창이 어질러졌다 → 수동 복원 (US-007 AC-1)
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        controller.restoreNow()
+        await controller.restoreNow()
         XCTAssertEqual(controller.lastResult?.movedCount, 1)
         XCTAssertEqual(gateway.windowsList[0].frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
     }
@@ -102,14 +102,14 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(second.profile?.apps.map(\.bundleID), ["com.chrome"])
     }
 
-    func testRestoreWithoutProfileMovesNothing() {
+    func testRestoreWithoutProfileMovesNothing() async {
         // 프로필 없는 화면에서 수동 복원 → 아무 창도 움직이지 않는다 (US-007 AC-5)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
         let controller = makeController()
         controller.refresh()
-        controller.restoreNow()
+        await controller.restoreNow()
         XCTAssertNil(controller.lastResult)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
@@ -129,6 +129,41 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(controller.profile?.apps.count, 1)
     }
 
+    func testRunningWithoutWindowIsNotWindowed() {
+        // 실행 중 + 표준 창 0개 = "창 없음" 상태 — 실행 점과 창 점이 갈라진다
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+
+        gateway.windowsList = [] // 창만 모두 닫힘 — 프로세스는 생존
+        controller.refresh()
+        XCTAssertEqual(controller.runningBundleIDs, ["com.chrome"])
+        XCTAssertEqual(controller.windowedBundleIDs, [])
+    }
+
+    func testSettingsFlowIntoRestoreOptions() async {
+        // 배선 스모크: 설정 토글이 엔진 옵션으로 흐른다. 정책 자체는 엔진 테스트가 검증한다.
+        // 반환 시점 = 완료 시점 — 대기·재시도가 없다.
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController()
+        controller.refresh()
+        controller.captureNow()
+
+        gateway.windowsList = [] // 창만 닫힘 — 프로세스는 생존
+        gateway.windowOnReopen["com.chrome"] = WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                                                          frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        controller.reopenWindowless = true
+        await controller.restoreNow()
+        XCTAssertEqual(gateway.openWindowCalls, ["com.chrome"])
+        XCTAssertEqual(controller.lastResult?.entries.first?.outcome, .moved) // 최종 결과 — 중간 상태 없음
+        XCTAssertEqual(gateway.windowsList.first?.frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
+    }
+
     func testFreshLaunchShowsStoredScreenName() {
         // 재시작 직후 화면이 없어도 저장된 프로필의 화면 이름이 보인다
         gateway.runningBundleIDs = ["com.chrome"]
@@ -145,35 +180,9 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(second.currentScreen?.name, "LG UltraFine 27")
     }
 
-    func testMultiScreenDedupRestoresSharedAppOnce() {
-        // 같은 앱이 두 프로필에 있으면 식별자 정렬 순서상 첫 화면만 적용한다 (F-01.6, US-003 AC-5)
-        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
-                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
-        screens.screensList = [builtin, external, external2]
-        gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [
-            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),  // ext-1 좌측
-            WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),   // ext-2 좌측
-        ]
-        let controller = makeController()
-        controller.refresh()
-        controller.captureNow() // 두 화면 모두 chrome이 프로필에 등록됨
+    // 다중 화면 중복 제거(F-01.6)는 이제 엔진 정책 — RestoreEngineTests가 검증한다.
 
-        // 두 창 모두 어질러짐
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        gateway.windowsList[1] = WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 4500, y: 300, width: 800, height: 600))
-        controller.restoreNow()
-
-        // ext-1(정렬상 첫 화면)의 창만 이동, ext-2의 창은 그대로 — 한 앱을 두 번 옮기지 않는다
-        XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1])
-        XCTAssertEqual(gateway.windowsList[1].frame, CGRect(x: 4500, y: 300, width: 800, height: 600))
-    }
-
-    func testFingerprintMismatchBlocksRestore() {
+    func testFingerprintMismatchBlocksRestore() async {
         // UUID는 같은데 지문이 다르면 복원하지 않는다 — 오작동 대신 무작동 (F-01.4)
         let fpA = ScreenFingerprint(vendor: 1, model: 2, serial: 3)
         let fpB = ScreenFingerprint(vendor: 1, model: 2, serial: 999)
@@ -194,13 +203,13 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
         controller.refresh()
-        controller.restoreNow()
+        await controller.restoreNow()
 
-        XCTAssertTrue(controller.identityMismatch)
+        XCTAssertTrue(controller.identityMismatch) // 결과에서 파생된 배선 확인
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
-    func testAutoModeRestoresWhenScreenAppears() {
+    func testAutoModeRestoresWhenScreenAppears() async {
         // 외장 화면이 연결되면 자동으로 복원된다 (US-001, F-01.1)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
@@ -211,11 +220,11 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        controller.externalScreensAppeared(["ext-1"])
+        await controller.externalScreensAppeared(["ext-1"])
         XCTAssertEqual(controller.lastResult?.movedCount, 1)
     }
 
-    func testManualModeDoesNotRestoreOnConnect() {
+    func testManualModeDoesNotRestoreOnConnect() async {
         // 수동 모드에서는 연결돼도 복원되지 않는다 (US-007 AC-4)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
@@ -227,11 +236,11 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        controller.externalScreensAppeared(["ext-1"])
+        await controller.externalScreensAppeared(["ext-1"])
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
-    func testUnauthorizedBlocksAutoRestore() {
+    func testUnauthorizedBlocksAutoRestore() async {
         // 권한이 없으면 복원을 시도하지 않는다 (US-010 AC-2)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
@@ -243,7 +252,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        controller.externalScreensAppeared(["ext-1"])
+        await controller.externalScreensAppeared(["ext-1"])
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 

@@ -6,8 +6,12 @@ import ApplicationServices
 public final class AXWindowGateway: WindowGateway {
     private var refs: [Int: AXUIElement] = [:]
     private var nextID = 1
+    /// openWindow가 창 등장을 기다리는 한도. 무거운 앱의 실측에 맞춰 조정하는 보정 노브.
+    private let windowWaitDeadline: TimeInterval
 
-    public init() {}
+    public init(windowWaitDeadline: TimeInterval = 3.0) {
+        self.windowWaitDeadline = windowWaitDeadline
+    }
 
     public func standardWindows(of bundleIDs: [String]?) -> [WindowInfo] {
         var result: [WindowInfo] = []
@@ -50,6 +54,31 @@ public final class AXWindowGateway: WindowGateway {
         AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
         // 성공 반환값을 믿지 않는다 — 실제 프레임을 다시 읽는다 (F-02.3, 부록 1)
         return frame(of: element)
+    }
+
+    public func unminimize(windowID: Int) -> Bool {
+        guard let element = refs[windowID] else { return false }
+        return AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success
+    }
+
+    @MainActor
+    public func openWindow(bundleID: String) async -> Bool {
+        guard let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.activationPolicy == .regular && $0.bundleIdentifier == bundleID
+        }), let url = app.bundleURL else { return false }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false // 창만 열게 한다 — 포커스는 훔치지 않는다
+        // 완료 핸들러 판을 명시 — async 판은 실패를 던지지만, 성공 여부는 어차피 폴링이 판정한다
+        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+
+        // 창 등장 폴링 — 빠른 앱은 첫 확인에서 끝나고, 늦는 앱도 한도까지 잡는다.
+        // await sleep이라 메인 스레드를 막지 않는다.
+        let deadline = Date().addingTimeInterval(windowWaitDeadline)
+        repeat {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            if !standardWindows(of: [bundleID]).isEmpty { return true }
+        } while Date() < deadline
+        return false
     }
 
     public func isRunning(bundleID: String) -> Bool {

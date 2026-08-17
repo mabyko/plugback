@@ -43,7 +43,7 @@ private struct Card: View {
                         .font(.system(size: 12)).foregroundStyle(.orange)
                 }
             }
-            if let result = controller.lastResult,
+            if let result = controller.lastResult, result.screenSkipReason == nil,
                controller.isConnected, result.screenID == controller.currentScreen?.id {
                 Divider()
                 resultStrip(result)
@@ -113,6 +113,7 @@ private struct Card: View {
                     ForEach(profile.apps, id: \.bundleID) { app in
                         AppRow(app: app,
                                isRunning: controller.runningBundleIDs.contains(app.bundleID),
+                               hasWindow: controller.windowedBundleIDs.contains(app.bundleID),
                                setEnabled: { controller.setAppEnabled(app.bundleID, $0) },
                                remove: { controller.removeApp(app.bundleID) })
                     }
@@ -133,8 +134,8 @@ private struct Card: View {
                 HStack(spacing: 8) {
                     Button("💾 지금 레이아웃 저장") { controller.captureNow() }
                         .disabled(!controller.isConnected)
-                    Button("⚡ 지금 레이아웃 복원") { controller.restoreNow() }
-                        .disabled(!controller.isConnected || controller.profile == nil)
+                    Button("⚡ 지금 레이아웃 복원") { Task { await controller.restoreNow() } }
+                        .disabled(!controller.isConnected || controller.profile == nil || controller.isRestoring)
                 }
                 if let count = controller.lastCaptureCount {
                     // 저장됐다는 것을 화면에서 확인할 수 있다 (US-002 AC-1)
@@ -181,6 +182,7 @@ private struct Card: View {
 private struct AppRow: View {
     let app: TargetApp
     let isRunning: Bool
+    let hasWindow: Bool
     let setEnabled: (Bool) -> Void
     let remove: () -> Void
 
@@ -191,13 +193,23 @@ private struct AppRow: View {
             }
             .toggleStyle(.checkbox)
             Spacer()
-            Circle().fill(isRunning ? Color.orange : Color.secondary.opacity(0.4))
-                .frame(width: 7, height: 7)
-            Text(isRunning ? "실행 중" : "꺼짐")
+            // 점은 "복원하면 옮겨질까"를 답한다: 찬 주황=예, 빈 주황=실행 중이나 창 없음, 회색=꺼짐
+            dot.frame(width: 7, height: 7)
+            Text(isRunning ? (hasWindow ? "실행 중" : "창 없음") : "꺼짐")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
+        }
+    }
+
+    @ViewBuilder private var dot: some View {
+        if !isRunning {
+            Circle().fill(Color.secondary.opacity(0.4))
+        } else if hasWindow {
+            Circle().fill(Color.orange)
+        } else {
+            Circle().strokeBorder(Color.orange, lineWidth: 1.5)
         }
     }
 }

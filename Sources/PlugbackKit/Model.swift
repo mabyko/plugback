@@ -117,10 +117,18 @@ public enum SkipReason: Equatable, Sendable {
     case noWindow
 }
 
+/// 화면 통째 건너뜀 사유 — 앱 단위(SkipReason)가 아니라 그 화면의 복원 자체를 하지 않은 이유.
+public enum ScreenSkipReason: Equatable, Sendable {
+    /// UUID는 같은데 지문이 다르다 — OS가 배정을 바꿨다는 신호. 오작동 대신 무작동 (F-01.4).
+    case fingerprintMismatch
+}
+
 /// 복원 결과 (F-05.1: 이동 n · 건너뜀 n · 실패 n + 사유).
 /// 어느 화면의 결과인지 함께 기록한다 — 다른 화면의 카드에 이 결과를 보여주면 안 된다 (US-007 AC-5).
 public struct RestoreResult: Equatable, Sendable {
     public let screenID: String
+    /// nil이면 정상 복원. 값이 있으면 이 화면은 통째로 건너뛰었고 entries는 비어 있다.
+    public let screenSkipReason: ScreenSkipReason?
 
     public enum Outcome: Equatable, Sendable {
         case moved
@@ -140,8 +148,9 @@ public struct RestoreResult: Equatable, Sendable {
 
     public var entries: [Entry]
 
-    public init(screenID: String, entries: [Entry] = []) {
+    public init(screenID: String, screenSkipReason: ScreenSkipReason? = nil, entries: [Entry] = []) {
         self.screenID = screenID
+        self.screenSkipReason = screenSkipReason
         self.entries = entries
     }
 

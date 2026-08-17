@@ -33,6 +33,12 @@ struct SettingsView: View {
                 Toggle("로그인 시 자동 실행", isOn: Binding(
                     get: { launchAtLogin },
                     set: { launchAtLogin = $0; LoginItem.set($0) }))
+                Toggle("최소화된 창도 복원", isOn: $controller.restoreMinimized)
+                Text("켜면 Dock에 최소화된 창을 꺼내서 저장된 자리로 옮깁니다.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("창이 없는 앱은 새 창을 열어 복원", isOn: $controller.reopenWindowless)
+                Text("켜면 실행 중이지만 창이 없는 앱에 새 창을 열게 한 뒤 저장된 자리로 옮깁니다.\n꺼져 있는 앱을 실행하지는 않습니다. 어떤 창이 열리는지는 앱마다 다릅니다.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("단축키") {
                 Text("복원 단축키는 단축어 앱에서 지정합니다.\n새 단축어 → 동작 추가 → Plugback → \"지금 레이아웃 복원\" → 키보드 단축키 설정")

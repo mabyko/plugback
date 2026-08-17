@@ -15,7 +15,7 @@ struct RestoreLayoutIntent: AppIntent {
         }
         let controller = AppServices.controller
         controller.refresh()
-        controller.restoreNow()
+        await controller.restoreNow() // 완료까지 기다린다 — 최종 결과를 보고해야 한다
         guard let result = controller.lastResult else {
             return .result(dialog: "복원할 프로필이 없습니다.")
         }

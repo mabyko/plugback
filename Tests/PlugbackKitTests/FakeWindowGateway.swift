@@ -45,6 +45,26 @@ final class FakeWindowGateway: WindowGateway {
     }
 
     func isRunning(bundleID: String) -> Bool { runningBundleIDs.contains(bundleID) }
+
+    /// openWindow 시 이 창이 나타난다 — 실제 앱이 새 창을 여는 것을 흉내낸다.
+    /// 등록이 없으면 false — 한도까지 창이 안 뜬 앱과 같다. 페이크는 기다리지 않는다.
+    var windowOnReopen: [String: WindowInfo] = [:]
+    private(set) var openWindowCalls: [String] = []
+
+    func openWindow(bundleID: String) async -> Bool {
+        openWindowCalls.append(bundleID)
+        guard let window = windowOnReopen[bundleID] else { return false }
+        windowsList.append(window)
+        return true
+    }
+
+    func unminimize(windowID: Int) -> Bool {
+        guard let i = windowsList.firstIndex(where: { $0.id == windowID }) else { return false }
+        let old = windowsList[i]
+        windowsList[i] = WindowInfo(id: old.id, appBundleID: old.appBundleID, appName: old.appName,
+                                    frame: old.frame, isFullscreen: old.isFullscreen, isMinimized: false)
+        return true
+    }
 }
 
 final class FakeScreenProvider: ScreenProvider {

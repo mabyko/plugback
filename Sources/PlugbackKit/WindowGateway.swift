@@ -16,4 +16,15 @@ public protocol WindowGateway {
     /// 앱 실행 여부 — 건너뜀 사유(꺼짐 vs 이 화면에 창 없음) 구분용.
     /// 창 열거와 같은 앱 집합을 봐야 한다. 화면 열거는 여기가 아니라 ScreenProvider의 일이다.
     func isRunning(bundleID: String) -> Bool
+
+    /// Dock에 최소화된 창을 꺼낸다. "최소화된 창도 복원" 설정이 켜졌을 때만 쓰인다.
+    /// false면 창이 사라졌거나 앱이 거부한 것 — 호출자는 건너뜀으로 처리한다.
+    func unminimize(windowID: Int) -> Bool
+
+    /// 실행 중인데 창이 없는 앱에 새 창을 열게 하고(Dock 클릭과 동일한 reopen),
+    /// 표준 창이 실제로 나타날 때까지 기다린다. 창이 비동기로 나타난다는 플랫폼 현실은
+    /// 이 구현 안의 일이다 — 호출자는 타이밍을 모른다.
+    /// true = 표준 창이 지금 존재한다(다시 열거하면 나온다). false = 한도 내에 안 나타났거나 앱이 없다.
+    /// 꺼진 앱을 실행하지는 않는다 — F-02.1은 유지된다.
+    func openWindow(bundleID: String) async -> Bool
 }

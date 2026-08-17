@@ -17,10 +17,13 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var isConnected = false
     /// 지금 연결된 외장 화면 수 (다중 화면 표시용).
     @Published public private(set) var connectedScreenCount = 0
-    /// UUID는 맞는데 지문이 다른 화면이 있었다 — 복원하지 않았다 (F-01.4).
-    @Published public private(set) var identityMismatch = false
+    /// 복원 진행 중 — 재진입 가드이자 버튼 비활성용 UI 상태.
+    @Published public private(set) var isRestoring = false
     /// 프로필 대상 앱 중 지금 실행 중인 것들 (US-006 AC-1 표시용).
     @Published public private(set) var runningBundleIDs: Set<String> = []
+    /// 그중 표준 창이 하나라도 있는 것들 — "복원하면 옮겨질까"를 미리 답한다.
+    /// 실행 중인데 여기 없으면 복원 시 .skipped(.noWindow)가 될 앱이다.
+    @Published public private(set) var windowedBundleIDs: Set<String> = []
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
     /// 프로필 파일이 손상돼 백업 후 초기화된 경우 그 위치 (F-04.2 알림용)
@@ -29,6 +32,23 @@ public final class PlugbackController: ObservableObject {
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
     @Published public var restoreMode: RestoreMode {
         didSet { defaults.set(restoreMode.rawValue, forKey: "restoreMode") }
+    }
+
+    /// 최소화된 창도 Dock에서 꺼내 복원할지 (F-02.2 예외 설정). 기본 꺼짐 — 최소화는 사용자의 의도다.
+    @Published public var restoreMinimized: Bool {
+        didSet { defaults.set(restoreMinimized, forKey: "restoreMinimized") }
+    }
+
+    /// 실행 중인데 창이 없는 앱에 새 창을 열게 해 복원할지 (F-02.2 예외 설정). 기본 꺼짐.
+    /// 꺼진 앱을 실행하지는 않는다 — F-02.1은 그대로다.
+    @Published public var reopenWindowless: Bool {
+        didSet { defaults.set(reopenWindowless, forKey: "reopenWindowless") }
+    }
+
+    /// UUID는 맞는데 지문이 다른 화면이 있었다 — 복원하지 않았다 (F-01.4).
+    /// 결과에서 파생한다 — 별도 저장 플래그를 두지 않는다.
+    public var identityMismatch: Bool {
+        externalScreens.contains { resultsByScreen[$0.id]?.screenSkipReason == .fingerprintMismatch }
     }
 
     /// 권한 게이트 — 권한이 없으면 자동 복원을 시도조차 하지 않는다 (US-010 AC-2). 앱이 주입한다.
@@ -56,6 +76,8 @@ public final class PlugbackController: ObservableObject {
         self.store = store
         self.defaults = defaults
         restoreMode = defaults.string(forKey: "restoreMode").flatMap(RestoreMode.init) ?? .automatic
+        restoreMinimized = defaults.bool(forKey: "restoreMinimized")
+        reopenWindowless = defaults.bool(forKey: "reopenWindowless")
         let outcome = store.load()
         profiles = outcome.profiles
         corruptionBackupURL = outcome.corruptionBackupURL
@@ -71,20 +93,21 @@ public final class PlugbackController: ObservableObject {
     public func startWatching(debounceInterval: TimeInterval = 1.5) {
         guard watcher == nil else { return }
         let w = DisplayWatcher(provider: screenProvider, debounceInterval: debounceInterval) { [weak self] ids in
-            self?.externalScreensAppeared(ids)
+            guard let self else { return }
+            Task { await self.externalScreensAppeared(ids) }
         }
         w.start()
         watcher = w
     }
 
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
-    func externalScreensAppeared(_ ids: [String]) {
+    func externalScreensAppeared(_ ids: [String]) async {
         refresh()
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         guard isAuthorized() else { return }            // 권한 없이 기능을 시도하지 않는다 (US-010 AC-2)
         // 새 화면에 프로필이 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
         // 이미 제자리인 창은 건너뛰므로 기존 화면까지 포함해 복원해도 창이 흔들리지 않는다 (F-02.2).
-        restoreNow()
+        await restoreNow()
     }
 
     /// 카드가 열릴 때 호출 — 화면·실행 상태를 동기화한다.
@@ -116,22 +139,15 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// [⚡ 지금 레이아웃 복원] (F-02). 연결된 모든 외장 화면에 각 프로필을 적용한다.
-    /// 같은 앱이 여러 프로필에 있으면 식별자 정렬 순서상 첫 화면만 적용한다 — 한 창을 두 번 옮기지 않는다 (F-01.6).
-    public func restoreNow() {
-        guard isConnected else { return }
-        identityMismatch = false
-        var claimed = Set<String>()
-        for screen in externalScreens.sorted(by: { $0.id < $1.id }) {
-            guard var profile = profiles[screen.id] else { continue }
-            // UUID 일치 + 지문 불일치 = OS가 배정을 바꿨다는 신호. 오작동 대신 무작동 (F-01.4).
-            if let saved = profile.fingerprint, let live = screen.fingerprint, saved != live {
-                identityMismatch = true
-                continue
-            }
-            profile.apps.removeAll { claimed.contains($0.bundleID) }
-            resultsByScreen[screen.id] = RestoreEngine.restore(profile: profile, on: screen, using: gateway)
-            claimed.formUnion(profile.apps.filter(\.isEnabled).map(\.bundleID))
-        }
+    /// 반환 시점 = 완료 시점 — 정책은 전부 RestoreEngine의 일이고, 여기는 배선뿐이다.
+    public func restoreNow() async {
+        guard isConnected, !isRestoring else { return }
+        isRestoring = true
+        defer { isRestoring = false }
+        let results = await RestoreEngine.restore(
+            profiles: profiles, screens: externalScreens, using: gateway,
+            options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
+        for result in results { resultsByScreen[result.screenID] = result }
         updateRunningStates()
     }
 
@@ -169,7 +185,10 @@ public final class PlugbackController: ObservableObject {
     }
 
     private func updateRunningStates() {
-        runningBundleIDs = Set((profile?.apps ?? []).map(\.bundleID).filter(gateway.isRunning))
+        let targets = (profile?.apps ?? []).map(\.bundleID)
+        runningBundleIDs = Set(targets.filter(gateway.isRunning))
+        // 대상 앱만 열거 — 카드가 열릴 때뿐이라 AX 왕복 비용은 감당 범위
+        windowedBundleIDs = Set(gateway.standardWindows(of: targets).map(\.appBundleID))
     }
 
     private func persist() {
