@@ -110,9 +110,10 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// 화면 연결 감시 시작 (M4). 새 외장 화면이 나타나면 자동 모드일 때 복원한다 (F-01.1).
-    public func startWatching(debounceInterval: TimeInterval = 1.5) {
+    /// 시간 상수는 DisplayWatcher의 것 — 여기서 다시 선언하지 않는다.
+    public func startWatching() {
         guard watcher == nil else { return }
-        let w = DisplayWatcher(provider: screenProvider, debounceInterval: debounceInterval) { [weak self] ids in
+        let w = DisplayWatcher(provider: screenProvider) { [weak self] ids in
             guard let self else { return }
             Task { await self.externalScreensAppeared(ids) }
         }
@@ -205,8 +206,6 @@ public final class PlugbackController: ObservableObject {
         resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
         persist()
     }
-
-    public func isAppRunning(_ bundleID: String) -> Bool { gateway.isRunning(bundleID: bundleID) }
 
     private func mutateProfile(_ change: (inout Profile) -> Void) {
         guard let id = currentScreenID, var p = profiles[id] else { return }

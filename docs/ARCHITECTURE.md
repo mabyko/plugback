@@ -23,18 +23,19 @@
 ```
 DisplayWatcher ──이벤트──▶ PlugbackController ◀──조작── MenuBarUI
                               │
-                 ┌────────────┼────────────┐
-                 ▼            ▼            ▼
-           RestoreEngine  CaptureEngine  ProfileStore
-                 │            │
-                 └── WindowGateway (유일한 AX 접점)
-                          │
-                       ScreenID
+                 ┌────────────┼────────────┬────────────┐
+                 ▼            ▼            ▼            ▼
+           RestoreEngine  CaptureEngine  ProfileStore  ScreenProvider
+                 │                                     (ScreenID 내장)
+                 └─▶ WindowGateway (다른 앱의 창·프로세스를 만지는 유일한 접점)
 ```
+
+CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷을 받는 거의 순수 함수다.
+창 열거는 컨트롤러가 게이트웨이로 하고, RestoreEngine만 게이트웨이를 주입받는다.
 
 ### DisplayWatcher
 
-- **인터페이스**: 콜백 하나 — `onExternalScreenAppeared([ScreenID])`
+- **인터페이스**: 콜백 하나 — `onExternalScreensAppeared([화면 식별자])`
 - **숨기는 것**: 이벤트 안정화 대기(F-01.2), 위상 게이트와 잠자기 억제(F-01.3), 무효 해상도 필터. 원시 화면 이벤트 3~6회를 의미 있는 이벤트 1회로 압축한다.
 - US-009(창 튐 방지)는 전부 이 모듈 안에서 결판난다.
 
@@ -124,5 +125,5 @@ plugback/                    ← 이 레포 (MIT)
 | M4 | DisplayWatcher + 자동 복원 + 게이트·억제 | US-001, 009 |
 | M5 | 복원 동작 시스템 노출(단축어, 기본 할당 없음)·설정 창(프로필 목록·로그인 항목)·카드 A/B 확정 (결과 사유 UI·체크박스는 M2에서 선반영) | US-006, 007, 008, 011, 012 |
 
-화면 식별자의 실기기 스파이크(F-01.4). 측정 도구는 `swift run screen-probe` — 상황 전후로 실행해 UUID를 비교한다.
+화면 식별자의 실기기 스파이크(F-01.4). 측정 도구는 `swift run screen-probe` — 상황 전후로 실행해 UUID를 비교한다. 프로브는 배포 식별 로직(SystemScreenProvider)을 그대로 사용한다 — 다른 것을 재면 측정이 스파이크 질문에 답하지 못한다.
 ① 포트 변경 시 UUID 유지 — **통과** (2026-08-16 실측: 필립스 27E2F7901, 포트 교체 전후 UUID·지문 동일. 최대 미지수였던 항목) ② 동일 모델 2대 동시 연결·순서 교체 재연결 — 미측정 ③ 재부팅 후 유지 — 미측정 ④ 클램셸에서 내장 화면이 빠지는 목록이 Online인지 Active인지 — 미측정 ⑤ DisplayLink 독(보유 시 — 재연결마다 UUID가 바뀐다는 보고가 있어 무동작 처리 확인) — 미측정.

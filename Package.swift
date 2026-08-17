@@ -12,7 +12,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "PlugbackKit"),
-        .executableTarget(name: "screen-probe"),
+        .executableTarget(name: "screen-probe", dependencies: ["PlugbackKit"]),
         .testTarget(name: "PlugbackKitTests", dependencies: ["PlugbackKit"])
     ]
 )
