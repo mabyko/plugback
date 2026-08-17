@@ -350,6 +350,19 @@ final class RestoreEngineTests: XCTestCase {
         }
     }
 
+    func testWindowlessAppsAreOpenedInParallel() async {
+        // 창 없는 앱이 여럿이어도 새 창 열기 대기는 병렬 — 총 지연이 앱 수에 비례하지 않는다 (F-07)
+        gateway.runningBundleIDs = ["com.a", "com.b"]
+        gateway.windowOnReopen["com.a"] = window(11, "com.a", x: 2500, y: 500, w: 800, h: 600)
+        gateway.windowOnReopen["com.b"] = window(12, "com.b", x: 2600, y: 600, w: 800, h: 600)
+        gateway.openWindowDelay = 0.05
+        let rightHalf = UnitRect(x: 0.5, y: 0, width: 0.5, height: 1)
+        let result = await restore(profileWith(("com.a", leftHalf), ("com.b", rightHalf)),
+                                   options: RestoreOptions(reopenWindowless: true))
+        XCTAssertEqual(gateway.openWindowHighWater, 2) // 순차였다면 1
+        XCTAssertEqual(result.entries.map(\.outcome), [.moved, .moved])
+    }
+
     func testFingerprintMismatchSkipsScreenWhole() async {
         // UUID는 같은데 지문이 다르면 그 화면은 통째로 건너뛴다 — 오작동 대신 무작동 (F-01.4)
         let mismatched = ScreenInfo(id: external.id, name: external.name, frame: external.frame,

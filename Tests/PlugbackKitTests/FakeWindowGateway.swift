@@ -60,8 +60,15 @@ final class FakeWindowGateway: WindowGateway {
     /// 0보다 크면 openWindow가 그만큼 매달린다 — 복원 중 인터리빙 시나리오용 서스펜션 지점.
     var openWindowDelay: TimeInterval = 0
 
+    /// 동시 진행 최고치 — 병렬 대기의 결정적 증거 (타이밍 측정 없이 잡는다).
+    private(set) var openWindowHighWater = 0
+    private var openWindowInFlight = 0
+
     func openWindow(bundleID: String) async -> Bool {
         openWindowCalls.append(bundleID)
+        openWindowInFlight += 1
+        openWindowHighWater = max(openWindowHighWater, openWindowInFlight)
+        defer { openWindowInFlight -= 1 }
         if openWindowDelay > 0 {
             try? await Task.sleep(nanoseconds: UInt64(openWindowDelay * 1_000_000_000))
         }

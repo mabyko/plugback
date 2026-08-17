@@ -55,6 +55,23 @@ public enum RestoreEngine {
             }
             profile.apps.removeAll { claimed.contains($0.bundleID) }
 
+            // 사전 단계 (F-02.2 예외 옵션): 창 없는 실행 중 앱 전부에 동시 새 창 열기.
+            // 대기가 병렬이라 총 지연은 앱 수와 무관하게 게이트웨이 한도(≤3초) 하나다 (F-07).
+            if options.reopenWindowless {
+                var windowless: [String] = []
+                for app in profile.apps where app.isEnabled {
+                    if await gateway.isRunning(bundleID: app.bundleID),
+                       await gateway.standardWindows(of: [app.bundleID]).isEmpty {
+                        windowless.append(app.bundleID)
+                    }
+                }
+                await withTaskGroup(of: Void.self) { group in
+                    for bundleID in windowless {
+                        group.addTask { _ = await gateway.openWindow(bundleID: bundleID) }
+                    }
+                }
+            }
+
             var result = RestoreResult(screenID: screen.id)
             for app in profile.apps where app.isEnabled {
                 let outcome = await restoreOne(app, on: screen, using: gateway, options: options)
@@ -71,16 +88,9 @@ public enum RestoreEngine {
     ) async -> RestoreResult.Outcome {
         guard await gateway.isRunning(bundleID: app.bundleID) else { return .skipped(.appNotRunning) }
 
-        var all = await gateway.standardWindows(of: [app.bundleID])
-        if all.isEmpty {
-            // 옵션이 켜졌으면 새 창을 열게 하고 창이 실재할 때까지 기다린다 — 발견 지점에서 바로 결정 (F-02.2 예외).
-            // ponytail: 창 없는 앱이 여럿이면 대기가 순차다. 앱당 한도는 게이트웨이 노브 — 병렬화는 그게 느릴 때.
-            guard options.reopenWindowless, await gateway.openWindow(bundleID: app.bundleID) else {
-                return .skipped(.noWindow)
-            }
-            all = await gateway.standardWindows(of: [app.bundleID])
-            guard !all.isEmpty else { return .skipped(.noWindow) }
-        }
+        // 새 창 열기는 사전 단계에서 병렬로 끝났다 — 여기서는 그 결과(창 유무)만 본다.
+        let all = await gateway.standardWindows(of: [app.bundleID])
+        guard !all.isEmpty else { return .skipped(.noWindow) }
 
         let window: WindowInfo
         switch pickWindow(from: all, on: screen, options: options) {
