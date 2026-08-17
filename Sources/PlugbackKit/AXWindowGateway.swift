@@ -3,7 +3,10 @@ import ApplicationServices
 
 /// 실물 어댑터 — 접근성 API 전체를 여기 가둔다 (docs/ARCHITECTURE.md의 유일한 AX 접점).
 /// AX 좌표계는 이미 좌상단 원점 전역이므로 창 프레임은 무변환으로 흐른다.
-public final class AXWindowGateway: WindowGateway {
+///
+/// actor다: AX 왕복(앱당 250ms 응답 한도)은 이 actor의 직렬 실행기에서 돌고,
+/// 메인 액터는 막히지 않는다 (F-02.4). NSWorkspace 읽기만 메인으로 홉한다.
+public actor AXWindowGateway: WindowGateway {
     private var refs: [Int: AXUIElement] = [:]
     private var nextID = 1
     /// openWindow가 창 등장을 기다리는 한도. 무거운 앱의 실측에 맞춰 조정하는 보정 노브.
@@ -13,16 +16,22 @@ public final class AXWindowGateway: WindowGateway {
         self.windowWaitDeadline = windowWaitDeadline
     }
 
-    public func standardWindows(of bundleIDs: [String]?) -> [WindowInfo] {
+    public func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
         // ID 수명 계약: 마지막 열거만 유효 — 이전 열거의 참조를 비워 죽은 ID가
         // 조용히 성공하는 것을 막고, 장기 실행 시 refs의 무한 증식도 막는다.
         refs.removeAll()
-        var result: [WindowInfo] = []
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-            guard let bundleID = app.bundleIdentifier else { continue }
-            if let ids = bundleIDs, !ids.contains(bundleID) { continue }
+        // 앱 목록은 NSWorkspace(메인)에서 한 번에 — AX 순회는 actor 실행기에서
+        let apps: [(pid: pid_t, bundleID: String, name: String)] = await MainActor.run {
+            NSWorkspace.shared.runningApplications.compactMap { app in
+                guard app.activationPolicy == .regular, let id = app.bundleIdentifier else { return nil }
+                if let ids = bundleIDs, !ids.contains(id) { return nil }
+                return (app.processIdentifier, id, app.localizedName ?? id)
+            }
+        }
 
-            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        var result: [WindowInfo] = []
+        for app in apps {
+            let appElement = AXUIElementCreateApplication(app.pid)
             // 앱 하나가 응답하지 않아도 멈추는 시간의 한도 (F-02.4, 초기값 250ms)
             AXUIElementSetMessagingTimeout(appElement, 0.25)
 
@@ -39,15 +48,15 @@ public final class AXWindowGateway: WindowGateway {
                 let id = nextID
                 nextID += 1
                 refs[id] = element
-                result.append(WindowInfo(id: id, appBundleID: bundleID,
-                                         appName: app.localizedName ?? bundleID,
+                result.append(WindowInfo(id: id, appBundleID: app.bundleID,
+                                         appName: app.name,
                                          frame: frame, isFullscreen: fullscreen, isMinimized: minimized))
             }
         }
         return result
     }
 
-    public func move(windowID: Int, to target: CGRect) -> CGRect? {
+    public func move(windowID: Int, to target: CGRect) async -> CGRect? {
         guard let element = refs[windowID] else { return nil }
         var origin = target.origin
         var size = target.size
@@ -59,7 +68,7 @@ public final class AXWindowGateway: WindowGateway {
         return frame(of: element)
     }
 
-    public func unminimize(windowID: Int) -> CGRect? {
+    public func unminimize(windowID: Int) async -> CGRect? {
         guard let element = refs[windowID],
               AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success
         else { return nil }
@@ -70,31 +79,36 @@ public final class AXWindowGateway: WindowGateway {
         return frame(of: element)
     }
 
-    @MainActor
+    public func isRunning(bundleID: String) async -> Bool {
+        // 창 열거와 같은 집합(.regular)만 본다 — 액세서리 앱이 "창 없음"으로 오분류되지 않게
+        await MainActor.run {
+            NSWorkspace.shared.runningApplications.contains {
+                $0.activationPolicy == .regular && $0.bundleIdentifier == bundleID
+            }
+        }
+    }
+
     public func openWindow(bundleID: String) async -> Bool {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.activationPolicy == .regular && $0.bundleIdentifier == bundleID
-        }), let url = app.bundleURL else { return false }
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = false // 창만 열게 한다 — 포커스는 훔치지 않는다
-        // 완료 핸들러 판을 명시 — async 판은 실패를 던지지만, 성공 여부는 어차피 폴링이 판정한다
-        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        let opened = await MainActor.run { () -> Bool in
+            guard let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.activationPolicy == .regular && $0.bundleIdentifier == bundleID
+            }), let url = app.bundleURL else { return false }
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false // 창만 열게 한다 — 포커스는 훔치지 않는다
+            // 완료 핸들러 판을 명시 — async 판은 실패를 던지지만, 성공 여부는 어차피 폴링이 판정한다
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+            return true
+        }
+        guard opened else { return false }
 
         // 창 등장 폴링 — 빠른 앱은 첫 확인에서 끝나고, 늦는 앱도 한도까지 잡는다.
-        // await sleep이라 메인 스레드를 막지 않는다.
+        // 이벤트에 반응해 시작되는 유한 대기라 F-07이 허용한다.
         let deadline = Date().addingTimeInterval(windowWaitDeadline)
         repeat {
             try? await Task.sleep(nanoseconds: 200_000_000)
-            if !standardWindows(of: [bundleID]).isEmpty { return true }
+            if await standardWindows(of: [bundleID]).isEmpty == false { return true }
         } while Date() < deadline
         return false
-    }
-
-    public func isRunning(bundleID: String) -> Bool {
-        // 창 열거와 같은 집합(.regular)만 본다 — 액세서리 앱이 "창 없음"으로 오분류되지 않게
-        NSWorkspace.shared.runningApplications.contains {
-            $0.activationPolicy == .regular && $0.bundleIdentifier == bundleID
-        }
     }
 
     // MARK: - AX helpers

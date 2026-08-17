@@ -17,7 +17,7 @@ struct MenuBarCard: View {
         }
         .frame(width: 296)
         // 카드를 열 때마다 권한·화면·프로필을 재확인한다 (US-010 AC-3)
-        .onAppear { controller.cardOpened() }
+        .onAppear { Task { await controller.cardOpened() } }
     }
 }
 
@@ -143,7 +143,7 @@ private struct Card: View {
         zone {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Button("💾 지금 레이아웃 저장") { controller.captureNow() }
+                    Button("💾 지금 레이아웃 저장") { Task { await controller.captureNow() } }
                         .disabled(!controller.isConnected || controller.isRestoring)
                     Button("⚡ 지금 레이아웃 복원") { Task { await controller.restoreNow() } }
                         .disabled(!controller.isConnected || controller.profile == nil || controller.isRestoring)

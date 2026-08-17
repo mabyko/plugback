@@ -3,6 +3,8 @@ import Foundation
 @testable import PlugbackKit
 
 /// 테스트용 페이크 — 이 심 하나로 두 엔진의 정책 전부를 실기기 없이 검증한다 (docs/ARCHITECTURE.md).
+/// @MainActor: 테스트(전부 @MainActor)가 상태를 동기로 만지게 — 격리는 심의 Sendable 요구를 충족한다.
+@MainActor
 final class FakeWindowGateway: WindowGateway {
     enum MoveBehavior {
         case honest                      // 요청대로 이동
@@ -17,14 +19,14 @@ final class FakeWindowGateway: WindowGateway {
     var perWindowBehavior: [Int: MoveBehavior] = [:]
     private(set) var moveCalls: [(windowID: Int, target: CGRect)] = []
 
-    func standardWindows(of bundleIDs: [String]?) -> [WindowInfo] {
+    func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
         windowsList.filter { window in
             runningBundleIDs.contains(window.appBundleID)
                 && (bundleIDs == nil || bundleIDs!.contains(window.appBundleID))
         }
     }
 
-    func move(windowID: Int, to frame: CGRect) -> CGRect? {
+    func move(windowID: Int, to frame: CGRect) async -> CGRect? {
         moveCalls.append((windowID, frame))
         switch perWindowBehavior[windowID] ?? moveBehavior {
         case .honest:
@@ -45,7 +47,7 @@ final class FakeWindowGateway: WindowGateway {
         }
     }
 
-    func isRunning(bundleID: String) -> Bool { runningBundleIDs.contains(bundleID) }
+    func isRunning(bundleID: String) async -> Bool { runningBundleIDs.contains(bundleID) }
 
     /// openWindow 시 이 창이 나타난다 — 실제 앱이 새 창을 여는 것을 흉내낸다.
     /// 등록이 없으면 false — 한도까지 창이 안 뜬 앱과 같다. 페이크는 기다리지 않는다.
@@ -70,7 +72,7 @@ final class FakeWindowGateway: WindowGateway {
     /// Dock에서 나오며 프레임이 바뀌는 상황 — 열거 스냅샷과 재판독의 괴리를 흉내낸다
     var frameOnUnminimize: [Int: CGRect] = [:]
 
-    func unminimize(windowID: Int) -> CGRect? {
+    func unminimize(windowID: Int) async -> CGRect? {
         guard !unminimizeFails, let i = windowsList.firstIndex(where: { $0.id == windowID }) else { return nil }
         let old = windowsList[i]
         let frame = frameOnUnminimize[windowID] ?? old.frame

@@ -15,6 +15,7 @@ public struct RestoreOptions: Sendable {
 }
 
 /// 선택 복원 엔진 (F-02). 프로필에 없는 앱과 내장 화면의 창은 존재 자체를 모른다.
+/// 격리 자유 — 어느 액터에도 묶이지 않는다. AX의 실행 흐름은 게이트웨이 어댑터의 것이다 (F-02.4).
 /// 복원 정책 전부가 여기 산다: 창 선택, 건너뜀 판정, 지문 검증(F-01.4),
 /// 다중 화면 중복 제거(F-01.6), 이동 검증·재시도(F-02.3), 새 창 열기 후 복원.
 public enum RestoreEngine {
@@ -24,7 +25,6 @@ public enum RestoreEngine {
     /// 연결된 외장 화면들에 각 프로필을 적용한다. 반환 시점 = 완료 시점 — 최종 결과다.
     /// 프로필 없는 화면은 결과를 만들지 않는다 (US-007 AC-5).
     /// 같은 앱이 여러 프로필에 있으면 식별자 정렬 순서상 첫 화면만 적용한다 — 한 창을 두 번 옮기지 않는다 (F-01.6).
-    @MainActor
     public static func restore(
         profiles: [String: Profile],
         screens: [ScreenInfo],
@@ -53,20 +53,19 @@ public enum RestoreEngine {
         return results
     }
 
-    @MainActor
     private static func restoreOne(
         _ app: TargetApp, on screen: ScreenInfo, using gateway: WindowGateway, options: RestoreOptions
     ) async -> RestoreResult.Outcome {
-        guard gateway.isRunning(bundleID: app.bundleID) else { return .skipped(.appNotRunning) }
+        guard await gateway.isRunning(bundleID: app.bundleID) else { return .skipped(.appNotRunning) }
 
-        var all = gateway.standardWindows(of: [app.bundleID])
+        var all = await gateway.standardWindows(of: [app.bundleID])
         if all.isEmpty {
             // 옵션이 켜졌으면 새 창을 열게 하고 창이 실재할 때까지 기다린다 — 발견 지점에서 바로 결정 (F-02.2 예외).
             // ponytail: 창 없는 앱이 여럿이면 대기가 순차다. 앱당 한도는 게이트웨이 노브 — 병렬화는 그게 느릴 때.
             guard options.reopenWindowless, await gateway.openWindow(bundleID: app.bundleID) else {
                 return .skipped(.noWindow)
             }
-            all = gateway.standardWindows(of: [app.bundleID])
+            all = await gateway.standardWindows(of: [app.bundleID])
             guard !all.isEmpty else { return .skipped(.noWindow) }
         }
 
@@ -89,7 +88,7 @@ public enum RestoreEngine {
         // 꺼낸 뒤의 재판독 프레임으로 판정한다 — 열거 시점 스냅샷은 이미 스테일이다.
         var currentFrame = window.frame
         if window.isMinimized {
-            guard let fresh = gateway.unminimize(windowID: window.id) else { return .skipped(.minimized) }
+            guard let fresh = await gateway.unminimize(windowID: window.id) else { return .skipped(.minimized) }
             currentFrame = fresh
         }
 
@@ -98,7 +97,7 @@ public enum RestoreEngine {
 
         // 이동 → 검증 → 1회 재시도 (F-02.3). 재시도도 실패하면 실패로 기록하고 멈추지 않는다.
         for _ in 0..<2 {
-            if let actual = gateway.move(windowID: window.id, to: target),
+            if let actual = await gateway.move(windowID: window.id, to: target),
                approximatelyEqual(actual, target) {
                 return .moved
             }

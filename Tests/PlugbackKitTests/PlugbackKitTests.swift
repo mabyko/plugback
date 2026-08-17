@@ -95,12 +95,8 @@ final class CaptureEngineTests: XCTestCase {
 
 @MainActor
 final class RestoreEngineTests: XCTestCase {
-    private var gateway: FakeWindowGateway!
-
-    override func setUp() {
-        super.setUp()
-        gateway = FakeWindowGateway()
-    }
+    // XCTest는 테스트마다 새 인스턴스 — setUp 없이 프로퍼티 초기화로 충분하다
+    private var gateway = FakeWindowGateway()
 
     private func profileWith(_ apps: (String, UnitRect)...) -> Profile {
         Profile(screenID: external.id, screenName: external.name,

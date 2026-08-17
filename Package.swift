@@ -11,8 +11,12 @@ let package = Package(
         .executable(name: "screen-probe", targets: ["screen-probe"])
     ],
     targets: [
-        .target(name: "PlugbackKit"),
-        .executableTarget(name: "screen-probe", dependencies: ["PlugbackKit"]),
-        .testTarget(name: "PlugbackKitTests", dependencies: ["PlugbackKit"])
+        // StrictConcurrency: 게이트웨이 심의 격리 계약을 컴파일러가 지킨다 (docs/ARCHITECTURE.md)
+        .target(name: "PlugbackKit",
+                swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]),
+        .executableTarget(name: "screen-probe", dependencies: ["PlugbackKit"],
+                          swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]),
+        .testTarget(name: "PlugbackKitTests", dependencies: ["PlugbackKit"],
+                    swiftSettings: [.enableExperimentalFeature("StrictConcurrency")])
     ]
 )

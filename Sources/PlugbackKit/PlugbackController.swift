@@ -137,7 +137,7 @@ public final class PlugbackController: ObservableObject {
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
     func externalScreensAppeared() async {
         syncScreens()
-        updateRunningStates() // 카드가 열려 있는 채로 연결돼도 점이 맞게
+        await updateRunningStates() // 카드가 열려 있는 채로 연결돼도 점이 맞게
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         // 권한 게이트는 restoreNow 내부에 있다 — 여기서 중복 검사하지 않는다
         if isRestoring {
@@ -151,11 +151,12 @@ public final class PlugbackController: ObservableObject {
 
     /// 카드가 열리는 순간의 통지 — 화면·실행 상태를 동기화하고,
     /// 일회성 저장 확인 표시를 만료시킨다 (US-002 AC-1: 카드를 다시 열면 사라진다).
-    public func cardOpened() {
+    /// async — 실행 상태 갱신이 게이트웨이 왕복이라서다. 메인은 막히지 않는다.
+    public func cardOpened() async {
         checkAuthorization()
         lastCaptureCount = nil
         syncScreens()
-        updateRunningStates()
+        await updateRunningStates()
     }
 
     /// 화면 상태 동기화. 명령이 스스로 호출한다 — 호출자에게 순서 의식이 없다.
@@ -169,12 +170,13 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
-    public func captureNow() {
+    /// async — 창 열거가 이 동작의 본체라서다.
+    public func captureNow() async {
         guard checkAuthorization() else { return } // 권한 없이 빈 열거로 저장하지 않는다
         guard !isRestoring else { return }         // 반쯤 복원된 배치를 박제하지 않는다
         syncScreens()
         guard isConnected else { return }
-        let windows = gateway.standardWindows(of: nil)
+        let windows = await gateway.standardWindows(of: nil)
         for screen in externalScreens {
             var merged = CaptureEngine.capture(windows: windows, on: screen, merging: profiles[screen.id])
             merged.fingerprint = screen.fingerprint
@@ -182,7 +184,7 @@ public final class PlugbackController: ObservableObject {
         }
         lastCaptureCount = profile?.apps.count
         persist()
-        updateRunningStates()
+        await updateRunningStates()
     }
 
     /// 복원 중 새 화면이 연결됐다 — 지금 복원이 끝난 직후 1회 재복원한다 (조용한 소실 방지).
@@ -212,7 +214,7 @@ public final class PlugbackController: ObservableObject {
             latest = results
             if pendingRestore { syncScreens() } // 보류된 새 화면을 반영해 한 바퀴 더 (멱등이라 수렴)
         } while pendingRestore && isConnected
-        updateRunningStates()
+        await updateRunningStates()
         return .restored(latest)
     }
 
@@ -248,11 +250,15 @@ public final class PlugbackController: ObservableObject {
         persist()
     }
 
-    private func updateRunningStates() {
+    private func updateRunningStates() async {
         let targets = (profile?.apps ?? []).map(\.bundleID)
-        runningBundleIDs = Set(targets.filter(gateway.isRunning))
+        var running = Set<String>()
+        for bundleID in targets where await gateway.isRunning(bundleID: bundleID) {
+            running.insert(bundleID)
+        }
+        runningBundleIDs = running
         // 대상 앱만 열거 — 카드가 열릴 때뿐이라 AX 왕복 비용은 감당 범위
-        windowedBundleIDs = Set(gateway.standardWindows(of: targets).map(\.appBundleID))
+        windowedBundleIDs = Set(await gateway.standardWindows(of: targets).map(\.appBundleID))
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
