@@ -33,7 +33,8 @@ public final class DisplayWatcher {
         knownExternalIDs = Set(provider.screens().filter { !$0.isBuiltin }.map(\.id))
     }
 
-    /// 순수 이벤트 구독만 사용한다 — 폴링·타이머 없음 (F-07).
+    /// 순수 이벤트 구독만 사용한다 — 상시 폴링·주기 타이머 없음 (F-07).
+    /// 디바운스의 one-shot asyncAfter는 이벤트에 반응해 시작되는 유한 대기라 F-07이 허용한다.
     public func start() {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
