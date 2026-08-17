@@ -123,8 +123,7 @@ private struct Card: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(profile.apps, id: \.bundleID) { app in
                         AppRow(app: app,
-                               isRunning: controller.runningBundleIDs.contains(app.bundleID),
-                               hasWindow: controller.windowedBundleIDs.contains(app.bundleID),
+                               prediction: controller.predictions[app.bundleID] ?? .willSkip(.appNotRunning),
                                setEnabled: { controller.setAppEnabled(app.bundleID, $0) },
                                remove: { controller.removeApp(app.bundleID) })
                     }
@@ -192,8 +191,7 @@ private struct Card: View {
 
 private struct AppRow: View {
     let app: TargetApp
-    let isRunning: Bool
-    let hasWindow: Bool
+    let prediction: RestorePrediction
     let setEnabled: (Bool) -> Void
     let remove: () -> Void
 
@@ -204,10 +202,9 @@ private struct AppRow: View {
             }
             .toggleStyle(.checkbox)
             Spacer()
-            // 점은 "복원하면 옮겨질까"를 답한다: 찬 주황=예, 빈 주황=실행 중이나 창 없음, 회색=꺼짐
+            // 점은 엔진의 복원 예측을 그린다: 찬 주황=옮겨짐(또는 제자리), 빈 주황=건너뜀 예정, 회색=꺼짐
             dot.frame(width: 7, height: 7)
-            Text(isRunning ? (hasWindow ? "실행 중" : "창 없음") : "꺼짐")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
@@ -215,12 +212,25 @@ private struct AppRow: View {
     }
 
     @ViewBuilder private var dot: some View {
-        if !isRunning {
-            Circle().fill(Color.secondary.opacity(0.4))
-        } else if hasWindow {
+        switch prediction {
+        case .willMove, .alreadyInPlace:
             Circle().fill(Color.orange)
-        } else {
+        case .willSkip(.appNotRunning):
+            Circle().fill(Color.secondary.opacity(0.4))
+        case .willSkip:
             Circle().strokeBorder(Color.orange, lineWidth: 1.5)
+        }
+    }
+
+    private var label: String {
+        switch prediction {
+        case .willMove: return "복원 대상"
+        case .alreadyInPlace: return "제자리"
+        case .willSkip(.appNotRunning): return "꺼짐"
+        case .willSkip(.noWindow): return "창 없음"
+        case .willSkip(.fullscreen): return "전체화면"
+        case .willSkip(.minimized): return "최소화"
+        case .willSkip(.alreadyInPlace): return "제자리" // 예측은 .alreadyInPlace 케이스로 오지만 방어
         }
     }
 }

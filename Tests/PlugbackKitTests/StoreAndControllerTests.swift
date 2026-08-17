@@ -137,8 +137,9 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(controller.profile?.apps.count, 1)
     }
 
-    func testRunningWithoutWindowIsNotWindowed() async {
-        // 실행 중 + 표준 창 0개 = "창 없음" 상태 — 실행 점과 창 점이 갈라진다
+    func testPredictionsFollowWindowStateAndOptions() async {
+        // 실행 중 + 창 0개 → "창 없음" 예측. 새 창 열기 옵션을 켜면 같은 상태가 "복원 대상"이 된다 —
+        // 점이 옵션까지 반영한 엔진 예측을 그린다는 증거
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
@@ -147,8 +148,11 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList = [] // 창만 모두 닫힘 — 프로세스는 생존
         await controller.cardOpened()
-        XCTAssertEqual(controller.runningBundleIDs, ["com.chrome"])
-        XCTAssertEqual(controller.windowedBundleIDs, [])
+        XCTAssertEqual(controller.predictions["com.chrome"], .willSkip(.noWindow))
+
+        controller.reopenWindowless = true
+        await controller.cardOpened()
+        XCTAssertEqual(controller.predictions["com.chrome"], .willMove)
     }
 
     func testSettingsFlowIntoRestoreOptions() async {

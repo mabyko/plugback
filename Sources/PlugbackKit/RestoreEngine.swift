@@ -14,6 +14,16 @@ public struct RestoreOptions: Sendable {
     }
 }
 
+/// 복원 예측 — 카드의 점이 쓰는 어휘. 진실(restore)과 같은 선택 규칙에서 계산되므로 어긋날 수 없다.
+public enum RestorePrediction: Equatable, Sendable {
+    /// 복원하면 이 앱의 창이 옮겨진다 (새 창 열기 옵션으로 열려서 옮겨지는 경우 포함).
+    case willMove
+    /// 이미 제자리 — 옮길 필요가 없다.
+    case alreadyInPlace
+    /// 이 사유로 건너뛸 것이다.
+    case willSkip(SkipReason)
+}
+
 /// 선택 복원 엔진 (F-02). 프로필에 없는 앱과 내장 화면의 창은 존재 자체를 모른다.
 /// 격리 자유 — 어느 액터에도 묶이지 않는다. AX의 실행 흐름은 게이트웨이 어댑터의 것이다 (F-02.4).
 /// 복원 정책 전부가 여기 산다: 창 선택, 건너뜀 판정, 지문 검증(F-01.4),
@@ -69,20 +79,10 @@ public enum RestoreEngine {
             guard !all.isEmpty else { return .skipped(.noWindow) }
         }
 
-        // 창 선택 (F-02.1의 4, 요구사항 다): 대상 화면의 창이 있으면 그중에서 —
-        // 없으면 첫 표준 창을 어디서든 데려온다. 케이블을 뽑으면 macOS가 창을 내장으로
-        // 옮겨두므로, 데려오지 못하면 핵심 시나리오가 성립하지 않는다.
-        // 옮기는 건 앱당 이 한 창뿐 — 내장 화면의 나머지 창은 건드리지 않는다.
-        let onScreen = all.filter { screen.contains($0) }
-        let candidates = onScreen.isEmpty ? all : onScreen
-
-        // 이동 가능한 첫 창. 전부 이동 불가면 사유는 창 순서와 무관하게 전체화면 우선 —
-        // 창 순서는 불안정하다 (FUNCTIONAL_SPEC 부록 3)
-        // 보이는 창을 우선하고, 옵션이 켜졌을 때만 최소화 창을 차선으로 쓴다.
-        let movable = candidates.filter { !$0.isFullscreen }
-        guard let window = movable.first(where: { !$0.isMinimized })
-                ?? (options.restoreMinimized ? movable.first : nil) else {
-            return .skipped(candidates.contains(where: \.isFullscreen) ? .fullscreen : .minimized)
+        let window: WindowInfo
+        switch pickWindow(from: all, on: screen, options: options) {
+        case .skip(let reason): return .skipped(reason)
+        case .window(let picked): window = picked
         }
         // Dock에서 먼저 꺼낸다 — 최소화 상태로는 이동 결과가 보이지 않는다 (F-02.2).
         // 꺼낸 뒤의 재판독 프레임으로 판정한다 — 열거 시점 스냅샷은 이미 스테일이다.
@@ -103,6 +103,64 @@ public enum RestoreEngine {
             }
         }
         return .failed
+    }
+
+    // MARK: - 예측 (점의 어휘) — 진실과 같은 선택 규칙
+
+    /// 복원을 실행하면 각 대상 앱이 어떻게 될지의 사전 판정. 부수효과 없음 — 이미 열거된
+    /// 스냅샷을 받는 거의 순수 함수다 (CaptureEngine과 같은 관계).
+    /// screen이 nil이면(연결 해제 상태) 제자리 판정은 생략된다 — 연결되면 다시 계산된다.
+    public static func predict(
+        profile: Profile, on screen: ScreenInfo?, windows: [WindowInfo],
+        running: Set<String>, options: RestoreOptions = RestoreOptions()
+    ) -> [String: RestorePrediction] {
+        var result: [String: RestorePrediction] = [:]
+        for app in profile.apps {
+            result[app.bundleID] = predictOne(app, on: screen, windows: windows,
+                                              running: running, options: options)
+        }
+        return result
+    }
+
+    private static func predictOne(
+        _ app: TargetApp, on screen: ScreenInfo?, windows: [WindowInfo],
+        running: Set<String>, options: RestoreOptions
+    ) -> RestorePrediction {
+        guard running.contains(app.bundleID) else { return .willSkip(.appNotRunning) }
+        let all = windows.filter { $0.appBundleID == app.bundleID }
+        if all.isEmpty {
+            // 새 창 열기 옵션이 켜졌으면 복원이 창을 열어서 옮길 것이다
+            return options.reopenWindowless ? .willMove : .willSkip(.noWindow)
+        }
+        switch pickWindow(from: all, on: screen, options: options) {
+        case .skip(let reason): return .willSkip(reason)
+        case .window(let window):
+            guard let screen else { return .willMove }
+            let target = app.unitRect.frame(in: screen.frame)
+            return approximatelyEqual(window.frame, target) ? .alreadyInPlace : .willMove
+        }
+    }
+
+    // MARK: - 공유 코어
+
+    /// 창 선택 규칙 (F-02.1의 4, 요구사항 다) — 진실(restore)과 예측(predict)이 공유하는 유일한 구현.
+    /// 대상 화면의 창이 있으면 그중에서 — 없으면 첫 표준 창을 어디서든 데려온다.
+    /// 케이블을 뽑으면 macOS가 창을 내장으로 옮겨두므로, 데려오지 못하면 핵심 시나리오가 성립하지 않는다.
+    /// 이동 가능한 첫 창을 고르되 보이는 창 우선, 최소화 창은 옵션이 켜졌을 때만 차선.
+    /// 전부 이동 불가면 사유는 창 순서와 무관하게 전체화면 우선 — 창 순서는 불안정하다 (부록 3).
+    private enum Pick { case window(WindowInfo), skip(SkipReason) }
+
+    private static func pickWindow(
+        from all: [WindowInfo], on screen: ScreenInfo?, options: RestoreOptions
+    ) -> Pick {
+        let onScreen = screen.map { s in all.filter { s.contains($0) } } ?? []
+        let candidates = onScreen.isEmpty ? all : onScreen
+        let movable = candidates.filter { !$0.isFullscreen }
+        guard let window = movable.first(where: { !$0.isMinimized })
+                ?? (options.restoreMinimized ? movable.first : nil) else {
+            return .skip(candidates.contains(where: \.isFullscreen) ? .fullscreen : .minimized)
+        }
+        return .window(window)
     }
 
     private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
