@@ -202,7 +202,8 @@ final class PlugbackControllerTests: XCTestCase {
         // 복원이 매달린 사이 창이 엉뚱한 자리에 — 저장이 허용되면 이 배치가 박제된다
         gateway.windowsList = [WindowInfo(id: 9, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
-        await controller.captureNow()
+        let capture = await controller.captureNow()
+        XCTAssertEqual(capture, .restoringInProgress)
         XCTAssertEqual(controller.profile, before) // 반쯤 복원된 배치가 프로필을 오염시키지 않았다
         XCTAssertNil(controller.lastCaptureCount)  // 저장 확인 표시도 뜨지 않는다
         _ = await restore.value
@@ -383,7 +384,8 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertFalse(controller.isAuthorized)       // UI 바인딩용 상태 갱신
 
         let before = controller.profile
-        await controller.captureNow()                       // 저장도 차단 — 어질러진 배치로 덮어쓰지 않는다
+        let capture = await controller.captureNow()         // 저장도 차단 — 어질러진 배치로 덮어쓰지 않는다
+        XCTAssertEqual(capture, .notAuthorized)
         XCTAssertEqual(controller.profile, before)
     }
 
@@ -444,10 +446,13 @@ final class PlugbackControllerTests: XCTestCase {
         let controller = makeController()
         XCTAssertEqual(controller.storeNotice, .unreadable)
 
-        await controller.captureNow()          // 메모리에서는 동작하지만
-        XCTAssertEqual(controller.profile?.apps.count, 1)
-        controller.dismissStoreNotice()  // 알림을 닫아도
-        controller.removeApp("com.chrome") // persist 경로를 하나 더 지나도
+        // 저장은 통째로 거부된다 — 재시작에 증발할 메모리 저장으로 "저장됨"을 속이지 않는다
+        let outcome = await controller.captureNow()
+        XCTAssertEqual(outcome, .saveBlocked)
+        XCTAssertNil(controller.profile)
+        XCTAssertNil(controller.lastCaptureCount)  // 거짓 확인 표시가 뜨지 않는다
+        controller.dismissStoreNotice()            // 알림을 닫아도 차단은 유지
+        _ = await controller.captureNow()
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본") // 원본 무사

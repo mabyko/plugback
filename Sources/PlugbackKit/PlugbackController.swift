@@ -7,6 +7,17 @@ public enum RestoreMode: String, Sendable {
     case automatic, manual
 }
 
+/// captureNow의 반환 — 조용한 거부가 없다 (restoreNow와 같은 원칙).
+public enum CaptureOutcome: Equatable, Sendable {
+    /// 저장 완료 — 카드가 보여주는 화면 기준 대상 앱 수.
+    case captured(appCount: Int)
+    case notAuthorized
+    case notConnected
+    case restoringInProgress
+    /// 프로필 파일을 읽지 못한 실행 — 덮어쓰기 방지로 저장이 차단됐다 (F-04.2).
+    case saveBlocked
+}
+
 /// restoreNow의 반환 — 실행되지 않은 경로도 성공과 구별된다. 호출자는 published를 뒤져 추론하지 않는다.
 public enum RestoreOutcome: Equatable, Sendable {
     /// 복원이 끝났다. 비어 있으면 프로필 있는 화면이 없었다는 뜻.
@@ -168,21 +179,27 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
-    /// async — 창 열거가 이 동작의 본체라서다.
-    public func captureNow() async {
-        guard checkAuthorization() else { return } // 권한 없이 빈 열거로 저장하지 않는다
-        guard !isRestoring else { return }         // 반쯤 복원된 배치를 박제하지 않는다
+    /// async — 창 열거가 이 동작의 본체라서다. 반환값 = 실행/거부 사유 — 확인 표시는 진짜 저장됐을 때만 뜬다.
+    @discardableResult
+    public func captureNow() async -> CaptureOutcome {
+        guard checkAuthorization() else { return .notAuthorized } // 권한 없이 빈 열거로 저장하지 않는다
+        guard !isRestoring else { return .restoringInProgress }   // 반쯤 복원된 배치를 박제하지 않는다
+        // 저장이 차단된 실행에서 메모리에만 담는 저장은 재시작에 증발하는 거짓 저장이다 —
+        // 확인 표시("저장됨")가 거짓이 되지 않게 아예 거부한다. 이유는 저장소 알림 배너가 설명한다.
+        guard !saveBlocked else { return .saveBlocked }
         syncScreens()
-        guard isConnected else { return }
+        guard isConnected else { return .notConnected }
         let windows = await gateway.standardWindows(of: nil)
         for screen in externalScreens {
             var merged = CaptureEngine.capture(windows: windows, on: screen, merging: profiles[screen.id])
             merged.fingerprint = screen.fingerprint
             profiles[screen.id] = merged
         }
-        lastCaptureCount = profile?.apps.count
+        let count = profile?.apps.count ?? 0
+        lastCaptureCount = count
         persist()
         await updatePredictions()
+        return .captured(appCount: count)
     }
 
     /// 복원 중 새 화면이 연결됐다 — 지금 복원이 끝난 직후 1회 재복원한다 (조용한 소실 방지).
