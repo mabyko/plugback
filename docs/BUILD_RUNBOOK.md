@@ -48,7 +48,8 @@ swift test   # PlugbackKit — 정책 전부, 앱 빌드 없이
 앱 쪽 표현 매핑(문구·점·헤더·단축어 다이얼로그)은 별도 테스트 타깃이 지킨다:
 
 ```bash
-xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback -destination 'platform=macOS'
+xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback \
+  -destination 'platform=macOS' -derivedDataPath build
 ```
 
 판정: `** TEST SUCCEEDED **`. 앱을 빌드해 호스트로 띄우므로 3번 빌드까지 겸한다.

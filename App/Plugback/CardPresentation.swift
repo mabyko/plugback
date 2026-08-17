@@ -1,7 +1,7 @@
 import PlugbackKit
 
 /// 카드·Intent의 표현 매핑 — 뷰에서 분리한 순수 함수들. PlugbackTests가 여기에 닿는다.
-/// 문구는 앱의 것이다 — 헤드리스 코어(PlugbackKit)에 UI 문자열을 넣지 않는다 (docs/ARCHITECTURE.md §5).
+/// 문구는 앱의 것이다 — 헤드리스 코어(PlugbackKit)에 UI 문자열을 넣지 않는다 (docs/ARCHITECTURE.md §2 MenuBarUI).
 enum CardPresentation {
     // MARK: - 결과 스트립 — 건너뜀·실패 사유 문구 (US-008: "왜 안 옮겨졌지?"의 유일한 답)
 

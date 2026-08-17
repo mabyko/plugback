@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 // 용어는 CONTEXT.md를 따른다. 모든 프레임은 통일 좌표계(좌상단 원점, 전역)다 —
-// 좌표계 변환은 WindowGateway 어댑터 안에서 한 번만 일어난다 (FUNCTIONAL_SPEC 부록 2).
+// 각 어댑터가 자기 API의 좌표계를 여기로 통일한다 — NSScreen 뒤집기는 ScreenProvider, AX는 무변환 (부록 2: 두 좌표계의 존재).
 
 /// 비율 좌표 — 소속 화면 크기에 대한 비율 (F-03.4). 픽셀 절대 좌표는 저장하지 않는다.
 public struct UnitRect: Codable, Equatable, Sendable {
@@ -43,7 +43,7 @@ public struct ScreenFingerprint: Codable, Equatable, Sendable {
     }
 }
 
-/// 화면 하나. id는 화면 식별자(WindowServer UUID) — 포트 변경·동일 모델 안정성은 M3 스파이크로 검증한다.
+/// 화면 하나. id는 화면 식별자(WindowServer UUID) — 포트 변경 안정성은 실측 통과(2026-08-16), 동일 모델 2대·재부팅은 미측정 (ARCHITECTURE 스파이크).
 public struct ScreenInfo: Equatable, Sendable {
     public let id: String
     public let name: String
@@ -66,7 +66,7 @@ public struct ScreenInfo: Equatable, Sendable {
 public enum ScreenPresence: Equatable, Sendable {
     /// 외장 화면이 지금 연결되어 있다. count는 연결된 외장 화면 수 (다중 화면 표시용).
     case connected(ScreenInfo, count: Int)
-    /// 연결된 화면은 없지만 마지막 화면을 기억한다 — 이름과 프로필 유무를 보여주기 위해.
+    /// 외장 화면이 없는 동안 아는 화면 하나(방금 분리된 화면, 재시작 직후엔 이름순 첫 프로필)의 이름과 프로필 유무를 보여준다.
     case remembered(screenID: String, name: String)
     /// 아는 화면이 없다 — 첫 실행.
     case none
@@ -135,7 +135,7 @@ public enum ScreenSkipReason: Equatable, Sendable {
 }
 
 /// 복원 결과 (F-05.1: 이동 n · 건너뜀 n · 실패 n + 사유).
-/// 어느 화면의 결과인지 함께 기록한다 — 다른 화면의 카드에 이 결과를 보여주면 안 된다 (US-007 AC-5).
+/// 어느 화면의 결과인지 함께 기록한다 — 다른 화면의 카드에 이 결과를 보여주면 안 된다 (화면별 프로필 원칙, US-003).
 public struct RestoreResult: Equatable, Sendable {
     public let screenID: String
     /// nil이면 정상 복원. 값이 있으면 이 화면은 통째로 건너뛰었고 entries는 비어 있다.

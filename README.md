@@ -15,7 +15,8 @@ plug back in — your home layout is scrambled. macOS only remembers the
 latest arrangement. Plugback keeps a profile per display, so every screen
 you return to comes back exactly the way you left it.
 
-Status: pre-release, documentation-first stage. Design documents live in
+Status: pre-release. Implementation complete (M1-M5), pending on-device
+verification; no signed release yet. Design documents live in
 [docs/](docs/) (currently written in Korean).
 
 ## Build from source
@@ -53,10 +54,12 @@ this file the build falls back to `forked.plugback.local`; the canonical bundle
 ID is deliberately absent from the repo so that no fork can register it by
 accident.
 
-Tests are in the Swift package, independent of the app target:
+Policy tests live in the Swift package; presentation-mapping tests live in
+an app-hosted unit test target:
 
 ```sh
-swift test
+swift test   # PlugbackKit — engine/controller policy
+xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback -destination 'platform=macOS'
 ```
 
 ## Contributing
