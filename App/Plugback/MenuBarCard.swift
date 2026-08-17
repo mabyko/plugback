@@ -19,7 +19,7 @@ struct MenuBarCard: View {
         // 카드를 열 때마다 권한·화면·프로필을 재확인한다 (US-010 AC-3)
         .onAppear {
             trusted = PermissionGate.isTrusted
-            controller.refresh()
+            controller.cardOpened()
         }
     }
 }

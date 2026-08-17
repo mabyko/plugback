@@ -77,7 +77,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
         XCTAssertEqual(controller.profile?.apps.map(\.bundleID), ["com.chrome"])
 
@@ -94,11 +93,10 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let first = makeController()
-        first.refresh()
         first.captureNow()
 
         let second = makeController()
-        second.refresh()
+        second.cardOpened()
         XCTAssertEqual(second.profile?.apps.map(\.bundleID), ["com.chrome"])
     }
 
@@ -108,7 +106,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
         let controller = makeController()
-        controller.refresh()
         await controller.restoreNow()
         XCTAssertNil(controller.lastResult)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
@@ -119,11 +116,10 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
 
         screens.screensList = [builtin] // 외장 화면 분리
-        controller.refresh()
+        controller.cardOpened()
         XCTAssertFalse(controller.isConnected)
         XCTAssertEqual(controller.currentScreen?.name, "LG UltraFine 27")
         XCTAssertEqual(controller.profile?.apps.count, 1)
@@ -135,11 +131,10 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
 
         gateway.windowsList = [] // 창만 모두 닫힘 — 프로세스는 생존
-        controller.refresh()
+        controller.cardOpened()
         XCTAssertEqual(controller.runningBundleIDs, ["com.chrome"])
         XCTAssertEqual(controller.windowedBundleIDs, [])
     }
@@ -151,7 +146,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
 
         gateway.windowsList = [] // 창만 닫힘 — 프로세스는 생존
@@ -170,12 +164,11 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let first = makeController()
-        first.refresh()
         first.captureNow()
 
         screens.screensList = [builtin]
         let second = makeController()
-        second.refresh()
+        second.cardOpened()
         XCTAssertFalse(second.isConnected)
         XCTAssertEqual(second.currentScreen?.name, "LG UltraFine 27")
     }
@@ -193,7 +186,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
         XCTAssertEqual(controller.profile?.fingerprint, fpA) // 저장 시 지문 기록
 
@@ -202,7 +194,6 @@ final class PlugbackControllerTests: XCTestCase {
                                                    isBuiltin: false, fingerprint: fpB)]
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        controller.refresh()
         await controller.restoreNow()
 
         XCTAssertTrue(controller.identityMismatch) // 결과에서 파생된 배선 확인
@@ -215,7 +206,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
@@ -230,7 +220,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
         controller.restoreMode = .manual
 
@@ -246,7 +235,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
         controller.isAuthorized = { false }
 
@@ -270,7 +258,6 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
         XCTAssertEqual(controller.allProfiles.count, 1)
 
@@ -279,20 +266,19 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertNil(controller.profile)
 
         let relaunched = makeController()
-        relaunched.refresh()
+        relaunched.cardOpened()
         XCTAssertNil(relaunched.profile)
     }
 
-    func testCaptureSetsConfirmationAndRefreshClearsIt() {
+    func testCaptureConfirmationExpiresOnCardOpen() {
         // 저장됐다는 것을 화면에서 확인할 수 있다 (US-002 AC-1)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
-        controller.refresh()
         controller.captureNow()
         XCTAssertEqual(controller.lastCaptureCount, 1)
-        controller.refresh()
+        controller.cardOpened()
         XCTAssertNil(controller.lastCaptureCount)
     }
 }

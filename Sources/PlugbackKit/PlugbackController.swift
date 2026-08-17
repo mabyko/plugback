@@ -102,7 +102,8 @@ public final class PlugbackController: ObservableObject {
 
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
     func externalScreensAppeared(_ ids: [String]) async {
-        refresh()
+        syncScreens()
+        updateRunningStates() // 카드가 열려 있는 채로 연결돼도 점이 맞게
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         guard isAuthorized() else { return }            // 권한 없이 기능을 시도하지 않는다 (US-010 AC-2)
         // 새 화면에 프로필이 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
@@ -110,9 +111,16 @@ public final class PlugbackController: ObservableObject {
         await restoreNow()
     }
 
-    /// 카드가 열릴 때 호출 — 화면·실행 상태를 동기화한다.
-    public func refresh() {
+    /// 카드가 열리는 순간의 통지 — 화면·실행 상태를 동기화하고,
+    /// 일회성 저장 확인 표시를 만료시킨다 (US-002 AC-1: 카드를 다시 열면 사라진다).
+    public func cardOpened() {
         lastCaptureCount = nil
+        syncScreens()
+        updateRunningStates()
+    }
+
+    /// 화면 상태 동기화. 명령이 스스로 호출한다 — 호출자에게 순서 의식이 없다.
+    private func syncScreens() {
         externalScreens = screenProvider.screens().filter { !$0.isBuiltin }
         connectedScreenCount = externalScreens.count
         if let first = externalScreens.first {
@@ -121,11 +129,11 @@ public final class PlugbackController: ObservableObject {
         } else {
             isConnected = false // currentScreen은 유지 — 마지막 화면 정보
         }
-        updateRunningStates()
     }
 
     /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
     public func captureNow() {
+        syncScreens()
         guard isConnected else { return }
         let windows = gateway.standardWindows(of: nil)
         for screen in externalScreens {
@@ -141,6 +149,7 @@ public final class PlugbackController: ObservableObject {
     /// [⚡ 지금 레이아웃 복원] (F-02). 연결된 모든 외장 화면에 각 프로필을 적용한다.
     /// 반환 시점 = 완료 시점 — 정책은 전부 RestoreEngine의 일이고, 여기는 배선뿐이다.
     public func restoreNow() async {
+        syncScreens()
         guard isConnected, !isRestoring else { return }
         isRestoring = true
         defer { isRestoring = false }

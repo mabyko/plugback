@@ -14,8 +14,7 @@ struct RestoreLayoutIntent: AppIntent {
             return .result(dialog: "손쉬운 사용 권한이 필요합니다. 메뉴바에서 Plugback을 여세요.")
         }
         let controller = AppServices.controller
-        controller.refresh()
-        await controller.restoreNow() // 완료까지 기다린다 — 최종 결과를 보고해야 한다
+        await controller.restoreNow() // 스스로 동기화하고, 완료까지 기다려 최종 결과를 보고한다
         guard let result = controller.lastResult else {
             return .result(dialog: "복원할 프로필이 없습니다.")
         }
