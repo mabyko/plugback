@@ -19,8 +19,8 @@ final class DisplayWatcherTests: XCTestCase {
         // 케이블을 꽂으면 이벤트가 3~6회 온다 — 복원은 한 번만 (F-01.2, US-001 AC-1)
         let provider = FakeScreenProvider()
         provider.screensList = [builtin]
-        var calls: [[String]] = []
-        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.05) { calls.append($0) }
+        var calls = 0
+        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.05) { calls += 1 }
 
         provider.screensList = [builtin, ext1]
         watcher.screenParametersChanged()
@@ -28,7 +28,7 @@ final class DisplayWatcherTests: XCTestCase {
         watcher.screenParametersChanged()
         await wait(0.15)
 
-        XCTAssertEqual(calls, [["ext-1"]])
+        XCTAssertEqual(calls, 1)
     }
 
     func testUnchangedTopologyDoesNotFire() {
@@ -36,7 +36,7 @@ final class DisplayWatcherTests: XCTestCase {
         let provider = FakeScreenProvider()
         provider.screensList = [builtin, ext1]
         var calls = 0
-        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.01) { _ in calls += 1 }
+        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.01) { calls += 1 }
 
         watcher.screenParametersChanged()
         let exp = expectation(description: "quiet")
@@ -50,7 +50,7 @@ final class DisplayWatcherTests: XCTestCase {
         let provider = FakeScreenProvider()
         provider.screensList = [builtin, ext1]
         var calls = 0
-        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.05) { _ in calls += 1 }
+        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.05) { calls += 1 }
 
         provider.screensList = [builtin]        // 화면이 잠깐 사라졌다가
         watcher.screenParametersChanged()
@@ -65,38 +65,38 @@ final class DisplayWatcherTests: XCTestCase {
         // 억제 중에는 추가가 보여도 무시, 억제가 끝난 진짜 연결은 정상 동작 (F-01.3, US-009 AC-5)
         let provider = FakeScreenProvider()
         provider.screensList = [builtin]
-        var calls: [[String]] = []
+        var calls = 0
         let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.02,
-                                     wakeSuppressionInterval: 0.1) { calls.append($0) }
+                                     wakeSuppressionInterval: 0.1) { calls += 1 }
 
         watcher.systemDidWake()
         provider.screensList = [builtin, ext1]
         watcher.screenParametersChanged()
         await wait(0.06) // 안정화됐지만 억제 창 안 — 무시, 기준선만 갱신
-        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(calls, 0)
 
         await wait(0.1)  // 억제 종료
         provider.screensList = [builtin, ext1, ext2]
         watcher.screenParametersChanged()
         await wait(0.06)
-        XCTAssertEqual(calls, [["ext-2"]]) // 새 화면만 — 억제가 정상 동작까지 막지 않는다
+        XCTAssertEqual(calls, 1) // 억제가 정상 동작까지 막지 않는다
     }
 
     func testDisconnectThenReconnectFires() async {
         // 진짜 뽑았다 꽂기: 안정화가 두 번 일어나면 복귀는 '새 추가'다 (US-001, US-003 AC-2)
         let provider = FakeScreenProvider()
         provider.screensList = [builtin, ext1]
-        var calls: [[String]] = []
-        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.02) { calls.append($0) }
+        var calls = 0
+        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.02) { calls += 1 }
 
         provider.screensList = [builtin]
         watcher.screenParametersChanged()
         await wait(0.06) // 분리 상태로 안정화 — 콜백 없음 (F-01.5: 분리 시 무동작)
-        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(calls, 0)
 
         provider.screensList = [builtin, ext1]
         watcher.screenParametersChanged()
         await wait(0.06)
-        XCTAssertEqual(calls, [["ext-1"]])
+        XCTAssertEqual(calls, 1)
     }
 }

@@ -63,7 +63,10 @@ public final class AXWindowGateway: WindowGateway {
         guard let element = refs[windowID],
               AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success
         else { return nil }
-        // 성공 반환값을 믿지 않는다 — 실제 프레임을 다시 읽는다 (F-02.3과 같은 처방)
+        // 성공 반환값을 믿지 않는다 — 최소화 상태와 프레임을 실제로 다시 읽는다 (F-02.3과 같은 처방).
+        // 수락한 척 최소화를 유지하는 앱이면 nil — 보이지 않는 창을 옮기고 .moved로 보고하지 않는다.
+        let stillMinimized: Bool = copy(element, kAXMinimizedAttribute) ?? false
+        guard !stillMinimized else { return nil }
         return frame(of: element)
     }
 

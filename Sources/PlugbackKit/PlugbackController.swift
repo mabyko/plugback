@@ -52,18 +52,18 @@ public final class PlugbackController: ObservableObject {
 
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
     @Published public var restoreMode: RestoreMode {
-        didSet { defaults.set(restoreMode.rawValue, forKey: "restoreMode") }
+        didSet { defaults.set(restoreMode.rawValue, forKey: Keys.restoreMode) }
     }
 
     /// 최소화된 창도 Dock에서 꺼내 복원할지 (F-02.2 예외 설정). 기본 꺼짐 — 최소화는 사용자의 의도다.
     @Published public var restoreMinimized: Bool {
-        didSet { defaults.set(restoreMinimized, forKey: "restoreMinimized") }
+        didSet { defaults.set(restoreMinimized, forKey: Keys.restoreMinimized) }
     }
 
     /// 실행 중인데 창이 없는 앱에 새 창을 열게 해 복원할지 (F-02.2 예외 설정). 기본 꺼짐.
     /// 꺼진 앱을 실행하지는 않는다 — F-02.1은 그대로다.
     @Published public var reopenWindowless: Bool {
-        didSet { defaults.set(reopenWindowless, forKey: "reopenWindowless") }
+        didSet { defaults.set(reopenWindowless, forKey: Keys.reopenWindowless) }
     }
 
     /// UUID는 맞는데 지문이 다른 화면이 있었다 — 복원하지 않았다 (F-01.4).
@@ -108,15 +108,16 @@ public final class PlugbackController: ObservableObject {
         self.screenProvider = screenProvider
         self.store = store
         self.defaults = defaults
-        restoreMode = defaults.string(forKey: "restoreMode").flatMap(RestoreMode.init) ?? .automatic
-        restoreMinimized = defaults.bool(forKey: "restoreMinimized")
-        reopenWindowless = defaults.bool(forKey: "reopenWindowless")
+        restoreMode = defaults.string(forKey: Keys.restoreMode).flatMap(RestoreMode.init) ?? .automatic
+        restoreMinimized = defaults.bool(forKey: Keys.restoreMinimized)
+        reopenWindowless = defaults.bool(forKey: Keys.reopenWindowless)
         let outcome = store.load()
         profiles = outcome.profiles
         storeNotice = outcome.trouble
         saveBlocked = outcome.trouble == .unreadable
         // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다.
-        if let stored = outcome.profiles.values.first {
+        // 이름순 첫 프로필 — 사전 순회는 실행마다 순서가 바뀐다 (설정 창의 allProfiles와 같은 기준).
+        if let stored = outcome.profiles.values.min(by: { $0.screenName < $1.screenName }) {
             screenPresence = .remembered(screenID: stored.screenID, name: stored.screenName)
         }
     }
@@ -125,16 +126,16 @@ public final class PlugbackController: ObservableObject {
     /// 시간 상수는 DisplayWatcher의 것 — 여기서 다시 선언하지 않는다.
     public func startWatching() {
         guard watcher == nil else { return }
-        let w = DisplayWatcher(provider: screenProvider) { [weak self] ids in
+        let w = DisplayWatcher(provider: screenProvider) { [weak self] in
             guard let self else { return }
-            Task { await self.externalScreensAppeared(ids) }
+            Task { await self.externalScreensAppeared() }
         }
         w.start()
         watcher = w
     }
 
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
-    func externalScreensAppeared(_ ids: [String]) async {
+    func externalScreensAppeared() async {
         syncScreens()
         updateRunningStates() // 카드가 열려 있는 채로 연결돼도 점이 맞게
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
@@ -256,6 +257,13 @@ public final class PlugbackController: ObservableObject {
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
     public func dismissStoreNotice() { storeNotice = nil }
+
+    /// UserDefaults 키 — 읽기·쓰기가 같은 이름을 쓰도록 한곳에 (오타는 조용한 버그다).
+    private enum Keys {
+        static let restoreMode = "restoreMode"
+        static let restoreMinimized = "restoreMinimized"
+        static let reopenWindowless = "reopenWindowless"
+    }
 
     private func persist() {
         guard !saveBlocked else { return } // 읽기 실패를 첫 실행처럼 덮어쓰면 손상보다 나쁜 손실이다

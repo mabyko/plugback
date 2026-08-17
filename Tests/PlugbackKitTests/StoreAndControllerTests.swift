@@ -252,7 +252,7 @@ final class PlugbackControllerTests: XCTestCase {
         screens.screensList = [builtin, external, external2] // 복원이 매달린 사이 ext-2 재연결
         gateway.windowsList.append(WindowInfo(id: 3, appBundleID: "com.slack", appName: "Slack",
                                               frame: CGRect(x: 4500, y: 300, width: 800, height: 600))) // 어질러짐
-        await controller.externalScreensAppeared(["ext-2"]) // isRestoring → 보류
+        await controller.externalScreensAppeared() // isRestoring → 보류
         let outcome = await restore.value
 
         XCTAssertEqual(gateway.windowsList.first { $0.appBundleID == "com.slack" }?.frame,
@@ -312,7 +312,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        await controller.externalScreensAppeared(["ext-1"])
+        await controller.externalScreensAppeared()
         XCTAssertEqual(controller.lastResult?.movedCount, 1)
     }
 
@@ -327,7 +327,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        await controller.externalScreensAppeared(["ext-1"])
+        await controller.externalScreensAppeared()
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
@@ -342,7 +342,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        await controller.externalScreensAppeared(["ext-1"])
+        await controller.externalScreensAppeared()
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 

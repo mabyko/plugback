@@ -12,7 +12,9 @@ public final class DisplayWatcher {
     private let provider: ScreenProvider
     private let debounceInterval: TimeInterval
     private let wakeSuppressionInterval: TimeInterval
-    private let onExternalScreensAppeared: ([String]) -> Void
+    /// 무페이로드 — 어떤 화면인지는 소비자가 어차피 전체 동기화로 알아낸다.
+    /// "어느 화면이 새로 왔나"는 발화 여부를 정하는 내부 계산일 뿐, 인터페이스가 아니다.
+    private let onExternalScreensAppeared: () -> Void
 
     private var knownExternalIDs: Set<String>
     private var pending: DispatchWorkItem?
@@ -23,7 +25,7 @@ public final class DisplayWatcher {
     public init(provider: ScreenProvider,
                 debounceInterval: TimeInterval = 1.5,
                 wakeSuppressionInterval: TimeInterval = 2.5,
-                onExternalScreensAppeared: @escaping ([String]) -> Void) {
+                onExternalScreensAppeared: @escaping () -> Void) {
         self.provider = provider
         self.debounceInterval = debounceInterval
         self.wakeSuppressionInterval = wakeSuppressionInterval
@@ -65,6 +67,6 @@ public final class DisplayWatcher {
         let added = current.subtracting(knownExternalIDs)
         knownExternalIDs = current // 제거·복귀도 기준선에 반영 — 다음 비교의 기준 (F-01.3)
         guard !added.isEmpty, Date() >= suppressUntil else { return }
-        onExternalScreensAppeared(added.sorted())
+        onExternalScreensAppeared()
     }
 }
