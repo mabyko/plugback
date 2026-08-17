@@ -50,7 +50,8 @@ public final class PlugbackController: ObservableObject {
     /// 복원 진행 중 — 재진입 가드이자 버튼 비활성용 UI 상태.
     @Published public private(set) var isRestoring = false
     /// 대상 앱별 복원 예측 — "복원하면 이 앱이 어떻게 될까"의 답 (US-006 AC-1의 점이 이것을 그린다).
-    /// 엔진의 창 선택 규칙 그대로 계산되므로 실제 복원 결과와 어긋날 수 없다.
+    /// 엔진의 창 선택 규칙 그대로 계산되고, 카드의 현재 화면 = 중복 제거의 첫 화면이므로
+    /// 카드가 보여주는 화면에서는 실제 복원 결과와 어긋나지 않는다.
     @Published public private(set) var predictions: [String: RestorePrediction] = [:]
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
@@ -170,7 +171,9 @@ public final class PlugbackController: ObservableObject {
 
     /// 화면 상태 동기화. 명령이 스스로 호출한다 — 호출자에게 순서 의식이 없다.
     private func syncScreens() {
-        externalScreens = screenProvider.screens().filter { !$0.isBuiltin }
+        // 식별자 정렬 — "첫 화면"의 정의를 복원의 중복 제거(F-01.6)와 공유한다.
+        // NSScreen 열거 순서는 불안정하고, 다르게 고르면 카드의 예측이 진실과 어긋난다.
+        externalScreens = screenProvider.screens().filter { !$0.isBuiltin }.sorted { $0.id < $1.id }
         if let first = externalScreens.first {
             screenPresence = .connected(first, count: externalScreens.count)
         } else if case .connected(let last, _) = screenPresence {

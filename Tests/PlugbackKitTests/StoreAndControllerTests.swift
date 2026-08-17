@@ -137,6 +137,36 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(controller.profile?.apps.count, 1)
     }
 
+    func testCardScreenSharesRestoreOrderSoPredictionHoldsOnTwoScreens() async {
+        // "현재 화면"의 정의는 하나 — 식별자 정렬상 첫 화면. 공급자가 어떤 순서로 주든
+        // 카드의 화면 = 중복 제거(F-01.6)의 첫 화면이라, 카드의 예측은 다중 화면에서도 진실과 일치한다.
+        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
+        screens.screensList = [builtin, external2, external] // 일부러 역순 공급
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [
+            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),  // ext-1
+            WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),   // ext-2 — 두 프로필에 등록됨
+        ]
+        let controller = makeController()
+        await controller.captureNow()
+        guard case .connected(let first, let count) = controller.screenPresence else {
+            return XCTFail("\(controller.screenPresence)")
+        }
+        XCTAssertEqual(first.id, "ext-1") // 공급 순서와 무관하게 식별자 정렬상 첫 화면
+        XCTAssertEqual(count, 2)
+
+        // 어질러진 뒤: 카드 예측은 복원 대상, 복원 결과도 이동 — 공유 앱인데도 어긋나지 않는다
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        await controller.cardOpened()
+        XCTAssertEqual(controller.predictions["com.chrome"], .willMove)
+        await controller.restoreNow()
+        XCTAssertEqual(controller.lastResult?.entries.first?.outcome, .moved)
+    }
+
     func testPredictionsFollowWindowStateAndOptions() async {
         // 실행 중 + 창 0개 → "창 없음" 예측. 새 창 열기 옵션을 켜면 같은 상태가 "복원 대상"이 된다 —
         // 점이 옵션까지 반영한 엔진 예측을 그린다는 증거
