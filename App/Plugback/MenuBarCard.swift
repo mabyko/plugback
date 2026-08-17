@@ -116,7 +116,7 @@ private struct Card: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(profile.apps, id: \.bundleID) { app in
                         AppRow(app: app,
-                               prediction: controller.predictions[app.bundleID] ?? .willSkip(.appNotRunning),
+                               prediction: controller.predictions[app.bundleID], // 없으면 없다고 그린다
                                setEnabled: { controller.setAppEnabled(app.bundleID, $0) },
                                remove: { controller.removeApp(app.bundleID) })
                     }
@@ -172,7 +172,8 @@ private struct Card: View {
 
 private struct AppRow: View {
     let app: TargetApp
-    let prediction: RestorePrediction
+    /// nil = 아직 계산 안 됨 — "모름"을 "꺼짐"으로 지어내지 않고 점을 그리지 않는다
+    let prediction: RestorePrediction?
     let setEnabled: (Bool) -> Void
     let remove: () -> Void
 
@@ -184,16 +185,18 @@ private struct AppRow: View {
             .toggleStyle(.checkbox)
             Spacer()
             // 점은 엔진의 복원 예측을 그린다 — 스타일·문구 매핑은 CardPresentation의 것
-            dot.frame(width: 7, height: 7)
-            Text(CardPresentation.dotLabel(for: prediction))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+            if let prediction {
+                dot(for: prediction).frame(width: 7, height: 7)
+                Text(CardPresentation.dotLabel(for: prediction))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
         }
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
         }
     }
 
-    @ViewBuilder private var dot: some View {
+    @ViewBuilder private func dot(for prediction: RestorePrediction) -> some View {
         switch CardPresentation.dotStyle(for: prediction) {
         case .filled: Circle().fill(Color.orange)
         case .off: Circle().fill(Color.secondary.opacity(0.4))

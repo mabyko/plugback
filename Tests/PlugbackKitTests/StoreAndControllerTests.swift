@@ -180,9 +180,9 @@ final class PlugbackControllerTests: XCTestCase {
         await controller.cardOpened()
         XCTAssertEqual(controller.predictions["com.chrome"], .willSkip(.noWindow))
 
+        // 옵션 토글만으로 예측이 갱신된다 — 카드를 다시 열 필요가 없다 (didSet → 갱신)
         controller.reopenWindowless = true
-        await controller.cardOpened()
-        XCTAssertEqual(controller.predictions["com.chrome"], .willMove)
+        while controller.predictions["com.chrome"] != .willMove { await Task.yield() }
     }
 
     func testSettingsFlowIntoRestoreOptions() async {

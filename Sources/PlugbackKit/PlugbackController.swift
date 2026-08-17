@@ -67,13 +67,24 @@ public final class PlugbackController: ObservableObject {
 
     /// 최소화된 창도 Dock에서 꺼내 복원할지 (F-02.2 예외 설정). 기본 꺼짐 — 최소화는 사용자의 의도다.
     @Published public var restoreMinimized: Bool {
-        didSet { defaults.set(restoreMinimized, forKey: Keys.restoreMinimized) }
+        didSet {
+            defaults.set(restoreMinimized, forKey: Keys.restoreMinimized)
+            refreshPredictionsAfterOptionChange() // 옵션은 예측을 바꾼다 — 갱신 의무를 변이 지점에
+        }
     }
 
     /// 실행 중인데 창이 없는 앱에 새 창을 열게 해 복원할지 (F-02.2 예외 설정). 기본 꺼짐.
     /// 꺼진 앱을 실행하지는 않는다 — F-02.1은 그대로다.
     @Published public var reopenWindowless: Bool {
-        didSet { defaults.set(reopenWindowless, forKey: Keys.reopenWindowless) }
+        didSet {
+            defaults.set(reopenWindowless, forKey: Keys.reopenWindowless)
+            refreshPredictionsAfterOptionChange()
+        }
+    }
+
+    /// 설정 창과 카드가 나란히 열려 있어도 점이 스테일하지 않게 — didSet에서 비동기로 쏜다.
+    private func refreshPredictionsAfterOptionChange() {
+        Task { await updatePredictions() }
     }
 
     /// UUID는 맞는데 지문이 다른 화면이 있었다 — 복원하지 않았다 (F-01.4).
