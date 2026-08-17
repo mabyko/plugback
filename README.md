@@ -38,9 +38,10 @@ Security > Accessibility. It is the only permission Plugback asks for, and it
 is what lets it read and move windows.
 
 That build is signed to run locally, which is enough to try it out. macOS ties
-both the Accessibility grant and the saved profiles to the app's bundle ID and
-signature, so an ad-hoc signature can make you re-approve the permission after
-a rebuild. To keep a stable identity, add `App/Config/Local.xcconfig` — it is
+the Accessibility grant to the app's bundle ID and signature, so an ad-hoc
+signature can make you re-approve the permission after a rebuild. (Saved
+profiles live in a fixed path under Application Support and survive identity
+changes.) To keep a stable identity, add `App/Config/Local.xcconfig` — it is
 gitignored, so your identity never lands in a commit:
 
 ```

@@ -51,7 +51,8 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var isRestoring = false
     /// 대상 앱별 복원 예측 — "복원하면 이 앱이 어떻게 될까"의 답 (US-006 AC-1의 점이 이것을 그린다).
     /// 엔진의 창 선택 규칙 그대로 계산되고, 카드의 현재 화면 = 중복 제거의 첫 화면이므로
-    /// 카드가 보여주는 화면에서는 실제 복원 결과와 어긋나지 않는다.
+    /// 카드가 보여주는 화면에서는 판정 규칙이 어긋나지 않는다. 실행 시점 사건(이동 실패·새 창 미등장·
+    /// 지문 불일치·체크 해제)은 예측 범위 밖 — 결과 스트립과 알림이 사후에 답한다.
     @Published public private(set) var predictions: [String: RestorePrediction] = [:]
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
@@ -165,7 +166,8 @@ public final class PlugbackController: ObservableObject {
             pendingRestore = true // 진행 중 복원이 끝난 직후 1회 재복원 — 새 화면이 조용히 소실되지 않는다
             return
         }
-        // 새 화면에 프로필이 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
+        // 프로필 있는 화면이 하나도 없으면 restoreNow가 자연히 아무것도 하지 않는다 (F-01.1 조건 3).
+        // 새 화면에 프로필이 없어도 기존 프로필 화면들은 멱등 복원된다.
         // 이미 제자리인 창은 건너뛰므로 기존 화면까지 포함해 복원해도 창이 흔들리지 않는다 (F-02.2).
         await restoreNow()
     }

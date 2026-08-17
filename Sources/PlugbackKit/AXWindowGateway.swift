@@ -4,8 +4,8 @@ import ApplicationServices
 /// 실물 어댑터 — 접근성 API 전체를 여기 가둔다 (docs/ARCHITECTURE.md의 유일한 AX 접점).
 /// AX 좌표계는 이미 좌상단 원점 전역이므로 창 프레임은 무변환으로 흐른다.
 ///
-/// actor다: AX 왕복(앱당 250ms 응답 한도)은 이 actor의 직렬 실행기에서 돌고,
-/// 메인 액터는 막히지 않는다 (F-02.4). NSWorkspace 읽기만 메인으로 홉한다.
+/// actor다: AX 왕복(호출당 250ms 응답 한도)은 이 actor의 직렬 실행기에서 돌고,
+/// 메인 액터는 막히지 않는다 (F-02.4). NSWorkspace 접근만 메인으로 홉한다.
 public actor AXWindowGateway: WindowGateway {
     private var refs: [Int: AXUIElement] = [:]
     private var nextID = 1

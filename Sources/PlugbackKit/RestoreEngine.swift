@@ -15,7 +15,8 @@ public struct RestoreOptions: Sendable {
 }
 
 /// 복원 예측 — 카드의 점이 쓰는 어휘. 진실(restore)과 같은 선택 규칙에서 계산된다.
-/// 일치 범위: 식별자 정렬상 첫 화면(카드가 보여주는 화면)에서는 항상 진실과 일치한다.
+/// 일치 범위: 식별자 정렬상 첫 화면(카드가 보여주는 화면)에서 **판정 규칙**이 진실과 일치한다.
+/// 실행 시점 사건 — 이동 실패, 새 창 미등장, 지문 불일치의 화면 통째 건너뜀, 체크 해제 — 은 예측이 담지 않는다.
 /// 뒷 화면에서는 앞 화면과 겹치는 앱이 다중 화면 중복 제거(F-01.6)로 빠질 수 있다 —
 /// 예측은 화면 목록 맥락을 받지 않으므로 그 제거를 모른다.
 public enum RestorePrediction: Equatable, Sendable {
@@ -56,7 +57,7 @@ public enum RestoreEngine {
             profile.apps.removeAll { claimed.contains($0.bundleID) }
 
             // 사전 단계 (F-02.2 예외 옵션): 창 없는 실행 중 앱 전부에 동시 새 창 열기.
-            // 대기가 병렬이라 총 지연은 앱 수와 무관하게 게이트웨이 한도(≤3초) 하나다 (F-07).
+            // 대기가 병렬이라 총 지연은 앱 수와 무관하게 화면당 게이트웨이 한도(≤3초)다 (F-07).
             if options.reopenWindowless {
                 var windowless: [String] = []
                 for app in profile.apps where app.isEnabled {

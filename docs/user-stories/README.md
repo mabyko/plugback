@@ -12,8 +12,8 @@ Plugback의 사용자 관점 시나리오 카드.
 | ID | 제목 | 우선순위 |
 |---|---|---|
 | [US-001](./US-001-auto-restore-on-connect.md) | 외장 화면을 연결하면 창이 제자리로 돌아온다 | P0 |
-| [US-002](./US-002-save-layout.md) | 지금 배치를 이 화면의 레이아웃으로 저장한다 | P0 |
-| [US-003](./US-003-per-screen-profile.md) | 집과 회사가 서로 다른 레이아웃을 갖는다 | P0 |
+| [US-002](./US-002-save-layout.md) | 지금 배치를 이 화면의 프로필로 저장한다 | P0 |
+| [US-003](./US-003-per-screen-profile.md) | 집과 회사가 서로 다른 프로필을 갖는다 | P0 |
 | [US-004](./US-004-skip-closed-apps.md) | 꺼둔 앱이 멋대로 켜지지 않는다 | P0 |
 | [US-005](./US-005-protect-builtin-screen.md) | 내장 화면에서 하던 작업이 흐트러지지 않는다 | P0 |
 | [US-006](./US-006-manage-target-apps.md) | 어떤 앱을 복원할지 고른다 | P1 |
