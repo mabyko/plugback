@@ -11,9 +11,13 @@ public actor AXWindowGateway: WindowGateway {
     private var nextID = 1
     /// openWindow가 창 등장을 기다리는 한도. 무거운 앱의 실측에 맞춰 조정하는 보정 노브.
     private let windowWaitDeadline: TimeInterval
+    /// 창 목록 조회가 한도를 넘겼을 때 한 번만 쓰는 재시도 한도 (F-02.4의 250ms는 평시 한도다).
+    /// 화면 재구성 순간의 앱은 느리다 — 실기기 측정 후 조정하는 보정 노브다.
+    private let retryTimeout: TimeInterval
 
-    public init(windowWaitDeadline: TimeInterval = 3.0) {
+    public init(windowWaitDeadline: TimeInterval = 3.0, retryTimeout: TimeInterval = 1.0) {
         self.windowWaitDeadline = windowWaitDeadline
+        self.retryTimeout = retryTimeout
     }
 
     public func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
@@ -35,7 +39,14 @@ public actor AXWindowGateway: WindowGateway {
             // 앱 하나가 응답하지 않아도 멈추는 시간의 한도 (F-02.4, 초기값 250ms)
             AXUIElementSetMessagingTimeout(appElement, 0.25)
 
-            guard let windows: [AXUIElement] = copy(appElement, kAXWindowsAttribute) else { continue }
+            // 열거 실패는 "창 없음"이 아니다 — 화면 재구성 직후 실제로 한도를 넘긴다(실측 2026-08-18).
+            // 여기서 조용히 넘기면 창이 멀쩡한 앱이 "창이 없어 건너뜀"으로 보고된다. 한 번은 넉넉히 다시 묻는다.
+            var windows: [AXUIElement]? = copy(appElement, kAXWindowsAttribute)
+            if windows == nil {
+                AXUIElementSetMessagingTimeout(appElement, Float(retryTimeout))
+                windows = copy(appElement, kAXWindowsAttribute)
+            }
+            guard let windows else { continue }
             for element in windows {
                 // 타임아웃은 요소별이다 — 창 요소에도 걸어야 move()·재검증이 기본값(수 초)을 타지 않는다
                 AXUIElementSetMessagingTimeout(element, 0.25)
