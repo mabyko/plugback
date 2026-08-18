@@ -45,6 +45,10 @@ final class CollectTriggerTests: XCTestCase {
 
     func testAppSwitchAlsoReachesTheCollectCallback() async {
         // 두 신호원이 서로를 메운다 — AX 알림이 불안정한 앱은 전환 신호로 잡는다.
+        //
+        // **비활성화가 본 신호다.** 활성화는 상호작용의 시작에 오므로 그 순간의 배치는
+        // 창을 옮기기 전의 것이다 — 활성화만 구독했더니 확정된 후보가 씨앗과 좌표가 같았다
+        // (2026-08-18 실기기). 앱에서 빠져나오는 순간이 그 앱 창의 최종 상태다.
         let source = FakeMoveSource()
         var collects = 0
         let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { collects += 1 }
@@ -53,7 +57,35 @@ final class CollectTriggerTests: XCTestCase {
         NSWorkspace.shared.notificationCenter.post(
             name: NSWorkspace.didDeactivateApplicationNotification, object: nil)
         await wait()
+        XCTAssertEqual(collects, 1, "비활성화를 놓치면 옮긴 뒤의 배치를 영영 못 잡는다")
+
+        NSWorkspace.shared.notificationCenter.post(
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        await wait()
+        XCTAssertEqual(collects, 2, "활성화도 받는다 — 빠져나온 적 없는 첫 회차를 잡는다")
+        await trigger.stop()
+    }
+
+    func testMinimumIntervalThinsTheAppSwitchStorm() async {
+        // 앱 전환은 하루에 수백 번이다. 이 간격이 곧 자동 슬롯의 오차 상한이 된다.
+        // 창 이동에는 걸리지 않는다 — 이동은 끝날 때 1회만 오고, 스로틀을 걸면 마지막 배치를 놓친다.
+        let source = FakeMoveSource()
+        var collects = 0
+        let trigger = CollectTrigger(moveSource: source, minimumInterval: 60) { collects += 1 }
+        trigger.start()
+
+        for _ in 0..<5 {
+            NSWorkspace.shared.notificationCenter.post(
+                name: NSWorkspace.didDeactivateApplicationNotification, object: nil)
+        }
+        await wait()
         XCTAssertEqual(collects, 1)
+
+        await trigger.retarget(["com.chrome"])
+        source.settle()
+        source.settle()
+        await wait()
+        XCTAssertEqual(collects, 3, "창 이동은 스로틀을 타지 않는다")
         await trigger.stop()
     }
 

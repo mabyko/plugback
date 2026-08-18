@@ -12,6 +12,8 @@ import Foundation
 public final class CollectTrigger {
     private let moveSource: WindowMoveSource?
     private let activity: ActivityWatcher
+    /// 창 이동 경로가 쓰는 참조. ActivityWatcher도 같은 클로저를 들지만 둘 다 불변이라 어긋날 수 없다 —
+    /// 하나로 합치려면 ActivityWatcher의 콜백을 var로 열어야 해서, 그 대가가 이 중복보다 크다.
     private let onCollect: () -> Void
     private var started = false
 
