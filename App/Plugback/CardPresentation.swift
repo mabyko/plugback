@@ -90,6 +90,19 @@ enum CardPresentation {
         return "복원 소스 · \(name) · \(formatter.string(from: savedAt))"
     }
 
+    /// 수집은 눈에 보이는 일을 하지 않는다 — 이 줄이 없으면 트리거가 죽어 있어도 알 수 없다.
+    /// 실험실이 켜져 있을 때만 보이는 진단 줄이다.
+    static func collectLabel(lastCollectedAt: Date?, now: Date = Date()) -> String {
+        guard let lastCollectedAt else { return "수집 · 아직 없음" }
+        let seconds = Int(now.timeIntervalSince(lastCollectedAt))
+        switch seconds {
+        case ..<10:   return "수집 · 방금"
+        case ..<60:   return "수집 · \(seconds)초 전"
+        case ..<3600: return "수집 · \(seconds / 60)분 전"
+        default:      return "수집 · \(seconds / 3600)시간 전"
+        }
+    }
+
     // MARK: - 단축어 다이얼로그 (F-05.5) — restoreNow 반환값이 곧 문구 분기
 
     static func intentDialog(for outcome: RestoreOutcome) -> String {
