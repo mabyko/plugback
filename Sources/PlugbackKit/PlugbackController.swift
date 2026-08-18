@@ -58,9 +58,6 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var lastCaptureCount: Int?
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
     @Published public private(set) var storeNotice: ProfileStore.LoadOutcome.Trouble?
-    /// 읽지 못한 파일 위에 쓰지 않는다 — 알림을 닫아도 이 금지는 프로세스 수명 동안 유지된다.
-    private let saveBlocked: Bool
-
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
     @Published public var restoreMode: RestoreMode {
         didSet { defaults.set(restoreMode.rawValue, forKey: Keys.restoreMode) }
@@ -90,7 +87,7 @@ public final class PlugbackController: ObservableObject {
         didSet {
             guard labAutoSlot != oldValue else { return }
             defaults.set(labAutoSlot, forKey: Keys.labAutoSlot)
-            if labAutoSlot { seedAutoSlots() } else { candidates.removeAll() }
+            slots.isLabEnabled = labAutoSlot // 씨앗 복사·후보 폐기는 슬롯 모듈의 일이다
             syncCollectTrigger()
             refreshPredictionsAfterOptionChange() // 복원 소스가 바뀌면 점도 바뀐다
         }
@@ -122,33 +119,23 @@ public final class PlugbackController: ObservableObject {
         return ok
     }
 
-    @Published private var profiles: [String: Profile]
+    /// 슬롯 규칙 전부가 여기 산다 — 컨트롤러는 「이 화면의 프로필」만 묻는다.
+    private let slots: ProfileSlots
+    private var slotChanges: AnyCancellable?
     @Published private var resultsByScreen: [String: RestoreResult] = [:]
 
-    /// 복원 소스 판정 — **더 최근에 저장된 슬롯이 이긴다.** 저장된 "활성 슬롯"은 없다.
-    /// 확정은 케이블을 뽑았다는 이유로 최신이 되고, 사람이 방금 저장했으면 그쪽이 최신이다.
-    /// 규칙 하나가 두 경우를 다 설명하므로 어긋날 상태가 존재하지 않는다.
-    /// 동점이면 수동이 이긴다 — 후보 배열에서 앞에 두면 `max(by:)`가 그렇게 고른다.
-    /// 실험실이 꺼져 있으면 자동 슬롯은 후보에 아예 들어가지 않는다.
-    func resolvedSource(for screenID: String) -> (slot: Slot, profile: Profile)? {
-        var pool: [(Slot, Profile)] = []
-        if let manual = profiles[Slot.manual.key(screenID)] { pool.append((.manual, manual)) }
-        if labAutoSlot, let auto = profiles[Slot.auto.key(screenID)] { pool.append((.auto, auto)) }
-        return pool
-            .max { ($0.1.savedAt ?? .distantPast) < ($1.1.savedAt ?? .distantPast) }
-            .map { (slot: $0.0, profile: $0.1) }
-    }
-
     /// 파생 상태 — 수동 동기화 지점을 두지 않는다.
-    public var profile: Profile? { currentScreenID.flatMap { resolvedSource(for: $0)?.profile } }
+    public var profile: Profile? { currentScreenID.flatMap { slots.source(for: $0)?.profile } }
     /// 지금 복원에 쓰일 슬롯 — 카드가 표시한다. 파생이므로 표시와 동작이 어긋날 수 없다.
-    public var restoreSource: Slot? { currentScreenID.flatMap { resolvedSource(for: $0)?.slot } }
+    public var restoreSource: Slot? { currentScreenID.flatMap { slots.source(for: $0)?.slot } }
     /// 카드가 보여주는 화면의 마지막 복원 결과.
     public var lastResult: RestoreResult? { currentScreenID.flatMap { resultsByScreen[$0] } }
+    /// 카드가 그리는 실험실 상태 — 전부 슬롯 모듈에서 파생된다.
+    public var hasPendingCollect: Bool { slots.hasPendingCollect }
+    public var lastCollectedAt: Date? { slots.lastCollectedAt }
 
     private let gateway: WindowGateway
     private let screenProvider: ScreenProvider
-    private let store: ProfileStore
     private let defaults: UserDefaults
     private var externalScreens: [ScreenInfo] = []
     private var watcher: DisplayWatcher?
@@ -159,49 +146,27 @@ public final class PlugbackController: ObservableObject {
 
     /// 수집 최소 간격 — 실기기 측정 후 조정하는 보정 노브 (테스트는 0을 준다).
     private let collectInterval: TimeInterval
-    /// 화면별 수집 후보. **메모리에만 산다** — 확정 전까지 파일에 닿지 않는다.
-    /// 앱이 죽으면 그 세션의 수집만 사라지고 두 슬롯은 온전하다.
-    private var candidates: [String: Profile] = [:]
-
-    /// 확정을 기다리는 변경이 있나 — 후보가 자동 슬롯과 다른 화면이 하나라도 있는가.
-    /// 카드가 **"지금 복원되는 값"과 "뽑을 때 저장될 값"을 구별해** 보여주기 위한 것이다.
-    /// 이 구별이 없으면 "수집됨"이 "저장됨"으로 읽혀서, 방금 옮겼는데 복원이 왜 다른
-    /// 자리로 가는지 설명할 길이 없다 (2026-08-19에 실제로 그 질문을 받았다).
-    public var hasPendingCollect: Bool {
-        candidates.contains { id, candidate in
-            candidate.apps != profiles[Slot.auto.key(id)]?.apps
-        }
-    }
-
-    /// 마지막으로 수집이 실제로 돈 시각 (실험실). 카드가 보여준다.
-    /// 수집은 눈에 보이는 일을 하지 않아서, 이게 없으면 "돌고 있는지"를 물어볼 곳이 없다 —
-    /// 트리거가 잘못됐을 때 확정된 뒤에야 알게 된다 (2026-08-18에 실제로 그랬다).
-    @Published public private(set) var lastCollectedAt: Date?
-
     public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore,
                 defaults: UserDefaults = .standard, collectInterval: TimeInterval = 10,
                 moveSource: WindowMoveSource? = nil) {
         self.gateway = gateway
         self.screenProvider = screenProvider
-        self.store = store
         self.defaults = defaults
         self.collectInterval = collectInterval
         self.moveSource = moveSource
         restoreMode = defaults.string(forKey: Keys.restoreMode).flatMap(RestoreMode.init) ?? .automatic
         restoreMinimized = defaults.bool(forKey: Keys.restoreMinimized)
         reopenWindowless = defaults.bool(forKey: Keys.reopenWindowless)
-        labAutoSlot = defaults.bool(forKey: Keys.labAutoSlot)
-        let outcome = store.load()
-        profiles = outcome.profiles
-        storeNotice = outcome.trouble
-        saveBlocked = outcome.trouble == .unreadable
-        // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다.
-        // 이름순 첫 프로필 — 사전 순회는 실행마다 순서가 바뀐다 (설정 창의 allProfiles와 같은 기준).
-        // 자동 슬롯은 제외한다 — 같은 화면이 두 번 세어지면 "이름순 첫"이 뜻을 잃는다.
-        if let stored = outcome.profiles.filter({ !Slot.isAutoKey($0.key) }).values
-            .min(by: { $0.screenName < $1.screenName }) {
+        let lab = defaults.bool(forKey: Keys.labAutoSlot)
+        labAutoSlot = lab
+        slots = ProfileSlots(store: store, isLabEnabled: lab)
+        storeNotice = slots.trouble
+        // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다 (이름순 첫 프로필).
+        if let stored = slots.firstByName {
             screenPresence = .remembered(screenID: stored.screenID, name: stored.screenName)
         }
+        // 슬롯 상태가 바뀌면 카드도 다시 그려야 한다 — 바인딩은 컨트롤러 하나만 본다.
+        slotChanges = slots.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
     }
 
     /// 화면 연결 감시 시작 (M4). 새 외장 화면이 나타나면 자동 모드일 때 복원한다 (F-01.1).
@@ -292,23 +257,12 @@ public final class PlugbackController: ObservableObject {
         guard !isRestoring else { return .restoringInProgress }   // 반쯤 복원된 배치를 박제하지 않는다
         // 저장이 차단된 실행에서 메모리에만 담는 저장은 재시작에 증발하는 거짓 저장이다 —
         // 확인 표시("저장됨")가 거짓이 되지 않게 아예 거부한다. 이유는 저장소 알림 배너가 설명한다.
-        guard !saveBlocked else { return .saveBlocked }
+        guard !slots.isSaveBlocked else { return .saveBlocked }
         syncScreens()
         guard isConnected else { return .notConnected }
         let windows = await gateway.standardWindows(of: nil)
-        let now = Date()
-        for screen in externalScreens {
-            let key = Slot.manual.key(screen.id) // 사람은 수동 슬롯에만 쓴다 — 자동 슬롯에 닿지 않는다
-            var merged = CaptureEngine.capture(windows: windows, on: screen, merging: profiles[key])
-            merged.fingerprint = screen.fingerprint
-            // 방금 저장한 것이 가장 최근이 된다 — 다음 복원이 이 배치를 쓴다.
-            // 별도의 "활성 슬롯 전환"이 필요 없는 이유가 이것이다.
-            merged.savedAt = now
-            profiles[key] = merged
-        }
-        let count = profile?.apps.count ?? 0
+        let count = slots.capture(windows: windows, on: externalScreens)
         lastCaptureCount = count
-        persist()
         await updatePredictions()
         return .captured(appCount: count)
     }
@@ -324,33 +278,15 @@ public final class PlugbackController: ObservableObject {
         guard labAutoSlot, !isRestoring else { return }
         syncScreens()
         guard isConnected else { return }
-
-        let bases = collectBases()
-        let targets = Set(bases.values.flatMap { $0.apps.map(\.bundleID) })
+        let targets = slots.targets(for: externalScreens)
         guard !targets.isEmpty else { return } // 아는 앱이 없으면 따라갈 것도 없다
 
-        let windows = await gateway.standardWindows(of: Array(targets))
-        for screen in externalScreens {
-            guard let base = bases[screen.id] else { continue }
-            var next = CaptureEngine.capture(windows: windows, on: screen, merging: base)
-            next.fingerprint = screen.fingerprint
-            candidates[screen.id] = next
-        }
-        lastCollectedAt = Date()
+        slots.collect(windows: await gateway.standardWindows(of: targets), on: externalScreens)
         await refreshCollectTargets() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
     }
 
-    /// 화면별 수집 바탕 — 후보가 있으면 후보, 없으면 자동 슬롯, 그것도 없으면 수동 슬롯.
-    private func collectBases() -> [String: Profile] {
-        externalScreens.reduce(into: [String: Profile]()) { out, screen in
-            out[screen.id] = candidates[screen.id]
-                ?? profiles[Slot.auto.key(screen.id)]
-                ?? profiles[Slot.manual.key(screen.id)]
-        }
-    }
-
     /// 수집 트리거가 따라갈 대상 앱을 지금 상태에 맞춘다.
-    /// 수집 열거와 **같은 앱 집합**을 쓴다 — 어긋나면 관찰은 되는데 수집이 안 되는 앱이 생긴다.
+    /// 수집 열거와 **같은 앱 집합**을 쓴다 — 슬롯 모듈이 그 집합의 유일한 출처다.
     private func refreshCollectTargets() async {
         syncScreens() // 명령은 화면 상태를 스스로 동기화한다 — 호출자에게 순서 의식이 없다.
         // 이게 없으면 앱을 켤 때 화면이 이미 꽂혀 있는 경우 등록이 통째로 빠진다:
@@ -359,47 +295,18 @@ public final class PlugbackController: ObservableObject {
             await collectTrigger?.retarget([])
             return
         }
-        let targets = Set(collectBases().values.flatMap { $0.apps.map(\.bundleID) })
-        await collectTrigger?.retarget(Array(targets))
+        await collectTrigger?.retarget(slots.targets(for: externalScreens))
     }
 
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.
-    ///
-    /// **이 시점에 창을 읽지 않는다.** macOS는 케이블이 빠지면 창을 내장 화면으로 먼저 옮기고
-    /// 알림은 그 뒤에 온다 — 여기서 열거하면 이미 늦다. 수집과 확정을 나눈 이유가 이것이다.
+    /// 이 시점에 창을 읽지 않는다는 것이 이 경로의 핵심이며, 그 이유는 슬롯 모듈에 적혀 있다.
     func confirmCandidates(for screenIDs: Set<String>) {
-        guard labAutoSlot else { return }
-        let now = Date()
-        var wrote = false
-        for id in screenIDs {
-            guard var candidate = candidates.removeValue(forKey: id) else { continue }
-            candidate.savedAt = now
-            profiles[Slot.auto.key(id)] = candidate
-            wrote = true
-        }
-        guard wrote else { return }
-        persist()
+        guard slots.confirm(screenIDs) else { return }
         Task { await updatePredictions() }
     }
 
     /// 종료 직전 — 남은 후보를 전부 확정한다. 화면을 뽑기 전에 앱을 끄면 여기가 마지막 기회다.
-    public func confirmAllCandidates() {
-        confirmCandidates(for: Set(candidates.keys))
-    }
-
-    /// 실험실을 켤 때 수동 슬롯을 자동 슬롯의 씨앗으로 복사한다.
-    /// 없으면 자동 슬롯이 빈 채로 시작해서, 오늘 켜지 않은 앱이 첫 확정에서 통째로 빠진다 (US-002 AC-4).
-    /// savedAt은 그대로 옮긴다 — 내용이 같으니 수동이 계속 이겨도 복원 결과가 같다.
-    private func seedAutoSlots() {
-        var seeded = false
-        for (key, manual) in profiles where !Slot.isAutoKey(key) {
-            let autoKey = Slot.auto.key(key)
-            guard profiles[autoKey] == nil else { continue } // 다시 켤 때 기존 자동 슬롯을 덮지 않는다
-            profiles[autoKey] = manual
-            seeded = true
-        }
-        if seeded { persist() }
-    }
+    public func confirmAllCandidates() { slots.confirmAll() }
 
     /// 복원 중 새 화면이 연결됐다 — 지금 복원이 끝난 직후 1회 재복원한다 (조용한 소실 방지).
     private var pendingRestore = false
@@ -418,16 +325,13 @@ public final class PlugbackController: ObservableObject {
         var latest: [RestoreResult] = []
         repeat {
             pendingRestore = false
-            // 슬롯 판정은 여기서 끝난다 — 엔진은 화면당 프로필 하나만 받고 슬롯을 모른다.
-            var resolved: [String: Profile] = [:]
-            for screen in externalScreens {
-                if let source = resolvedSource(for: screen.id) { resolved[screen.id] = source.profile }
-            }
+            // 엔진은 화면당 프로필 하나만 받고 슬롯을 모른다 — 판정은 슬롯 모듈에서 끝났다.
+            let resolved = slots.resolved(for: externalScreens)
             let results = await RestoreEngine.restore(
                 profiles: resolved, screens: externalScreens, using: gateway,
                 options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
             // 결과 수명 = 프로필 수명 — 복원 중 삭제된 프로필의 결과를 부활시키지 않는다
-            for result in results where resolvedSource(for: result.screenID) != nil {
+            for result in results where slots.source(for: result.screenID) != nil {
                 resultsByScreen[result.screenID] = result
             }
             latest = results
@@ -452,29 +356,17 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// 저장된 모든 프로필 — 연결되지 않은 화면 포함 (F-05.6, US-012 AC-1).
-    /// 자동 슬롯은 목록에 넣지 않는다 — 화면 하나가 두 줄로 보이면 어느 것을 지워야 할지 알 수 없다.
-    public var allProfiles: [Profile] {
-        profiles.filter { !Slot.isAutoKey($0.key) }.values.sorted { $0.screenName < $1.screenName }
-    }
+    public var allProfiles: [Profile] { slots.all }
 
     /// 프로필 통째 삭제 (F-05.6). 그 화면을 다시 연결하면 프로필 없는 화면이다 (US-012 AC-3).
     public func removeProfile(_ screenID: String) {
-        profiles.removeValue(forKey: Slot.manual.key(screenID))
-        profiles.removeValue(forKey: Slot.auto.key(screenID)) // 슬롯 둘 다 — 한쪽만 남으면 지울 길 없는 유령이 된다
-        candidates.removeValue(forKey: screenID)              // 모으던 것도 버린다 — 지운 화면을 되살리지 않는다
+        slots.remove(screenID: screenID)
         resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
-        persist()
     }
 
-    /// 카드가 보여주는 슬롯을 고친다. 목록은 이긴 슬롯의 것인데 수정이 수동 슬롯으로 가면,
-    /// 눈에 보이는 것과 고쳐지는 것이 어긋난다 (체크를 껐는데 그대로 복원되는 증상).
     private func mutateProfile(_ change: (inout Profile) -> Void) {
-        guard let id = currentScreenID, let slot = restoreSource else { return }
-        let key = slot.key(id)
-        guard var p = profiles[key] else { return }
-        change(&p)
-        profiles[key] = p
-        persist()
+        guard let id = currentScreenID else { return }
+        slots.edit(screenID: id, change)
     }
 
     private func updatePredictions() async {
@@ -496,7 +388,7 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
-    public func dismissStoreNotice() { storeNotice = nil }
+    public func dismissStoreNotice() { storeNotice = nil; slots.dismissTrouble() }
 
     /// UserDefaults 키 — 읽기·쓰기가 같은 이름을 쓰도록 한곳에 (오타는 조용한 버그다).
     private enum Keys {
@@ -506,8 +398,4 @@ public final class PlugbackController: ObservableObject {
         static let labAutoSlot = "labAutoSlot"
     }
 
-    private func persist() {
-        guard !saveBlocked else { return } // 읽기 실패를 첫 실행처럼 덮어쓰면 손상보다 나쁜 손실이다
-        store.save(profiles)
-    }
 }
