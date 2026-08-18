@@ -10,13 +10,17 @@ import ApplicationServices
 /// 알림은 **앱 요소**에 건다 — 그 앱의 모든 창을 덮고, 등록 뒤에 열린 창도 포함된다.
 @MainActor
 final class WindowMoveObserver {
-    /// 드래그가 멎었다고 볼 때까지의 대기. 실기기 측정 후 조정하는 보정 노브다.
+    /// 창이 정착했다고 볼 때까지의 대기. 실기기 측정 후 조정하는 보정 노브다.
+    ///
+    /// 처음엔 드래그 중 폭주를 막으려 1초를 뒀는데, 알림은 **이동이 끝날 때 1회만** 온다
+    /// (Apple 문서). 그래서 이 대기가 실제로 하는 일은 창 여러 개를 연달아 옮길 때
+    /// 한 번으로 묶는 것뿐이다 — 그 역할에는 0.3초로 충분하고, 체감은 즉시가 된다.
     private let settleInterval: TimeInterval
     private var observers: [pid_t: AXObserver] = [:]
     private var pending: DispatchWorkItem?
     private var onSettled: (@Sendable () -> Void)?
 
-    init(settleInterval: TimeInterval = 1.0) {
+    init(settleInterval: TimeInterval = 0.3) {
         self.settleInterval = settleInterval
     }
 
