@@ -46,6 +46,8 @@ final class WindowMoveObserver {
             CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
             observers[pid] = observer
         }
+        // 해제 시 예약된 발화를 거둔다. 콜백이 이미 교체됐으므로 동작으로는 관측되지 않는 정리다 —
+        // 메인 큐에 남은 블록을 그냥 두지 않으려는 것뿐이다.
         if wanted.isEmpty { pending?.cancel(); pending = nil }
     }
 
