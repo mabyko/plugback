@@ -6,7 +6,7 @@ import ApplicationServices
 ///
 /// actor다: AX 왕복(호출당 250ms 응답 한도)은 이 actor의 직렬 실행기에서 돌고,
 /// 메인 액터는 막히지 않는다 (F-02.4). NSWorkspace 접근만 메인으로 홉한다.
-public actor AXWindowGateway: WindowGateway {
+public actor AXWindowGateway: WindowGateway, WindowMoveSource {
     private var refs: [Int: AXUIElement] = [:]
     private var nextID = 1
     /// openWindow가 창 등장을 기다리는 한도. 무거운 앱의 실측에 맞춰 조정하는 보정 노브.

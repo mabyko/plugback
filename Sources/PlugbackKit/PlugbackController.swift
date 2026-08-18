@@ -91,7 +91,7 @@ public final class PlugbackController: ObservableObject {
             guard labAutoSlot != oldValue else { return }
             defaults.set(labAutoSlot, forKey: Keys.labAutoSlot)
             if labAutoSlot { seedAutoSlots() } else { candidates.removeAll() }
-            syncActivityWatcher()
+            syncCollectTrigger()
             refreshPredictionsAfterOptionChange() // 복원 소스가 바뀌면 점도 바뀐다
         }
     }
@@ -152,7 +152,10 @@ public final class PlugbackController: ObservableObject {
     private let defaults: UserDefaults
     private var externalScreens: [ScreenInfo] = []
     private var watcher: DisplayWatcher?
-    private var activityWatcher: ActivityWatcher?
+    /// 수집 신호는 이 모듈 하나로 들어온다 — 신호원이 둘이라는 사실은 그 뒤에 있다.
+    private var collectTrigger: CollectTrigger?
+    /// 창 이동 관찰의 어댑터. 게이트웨이와 같은 seam이지만 다른 인터페이스다 (WindowMoveSource).
+    private let moveSource: WindowMoveSource?
 
     /// 수집 최소 간격 — 실기기 측정 후 조정하는 보정 노브 (테스트는 0을 준다).
     private let collectInterval: TimeInterval
@@ -176,12 +179,14 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var lastCollectedAt: Date?
 
     public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore,
-                defaults: UserDefaults = .standard, collectInterval: TimeInterval = 10) {
+                defaults: UserDefaults = .standard, collectInterval: TimeInterval = 10,
+                moveSource: WindowMoveSource? = nil) {
         self.gateway = gateway
         self.screenProvider = screenProvider
         self.store = store
         self.defaults = defaults
         self.collectInterval = collectInterval
+        self.moveSource = moveSource
         restoreMode = defaults.string(forKey: Keys.restoreMode).flatMap(RestoreMode.init) ?? .automatic
         restoreMinimized = defaults.bool(forKey: Keys.restoreMinimized)
         reopenWindowless = defaults.bool(forKey: Keys.reopenWindowless)
@@ -213,35 +218,37 @@ public final class PlugbackController: ObservableObject {
         }
         w.start()
         watcher = w
-        syncActivityWatcher() // 실행 시점에 실험실이 켜져 있으면 수집도 같이 시작한다
+        syncCollectTrigger() // 실행 시점에 실험실이 켜져 있으면 수집도 같이 시작한다
     }
 
-    /// 실험실 상태와 수집 구독을 맞춘다. 꺼진 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
-    private func syncActivityWatcher() {
-        if labAutoSlot {
-            guard activityWatcher == nil else { return }
-            let w = ActivityWatcher(
+    /// 실험실 상태와 수집 트리거를 맞춘다. 꺼진 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
+    /// 신호원이 둘이라는 사실은 트리거 뒤에 있다 — 여기는 켜고 끄고 대상을 맞출 뿐이다.
+    private func syncCollectTrigger() {
+        guard labAutoSlot else {
+            let stopping = collectTrigger
+            collectTrigger = nil
+            Task { await stopping?.stop() }
+            return
+        }
+        if collectTrigger == nil {
+            let trigger = CollectTrigger(
+                moveSource: moveSource,
                 minimumInterval: collectInterval,
                 onTerminating: { [weak self] in self?.confirmAllCandidates() }
             ) { [weak self] in
                 guard let self else { return }
                 Task { await self.collectCandidate() }
             }
-            w.start()
-            activityWatcher = w
-        } else {
-            activityWatcher?.stop()
-            activityWatcher = nil
+            trigger.start()
+            collectTrigger = trigger
         }
-        // 신호가 둘이다: 창 이동(직접 옮긴 것)과 앱 전환(옵저버가 못 받는 앱·나중에 켠 앱).
-        // 서로를 메우므로 둘 다 둔다.
-        Task { await refreshMoveObservers() }
+        Task { await refreshCollectTargets() }
     }
 
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
     func externalScreensAppeared() async {
         syncScreens()
-        await refreshMoveObservers() // 새 화면의 대상 앱까지 이동 관찰에 넣는다
+        await refreshCollectTargets() // 새 화면의 대상 앱까지 이동 관찰에 넣는다
         await updatePredictions() // 카드가 열려 있는 채로 연결돼도 점이 맞게 (예측 갱신)
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         // 권한 게이트는 restoreNow 내부에 있다 — 여기서 중복 검사하지 않는다
@@ -330,7 +337,7 @@ public final class PlugbackController: ObservableObject {
             candidates[screen.id] = next
         }
         lastCollectedAt = Date()
-        await refreshMoveObservers() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
+        await refreshCollectTargets() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
     }
 
     /// 화면별 수집 바탕 — 후보가 있으면 후보, 없으면 자동 슬롯, 그것도 없으면 수동 슬롯.
@@ -342,20 +349,18 @@ public final class PlugbackController: ObservableObject {
         }
     }
 
-    /// 창 이동 관찰 대상을 지금 상태에 맞춘다.
+    /// 수집 트리거가 따라갈 대상 앱을 지금 상태에 맞춘다.
     /// 수집 열거와 **같은 앱 집합**을 쓴다 — 어긋나면 관찰은 되는데 수집이 안 되는 앱이 생긴다.
-    private func refreshMoveObservers() async {
+    private func refreshCollectTargets() async {
         syncScreens() // 명령은 화면 상태를 스스로 동기화한다 — 호출자에게 순서 의식이 없다.
         // 이게 없으면 앱을 켤 때 화면이 이미 꽂혀 있는 경우 등록이 통째로 빠진다:
         // 시작 직후 화면 상태는 '기억만'이고, 연결 이벤트는 이미 지나갔기 때문이다.
         guard labAutoSlot, isConnected else {
-            await gateway.observeWindowMoves(of: [], onSettled: {})
+            await collectTrigger?.retarget([])
             return
         }
         let targets = Set(collectBases().values.flatMap { $0.apps.map(\.bundleID) })
-        await gateway.observeWindowMoves(of: Array(targets)) { [weak self] in
-            Task { @MainActor in await self?.collectCandidate() }
-        }
+        await collectTrigger?.retarget(Array(targets))
     }
 
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.
