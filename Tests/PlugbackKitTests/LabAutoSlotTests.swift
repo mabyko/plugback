@@ -134,6 +134,41 @@ final class LabAutoSlotTests: XCTestCase {
         XCTAssertEqual(stored["ext-1#auto"]?.apps.first?.unitRect.x, 0)
     }
 
+    // MARK: - 창을 옮기면 그 자체가 신호다 (앱 전환을 기다리지 않는다)
+
+    func testWindowMoveTriggersCollectionWithoutAppSwitch() async throws {
+        // 실기기 1차 실패의 핵심 — 창만 옮기고 앱 전환을 안 하면 신호가 없었다.
+        placeChrome(at: left)
+        let controller = makeController()
+        await controller.captureNow()
+        controller.labAutoSlot = true
+        await controller.collectCandidate() // 관찰 등록은 수집 끝에 붙는다
+
+        XCTAssertEqual(gateway.observedBundleIDs, ["com.chrome"], "수집 열거와 같은 앱을 관찰해야 한다")
+
+        // 창을 옮기고 손을 뗀다. 앱 전환은 하지 않는다.
+        gateway.windowsList = [chrome(at: right)]
+        gateway.simulateWindowSettled()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        controller.confirmCandidates(for: ["ext-1"])
+        XCTAssertEqual(controller.restoreSource, .auto)
+        XCTAssertEqual(try XCTUnwrap(controller.profile?.apps.first?.unitRect.x), 0.5, accuracy: 0.001)
+    }
+
+    func testTurningLabOffReleasesMoveObservers() async {
+        placeChrome(at: left)
+        let controller = makeController()
+        await controller.captureNow()
+        controller.labAutoSlot = true
+        await controller.collectCandidate()
+        XCTAssertFalse(gateway.observedBundleIDs.isEmpty)
+
+        controller.labAutoSlot = false
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(gateway.observedBundleIDs.isEmpty, "꺼진 기능이 창을 관찰하고 있으면 꺼짐이 아니다")
+    }
+
     // MARK: - S1 · 더 최근 슬롯이 이긴다
 
     func testMoreRecentAutoSlotWinsAndRestoresToIt() async {

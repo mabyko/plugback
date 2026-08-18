@@ -223,11 +223,15 @@ public final class PlugbackController: ObservableObject {
             activityWatcher?.stop()
             activityWatcher = nil
         }
+        // 신호가 둘이다: 창 이동(직접 옮긴 것)과 앱 전환(옵저버가 못 받는 앱·나중에 켠 앱).
+        // 서로를 메우므로 둘 다 둔다.
+        Task { await refreshMoveObservers() }
     }
 
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
     func externalScreensAppeared() async {
         syncScreens()
+        await refreshMoveObservers() // 새 화면의 대상 앱까지 이동 관찰에 넣는다
         await updatePredictions() // 카드가 열려 있는 채로 연결돼도 점이 맞게 (예측 갱신)
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         // 권한 게이트는 restoreNow 내부에 있다 — 여기서 중복 검사하지 않는다
@@ -304,11 +308,7 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return }
 
-        let bases = externalScreens.reduce(into: [String: Profile]()) { out, screen in
-            out[screen.id] = candidates[screen.id]
-                ?? profiles[Slot.auto.key(screen.id)]
-                ?? profiles[Slot.manual.key(screen.id)]
-        }
+        let bases = collectBases()
         let targets = Set(bases.values.flatMap { $0.apps.map(\.bundleID) })
         guard !targets.isEmpty else { return } // 아는 앱이 없으면 따라갈 것도 없다
 
@@ -320,6 +320,29 @@ public final class PlugbackController: ObservableObject {
             candidates[screen.id] = next
         }
         lastCollectedAt = Date()
+        await refreshMoveObservers() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
+    }
+
+    /// 화면별 수집 바탕 — 후보가 있으면 후보, 없으면 자동 슬롯, 그것도 없으면 수동 슬롯.
+    private func collectBases() -> [String: Profile] {
+        externalScreens.reduce(into: [String: Profile]()) { out, screen in
+            out[screen.id] = candidates[screen.id]
+                ?? profiles[Slot.auto.key(screen.id)]
+                ?? profiles[Slot.manual.key(screen.id)]
+        }
+    }
+
+    /// 창 이동 관찰 대상을 지금 상태에 맞춘다.
+    /// 수집 열거와 **같은 앱 집합**을 쓴다 — 어긋나면 관찰은 되는데 수집이 안 되는 앱이 생긴다.
+    private func refreshMoveObservers() async {
+        guard labAutoSlot, isConnected else {
+            await gateway.observeWindowMoves(of: [], onSettled: {})
+            return
+        }
+        let targets = Set(collectBases().values.flatMap { $0.apps.map(\.bundleID) })
+        await gateway.observeWindowMoves(of: Array(targets)) { [weak self] in
+            Task { @MainActor in await self?.collectCandidate() }
+        }
     }
 
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.

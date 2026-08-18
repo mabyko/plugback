@@ -33,4 +33,18 @@ public protocol WindowGateway: Sendable {
     /// true = 표준 창이 지금 존재한다(다시 열거하면 나온다). false = 한도 내에 안 나타났거나 앱이 없다.
     /// 꺼진 앱을 실행하지는 않는다 — F-02.1은 유지된다.
     func openWindow(bundleID: String) async -> Bool
+
+    /// 대상 앱의 창이 움직이거나 크기가 바뀌면 알린다 (실험실 · 자동 슬롯의 수집 트리거, F-08.3).
+    /// 폴링이 아니라 구독이다 — 창이 가만히 있으면 아무것도 발화하지 않는다.
+    ///
+    /// **드래그 폭주는 구현이 압축한다.** 원시 알림은 드래그 내내 초당 수십 번 오지만
+    /// 호출자가 받는 것은 "정착했다" 1회다 — DisplayWatcher가 연결 이벤트에 하는 것과 같은 처방이다.
+    /// 멱등이다: 같은 목록으로 다시 불러도 중복 등록하지 않고, 꺼진 앱의 등록은 정리한다.
+    /// 빈 목록을 주면 전부 해제한다.
+    func observeWindowMoves(of bundleIDs: [String], onSettled: @escaping @Sendable () -> Void) async
+}
+
+public extension WindowGateway {
+    /// 관찰을 지원하지 않는 어댑터의 기본값 — 무동작. 그런 어댑터에서는 앱 전환 신호만으로 수집한다.
+    func observeWindowMoves(of bundleIDs: [String], onSettled: @escaping @Sendable () -> Void) async {}
 }

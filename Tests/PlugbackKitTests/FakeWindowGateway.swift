@@ -82,6 +82,19 @@ final class FakeWindowGateway: WindowGateway {
     /// Dock에서 나오며 프레임이 바뀌는 상황 — 열거 스냅샷과 재판독의 괴리를 흉내낸다
     var frameOnUnminimize: [Int: CGRect] = [:]
 
+    /// 이동 관찰 등록 — 마지막 대상과 콜백을 들고 있어 테스트가 직접 발화시킨다.
+    /// 실물 어댑터의 디바운스는 여기 없다 — 페이크는 "정착했다" 지점만 흉내낸다.
+    private(set) var observedBundleIDs: [String] = []
+    private var onWindowSettled: (@Sendable () -> Void)?
+
+    func observeWindowMoves(of bundleIDs: [String], onSettled: @escaping @Sendable () -> Void) async {
+        observedBundleIDs = bundleIDs.sorted()
+        onWindowSettled = bundleIDs.isEmpty ? nil : onSettled
+    }
+
+    /// 창을 옮기고 손을 뗐다 — 실물에서 디바운스가 끝나 콜백이 나가는 지점.
+    func simulateWindowSettled() { onWindowSettled?() }
+
     func unminimize(windowID: Int) async -> CGRect? {
         guard !unminimizeFails, let i = windowsList.firstIndex(where: { $0.id == windowID }) else { return nil }
         let old = windowsList[i]
