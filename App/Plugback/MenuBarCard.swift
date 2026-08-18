@@ -148,9 +148,15 @@ private struct Card: View {
                 }
                 // 실험실이 꺼져 있으면 이 줄이 아예 없다 — 카드가 오늘과 완전히 같다.
                 // 켜져 있으면 어느 슬롯이 이겼는지 항상 보인다 (조용함 ≠ 불투명함).
-                if controller.labAutoSlot, let slot = controller.restoreSource {
-                    Text(CardPresentation.sourceLabel(slot: slot, savedAt: controller.profile?.savedAt))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                if controller.labAutoSlot {
+                    HStack(spacing: 6) {
+                        if let slot = controller.restoreSource {
+                            Text(CardPresentation.sourceLabel(slot: slot, savedAt: controller.profile?.savedAt))
+                        }
+                        Text(CardPresentation.collectLabel(lastCollectedAt: controller.lastCollectedAt))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
         }

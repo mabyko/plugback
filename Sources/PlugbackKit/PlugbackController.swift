@@ -160,8 +160,13 @@ public final class PlugbackController: ObservableObject {
     /// 앱이 죽으면 그 세션의 수집만 사라지고 두 슬롯은 온전하다.
     private var candidates: [String: Profile] = [:]
 
+    /// 마지막으로 수집이 실제로 돈 시각 (실험실). 카드가 보여준다.
+    /// 수집은 눈에 보이는 일을 하지 않아서, 이게 없으면 "돌고 있는지"를 물어볼 곳이 없다 —
+    /// 트리거가 잘못됐을 때 확정된 뒤에야 알게 된다 (2026-08-18에 실제로 그랬다).
+    @Published public private(set) var lastCollectedAt: Date?
+
     public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore,
-                defaults: UserDefaults = .standard, collectInterval: TimeInterval = 30) {
+                defaults: UserDefaults = .standard, collectInterval: TimeInterval = 10) {
         self.gateway = gateway
         self.screenProvider = screenProvider
         self.store = store
@@ -314,6 +319,7 @@ public final class PlugbackController: ObservableObject {
             next.fingerprint = screen.fingerprint
             candidates[screen.id] = next
         }
+        lastCollectedAt = Date()
     }
 
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.
