@@ -142,7 +142,7 @@ public final class PlugbackController: ObservableObject {
     /// 파생 상태 — 수동 동기화 지점을 두지 않는다.
     public var profile: Profile? { currentScreenID.flatMap { resolvedSource(for: $0)?.profile } }
     /// 지금 복원에 쓰일 슬롯 — 카드가 표시한다. 파생이므로 표시와 동작이 어긋날 수 없다.
-    public var activeSlot: Slot? { currentScreenID.flatMap { resolvedSource(for: $0)?.slot } }
+    public var restoreSource: Slot? { currentScreenID.flatMap { resolvedSource(for: $0)?.slot } }
     /// 카드가 보여주는 화면의 마지막 복원 결과.
     public var lastResult: RestoreResult? { currentScreenID.flatMap { resultsByScreen[$0] } }
 
@@ -422,7 +422,7 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 보여주는 슬롯을 고친다. 목록은 이긴 슬롯의 것인데 수정이 수동 슬롯으로 가면,
     /// 눈에 보이는 것과 고쳐지는 것이 어긋난다 (체크를 껐는데 그대로 복원되는 증상).
     private func mutateProfile(_ change: (inout Profile) -> Void) {
-        guard let id = currentScreenID, let slot = activeSlot else { return }
+        guard let id = currentScreenID, let slot = restoreSource else { return }
         let key = slot.key(id)
         guard var p = profiles[key] else { return }
         change(&p)

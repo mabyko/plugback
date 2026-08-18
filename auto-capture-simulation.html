@@ -1,0 +1,948 @@
+<title>자동 슬롯 시뮬레이션</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@600;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --ground:        #F4F6F8;
+    --surface:       #FFFFFF;
+    --surface-2:     #EDF0F4;
+    --ink:           #12171E;
+    --ink-2:         #3C4650;
+    --ink-3:         #6B7683;
+    --line:          #DDE2E8;
+    --line-strong:   #C3CBD4;
+    --accent:        #12628F;
+    --accent-soft:   #E3EEF4;
+    --pass:          #216B4E;
+    --pass-soft:     #E2F0E9;
+    --warn:          #9A6209;
+    --warn-soft:     #F7EEDC;
+    --fail:          #A63328;
+    --fail-soft:     #F8E5E2;
+    --shadow:        0 1px 2px rgba(18,23,30,.05), 0 8px 24px -12px rgba(18,23,30,.18);
+
+    --f-display: "Chivo", "IBM Plex Sans KR", system-ui, sans-serif;
+    --f-body:    "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --f-mono:    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0E1318;
+      --surface:     #161C23;
+      --surface-2:   #1D242C;
+      --ink:         #E6ECF2;
+      --ink-2:       #AEB9C4;
+      --ink-3:       #7C8894;
+      --line:        #262F38;
+      --line-strong: #38434E;
+      --accent:      #5AB4E0;
+      --accent-soft: #12303F;
+      --pass:        #6FCB9F;
+      --pass-soft:   #10281F;
+      --warn:        #E0A94A;
+      --warn-soft:   #2C2313;
+      --fail:        #E8867A;
+      --fail-soft:   #331B18;
+      --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0E1318;
+    --surface:     #161C23;
+    --surface-2:   #1D242C;
+    --ink:         #E6ECF2;
+    --ink-2:       #AEB9C4;
+    --ink-3:       #7C8894;
+    --line:        #262F38;
+    --line-strong: #38434E;
+    --accent:      #5AB4E0;
+    --accent-soft: #12303F;
+    --pass:        #6FCB9F;
+    --pass-soft:   #10281F;
+    --warn:        #E0A94A;
+    --warn-soft:   #2C2313;
+    --fail:        #E8867A;
+    --fail-soft:   #331B18;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+
+  /* ── header ───────────────────────────────────────────── */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background:
+      linear-gradient(transparent 0 calc(100% - 1px), var(--line) calc(100% - 1px)) 0 0 / 100% 28px,
+      linear-gradient(90deg, transparent 0 calc(100% - 1px), var(--line) calc(100% - 1px)) 0 0 / 28px 100%,
+      var(--surface);
+  }
+  .masthead-inner {
+    padding: 52px 0 40px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px 48px;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 800;
+    font-size: clamp(2.1rem, 5vw, 3.1rem);
+    line-height: 1.05;
+    letter-spacing: -.025em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    margin: 0;
+    max-width: 48ch;
+    color: var(--ink-2);
+    font-size: 1.02rem;
+  }
+  .meta {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    display: grid;
+    gap: 5px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+
+  /* ── band ─────────────────────────────────────────────── */
+
+  .band { padding: 40px 0 8px; }
+  .band-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 800;
+    font-size: 1.32rem;
+    letter-spacing: -.015em;
+    margin: 0;
+  }
+  .band-note { color: var(--ink-3); font-size: .88rem; margin: 0; }
+
+  .holes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .hole {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--sev);
+    border-radius: 3px;
+    padding: 20px 20px 22px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .hole[data-sev="ok"]   { --sev: var(--pass); }
+  .hole[data-sev="mid"]  { --sev: var(--warn); }
+  .hole[data-sev="high"] { --sev: var(--fail); }
+  .hole[data-sev="note"] { --sev: var(--accent); }
+  .hole-id {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--sev);
+  }
+  .hole h3 {
+    margin: 0;
+    font-size: 1.02rem;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -.01em;
+  }
+  .hole p { margin: 0; font-size: .9rem; color: var(--ink-2); }
+  .hole .fix {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line-strong);
+    font-size: .86rem;
+    color: var(--ink-2);
+  }
+  .hole .fix strong { color: var(--ink); font-weight: 600; }
+
+  /* ── layout ───────────────────────────────────────────── */
+
+  .cols {
+    display: grid;
+    grid-template-columns: 262px minmax(0, 1fr);
+    gap: 44px;
+    align-items: start;
+    padding: 46px 0 72px;
+  }
+
+  .rail { position: sticky; top: 24px; display: grid; gap: 26px; }
+
+  .rail-block h4 {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .spec { display: grid; gap: 9px; font-size: .855rem; margin: 0; }
+  .spec div { display: grid; grid-template-columns: 68px 1fr; gap: 10px; }
+  .spec dt {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    padding-top: 2px;
+  }
+  .spec dd { margin: 0; color: var(--ink-2); }
+  .spec code {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 0 4px;
+    color: var(--ink);
+  }
+
+  .invariants { display: grid; gap: 11px; counter-reset: inv; }
+  .inv {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 9px;
+    font-size: .855rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0;
+  }
+  .inv::before {
+    counter-increment: inv;
+    content: counter(inv);
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 2px;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    margin-top: 2px;
+  }
+  .inv b { color: var(--ink); font-weight: 600; }
+
+  .jump { display: grid; gap: 1px; }
+  .jump a {
+    display: grid;
+    grid-template-columns: 30px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 8px;
+    font-size: .845rem;
+    color: var(--ink-2);
+    text-decoration: none;
+    border-radius: 2px;
+  }
+  .jump a:hover, .jump a:focus-visible { background: var(--surface-2); color: var(--ink); }
+  .jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .jump .jid { font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.pass { background: var(--pass); }
+  .dot.warn { background: var(--warn); }
+  .dot.fail { background: var(--fail); }
+
+  /* ── scenarios ────────────────────────────────────────── */
+
+  .scenarios { display: grid; gap: 20px; }
+
+  .sc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--stat);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    scroll-margin-top: 20px;
+  }
+  .sc[data-status="pass"] { --stat: var(--pass); --stat-soft: var(--pass-soft); }
+  .sc[data-status="warn"] { --stat: var(--warn); --stat-soft: var(--warn-soft); }
+  .sc[data-status="fail"] { --stat: var(--fail); --stat-soft: var(--fail-soft); }
+
+  .sc-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .sc-id {
+    font-family: var(--f-display);
+    font-weight: 800;
+    font-size: 1.5rem;
+    letter-spacing: -.03em;
+    color: var(--stat);
+    line-height: 1.1;
+    min-width: 42px;
+  }
+  .sc-title { flex: 1 1 240px; min-width: 0; }
+  .sc-title h3 {
+    margin: 0 0 3px;
+    font-size: 1.08rem;
+    font-weight: 600;
+    letter-spacing: -.012em;
+    line-height: 1.35;
+  }
+  .sc-title p { margin: 0; font-size: .875rem; color: var(--ink-3); }
+  .chip {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 2px;
+    background: var(--stat-soft);
+    color: var(--stat);
+    border: 1px solid color-mix(in srgb, var(--stat) 26%, transparent);
+    white-space: nowrap;
+  }
+
+  .sc-body { padding: 20px 24px 24px; display: grid; gap: 18px; }
+
+  .timeline { display: grid; gap: 0; font-family: var(--f-mono); font-size: 12.5px; }
+  .step {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 14px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: baseline;
+  }
+  .step:last-child { border-bottom: 0; }
+  .step .t {
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+  .step .e { color: var(--ink-2); line-height: 1.55; }
+  .step .e b { color: var(--ink); font-weight: 600; }
+  .step.mark { background: var(--stat-soft); margin: 0 -12px; padding: 7px 12px; border-radius: 2px; }
+  .step.mark .e b { color: var(--stat); }
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: start;
+    padding: 14px 16px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    font-size: .93rem;
+  }
+  .verdict .vlabel {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 3px;
+  }
+  .verdict p { margin: 0 0 8px; color: var(--ink-2); }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict strong { color: var(--ink); font-weight: 600; }
+  .verdict em { font-style: normal; color: var(--stat); font-weight: 600; }
+
+  .was {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border: 1px dashed var(--line-strong);
+    border-radius: 2px;
+    padding: 4px 9px;
+    justify-self: start;
+  }
+
+  code, .k {
+    font-family: var(--f-mono);
+    font-size: .88em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: .5px 4px;
+    color: var(--ink);
+  }
+  .sc-body code { background: var(--ground); }
+
+  /* ── closing ──────────────────────────────────────────── */
+
+  .close { border-top: 1px solid var(--line); background: var(--surface); }
+  .close-inner { padding: 46px 0 60px; display: grid; gap: 30px; }
+
+  .rule {
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+    border-radius: 3px;
+    padding: 26px 28px;
+    display: grid;
+    gap: 12px;
+  }
+  .rule .eyebrow { margin: 0; }
+  .rule blockquote {
+    margin: 0;
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(1.15rem, 2.6vw, 1.5rem);
+    line-height: 1.35;
+    letter-spacing: -.02em;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  .rule ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 5px; color: var(--ink-2); font-size: .93rem; }
+  .rule .tail { margin: 4px 0 0; color: var(--ink-2); font-size: .93rem; }
+
+  .open { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .open-item {
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 18px 20px;
+    background: var(--ground);
+  }
+  .open-item h4 { margin: 0 0 6px; font-size: .98rem; font-weight: 600; }
+  .open-item p { margin: 0; font-size: .89rem; color: var(--ink-2); }
+
+  .foot {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    border-top: 1px solid var(--line);
+    padding-top: 18px;
+    line-height: 1.9;
+  }
+
+  @media (max-width: 940px) {
+    .cols { grid-template-columns: 1fr; gap: 32px; padding-top: 34px; }
+    .rail { position: static; }
+    .holes { grid-template-columns: 1fr; }
+    .open { grid-template-columns: 1fr; }
+    .meta { text-align: left; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 0 18px; }
+    .step { grid-template-columns: 54px 1fr; gap: 10px; }
+    .sc-head, .sc-body { padding-left: 18px; padding-right: 18px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <div>
+      <p class="eyebrow">Plugback · 설계 검증 · 2차</p>
+      <h1>자동 슬롯 시뮬레이션</h1>
+      <p class="standfirst">
+        자동 저장(A안)을 실제 사용 흐름에 대입해 본 기록. 11개 시나리오를 단계별로 돌렸다.
+        1차에서 구멍 3개가 나왔고, 그중 둘은 <strong>설계를 바꿔서</strong> 사라졌다.
+      </p>
+    </div>
+    <div class="meta">
+      <span><b>대상</b> · 자동 슬롯 · 실험실</span>
+      <span><b>시나리오</b> · 11</span>
+      <span><b>통과</b> · 8 &nbsp; <b>수용</b> · 3 &nbsp; <b>구멍</b> · 0</span>
+      <span><b>부품</b> · 11 → 5 → <b>4</b></span>
+    </div>
+  </div>
+</header>
+
+<section class="wrap band">
+  <div class="band-head">
+    <h2>시뮬레이션이 설계를 바꾼 지점</h2>
+    <p class="band-note">구멍을 막은 게 아니라, 구멍이 생길 수 없는 모양으로 바꿨다.</p>
+  </div>
+  <div class="holes">
+    <article class="hole" data-sev="ok">
+      <span class="hole-id">변경 1 · S1 S6 S7</span>
+      <h3>활성 슬롯을 없앴다</h3>
+      <p>1차 구멍 3개는 전부 “활성 슬롯이 실제 의도와 어긋난다”였다. 저장된 활성 슬롯 자체를 지우고
+        <strong>더 최근에 저장된 슬롯</strong>을 쓰게 하니 어긋날 상태가 없어진다.</p>
+      <p class="fix">복원 소스가 <strong>저장된 상태에서 파생 상태로</strong> 바뀐다.
+        <code>claimSlot()</code>·화면별 활성 슬롯·끈적임 로직이 통째로 사라진다.</p>
+    </article>
+    <article class="hole" data-sev="ok">
+      <span class="hole-id">변경 2 · S11</span>
+      <h3>실험실 데이터를 분리했다</h3>
+      <p>자동 슬롯을 <code>profiles.json</code>에 같은 키로 넣으면 설정 창의 <code>allProfiles</code>에
+        같은 화면이 두 번 뜨고, <code>removeProfile</code>이 자동 슬롯을 안 지운다.</p>
+      <p class="fix">자동 슬롯은 <strong><code>lab-auto.json</code> 별도 파일</strong>로.
+        기존 파일·키·마이그레이션이 <strong>0</strong>이 되고, 실험을 걷어낼 때 파일 하나만 안 읽으면 된다.</p>
+    </article>
+    <article class="hole" data-sev="mid">
+      <span class="hole-id">남는 위험 · S5 S10</span>
+      <h3>뽑는 순간의 배치가 정답이 된다</h3>
+      <p>복원이 부분 실패한 상태, 회의하려고 창을 치워둔 상태, 열거가 실패해 옛 위치가 섞인 배치 —
+        전부 그대로 자동 슬롯에 들어간다.</p>
+      <p class="fix">A안을 고른 이상 <strong>받아들이는 위험</strong>이다.
+        답은 회복 경로 4개(S11)와 수동 북마크이지 추가 방어 로직이 아니다.</p>
+    </article>
+  </div>
+</section>
+
+<div class="wrap cols">
+
+  <aside class="rail">
+    <div class="rail-block">
+      <h4>테스트 대상</h4>
+      <dl class="spec">
+        <div><dt>슬롯</dt><dd>자동 / 수동 — 화면별, 파일 분리</dd></div>
+        <div><dt>수집</dt><dd>앱 전환 알림, 최소 30초 간격 → 메모리 후보</dd></div>
+        <div><dt>확정</dt><dd>외장 화면 제거 · 앱 종료 → 후보를 자동 슬롯에</dd></div>
+        <div><dt>저장</dt><dd>버튼 → 수동 슬롯에만</dd></div>
+        <div><dt>복원</dt><dd><b>더 최근에 저장된 슬롯.</b> 저장된 활성 슬롯 없음</dd></div>
+        <div><dt>OFF</dt><dd>자동 슬롯이 비교에서 빠진다</dd></div>
+        <div><dt>드리프트</dt><dd>허용 오차(5px) 안이면 갱신 안 함</dd></div>
+        <div><dt>타이머</dt><dd>없음 · AX 옵저버 없음</dd></div>
+      </dl>
+    </div>
+
+    <div class="rail-block">
+      <h4>검증할 불변식</h4>
+      <div class="invariants">
+        <p class="inv"><span><b>자동은 자동 슬롯만 쓴다.</b> 사람은 수동 슬롯만 쓴다.</span></p>
+        <p class="inv"><span>복원 소스는 <b>저장하지 않는다.</b> 두 시각에서 파생된다.</span></p>
+        <p class="inv"><span>확정 시점에 <b>창을 읽지 않는다.</b> 이미 읽어둔 후보를 쓸 뿐이다.</span></p>
+        <p class="inv"><span>실험실이 꺼져 있으면 <b>카드도 파일도 오늘과 동일</b>하다.</span></p>
+      </div>
+    </div>
+
+    <div class="rail-block">
+      <h4>시나리오</h4>
+      <nav class="jump">
+        <a href="#s1"><span class="jid">S1</span><span>평범한 하루</span><span class="dot pass"></span></a>
+        <a href="#s2"><span class="jid">S2</span><span>안 켠 앱</span><span class="dot pass"></span></a>
+        <a href="#s3"><span class="jid">S3</span><span>접촉 불량</span><span class="dot pass"></span></a>
+        <a href="#s4"><span class="jid">S4</span><span>덮개 · 잠자기</span><span class="dot pass"></span></a>
+        <a href="#s5"><span class="jid">S5</span><span>복원 실패 뒤</span><span class="dot warn"></span></a>
+        <a href="#s6"><span class="jid">S6</span><span>실험실 끄기</span><span class="dot pass"></span></a>
+        <a href="#s7"><span class="jid">S7</span><span>저장 버튼</span><span class="dot pass"></span></a>
+        <a href="#s8"><span class="jid">S8</span><span>화면 두 대</span><span class="dot pass"></span></a>
+        <a href="#s9"><span class="jid">S9</span><span>종료 · 크래시</span><span class="dot pass"></span></a>
+        <a href="#s10"><span class="jid">S10</span><span>열거 실패</span><span class="dot warn"></span></a>
+        <a href="#s11"><span class="jid">S11</span><span>되돌리기</span><span class="dot pass"></span></a>
+      </nav>
+    </div>
+  </aside>
+
+  <main class="scenarios">
+
+    <!-- S1 -->
+    <article class="sc" id="s1" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S1</span>
+        <div class="sc-title">
+          <h3>평범한 도킹 하루</h3>
+          <p>아침에 꽂고, 하루 일하고, 저녁에 뽑는다</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">09:00</span><span class="e">케이블 꽂음 → 자동 복원 <b>(더 최근 슬롯)</b></span></div>
+          <div class="step"><span class="t">09:00~</span><span class="e">앱 전환 수백 회 → 30초 간격으로 후보 갱신 (메모리)</span></div>
+          <div class="step mark"><span class="t">18:00</span><span class="e">케이블 뽑음 → <code>removed</code> 감지 → 후보를 <b>자동 슬롯에 확정</b></span></div>
+          <div class="step"><span class="t">다음날</span><span class="e">자동 슬롯이 최신 → <b>저절로 그걸로 복원</b></span></div>
+        </div>
+        <span class="was">1차 판정 · 구멍 1 — 기능을 켜도 아무 일도 일어나지 않는다</span>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>1차에서는 활성 슬롯이 수동에 머물러 자동 슬롯을 아무도 안 썼다.
+              최신순 규칙에서는 <em>자동이 최신이면 저절로 이긴다.</em> 켜는 것 말고 할 일이 없다.</p>
+            <p>“저장을 잊어도 되는 앱”이 이 시나리오에서 성립한다.
+              그리고 이걸 위해 <strong>새로 저장하는 상태가 하나도 없다</strong> — 슬롯 두 개의 저장 시각에서 파생될 뿐이다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S2 -->
+    <article class="sc" id="s2" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S2</span>
+        <div class="sc-title">
+          <h3>오늘 Slack을 안 켰다</h3>
+          <p>US-002 AC-4 — 꺼둔 앱이 프로필에서 사라지면 안 된다</p>
+        </div>
+        <span class="chip">막힘</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">전제</span><span class="e">수동 슬롯 = { Chrome, VSCode, <b>Slack</b> }</span></div>
+          <div class="step"><span class="t">09:00</span><span class="e">복원 → Slack은 <code>appNotRunning</code>으로 건너뜀</span></div>
+          <div class="step"><span class="t">하루</span><span class="e">Chrome·VSCode만 사용 → <b>후보에 Slack이 없다</b> (창이 없으니)</span></div>
+          <div class="step mark"><span class="t">18:00</span><span class="e">확정 → <code>capture(merging: 자동 슬롯)</code></span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>병합 대상이 빈 자동 슬롯이었다면 <strong>Slack이 사라진다.</strong>
+              다음날 자동 슬롯으로 복원하면 Slack이 안 돌아온다 — <strong>US-002 AC-4가 깨진다.</strong></p>
+            <p><em>이미 막혀 있다.</em> “실험실을 켤 때 수동 슬롯을 자동 슬롯으로 복사한다”는 규칙 덕분에
+              자동 슬롯이 처음부터 Slack을 갖고 있고, 병합이라 지워지지 않는다.</p>
+            <p>그 한 줄이 <strong>여기서 정당화된다.</strong> 안 해뒀으면 이 시나리오에서 깨졌다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S3 -->
+    <article class="sc" id="s3" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S3</span>
+        <div class="sc-title">
+          <h3>접촉 불량으로 케이블이 튄다</h3>
+          <p>디바운스가 확정까지 보호하는지</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">18:00:00</span><span class="e">순간적으로 빠짐</span></div>
+          <div class="step"><span class="t">18:00:01</span><span class="e">다시 들어옴</span></div>
+          <div class="step mark"><span class="t">+1.5s</span><span class="e"><code>stabilized()</code> 1회 → <code>current</code>에 화면 있음 → <code>removed</code> 비어 있음 → <b>확정 안 됨</b></span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>1.5초 디바운스가 <strong>확정까지 함께 보호한다.</strong> 별도 방어가 필요 없다.</p>
+            <p>1.5초를 넘겨 진짜 분리로 판정되면: 확정 → 재연결 → 자동 슬롯이 최신이니 그걸로 복원.
+              방금 확정한 값이라 전부 <code>alreadyInPlace</code>다. <em>창이 흔들리지 않는다.</em></p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S4 -->
+    <article class="sc" id="s4" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S4</span>
+        <div class="sc-title">
+          <h3>덮개를 닫는다 · 잠자기 · 클램셸</h3>
+          <p>US-009 — 창이 튀면 첫 주에 앱을 지운다</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">덮개</span><span class="e">닫음 → 클램셸 진입. 외장 화면 유지 → <code>removed</code> 없음 → <b>확정 없음</b></span></div>
+          <div class="step"><span class="t">잠자기</span><span class="e">해제 → 외장 화면 집합 불변 → 확정 없음 · 복원 없음</span></div>
+          <div class="step"><span class="t">내장</span><span class="e">덮개로 꺼져도 <code>!isBuiltin</code> 필터라 무관</span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>확정 트리거가 <code>DisplayWatcher</code>의 <strong>같은 위상 게이트</strong>를 타므로,
+              US-009의 억제 규칙이 자동 저장에도 그대로 적용된다. <em>새로 방어할 것이 없다.</em></p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S5 -->
+    <article class="sc" id="s5" data-status="warn">
+      <div class="sc-head">
+        <span class="sc-id">S5</span>
+        <div class="sc-title">
+          <h3>복원이 실패한 채로 하루를 보냈다</h3>
+          <p>A안을 고른 이상 남는 위험</p>
+        </div>
+        <span class="chip">수용</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">09:00</span><span class="e">복원 → VSCode 이동 <b>실패</b>(<code>.failed</code>). 창이 엉뚱한 자리</span></div>
+          <div class="step"><span class="t">하루</span><span class="e">눈치 못 챔 (혹은 손으로 대충 옮김)</span></div>
+          <div class="step mark"><span class="t">18:00</span><span class="e">확정 → <b>엉뚱한 자리가 자동 슬롯에 기록됨</b></span></div>
+          <div class="step"><span class="t">다음날</span><span class="e">자동이 최신 → 엉뚱한 자리로 복원</span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p><strong>진짜 위험이고, 자동 저장을 프로필에 쓰기로 한 이상 받아들인다.</strong>
+              허용 오차 규칙은 드리프트만 막는다 — 이건 값이 커서 안 걸린다.</p>
+            <p>회복 경로가 네 개 있다(S11). 가장 짧은 건 <strong>수동 저장 버튼 한 번</strong> —
+              누르는 순간 수동 슬롯이 최신이 되어 다음 복원이 그쪽으로 간다.</p>
+            <p><em>“실패가 있었으면 확정 건너뛰기”는 넣지 않는다.</em>
+              사용자가 손으로 고쳤을 수도 있고, 그 경우엔 고친 결과를 버리게 된다. 판단이 필요한 지점은 사람에게 남긴다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S6 -->
+    <article class="sc" id="s6" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S6</span>
+        <div class="sc-title">
+          <h3>실험실을 켰다가 껐다</h3>
+          <p>기능을 끄는 경로가 상태를 남기는지</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">켬</span><span class="e">수동 슬롯을 자동 슬롯으로 복사 (S2가 요구한 씨앗)</span></div>
+          <div class="step"><span class="t">하루</span><span class="e">자동 슬롯 갱신됨. 자동이 최신이라 복원에 쓰임</span></div>
+          <div class="step mark"><span class="t">끔</span><span class="e">알림 구독 해제 · <b>자동 슬롯이 비교에서 빠진다</b> → 수동 슬롯만 남음</span></div>
+        </div>
+        <span class="was">1차 판정 · 구멍 2 — 껐는데 자동 슬롯에 갇힌다</span>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>1차에서는 “활성 슬롯을 강제로 수동으로 되돌린다”는 보정이 필요했다.
+              최신순 규칙에서는 <em>“꺼진 기능의 슬롯은 비교에 참여하지 않는다”</em> 한 조건으로 끝난다.</p>
+            <p>같은 결과인데 <strong>설명이 더 짧다.</strong> 강제로 상태를 되돌리는 게 아니라,
+              애초에 후보에서 빠지는 것이다. 자동 슬롯 파일은 그대로 남아 다시 켜면 이어진다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S7 -->
+    <article class="sc" id="s7" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S7</span>
+        <div class="sc-title">
+          <h3>저장한 뒤에 창을 옮기고 뽑았다</h3>
+          <p>1차에서 가장 컸던 구멍이 스펙이 된 자리</p>
+        </div>
+        <span class="chip">스펙 변경</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">15:12</span><span class="e">창을 마음에 들게 배치 → <b>[💾 지금 레이아웃 저장]</b> → 수동 슬롯</span></div>
+          <div class="step"><span class="t">16:00</span><span class="e">계속 일하며 창을 옮김</span></div>
+          <div class="step mark"><span class="t">18:00</span><span class="e">뽑음 → 자동 슬롯 = 18:00 배치 → <b>자동이 최신</b></span></div>
+          <div class="step"><span class="t">다음날</span><span class="e">18:00 배치로 복원. 15:12 저장은 수동 슬롯에 그대로 살아 있다</span></div>
+        </div>
+        <span class="was">1차 판정 · 구멍 3 — “저장했는데 왜 안 돌아와?”</span>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>1차에서는 이걸 구멍으로 봤다. <strong>재검토 결과 구멍이 아니다.</strong>
+              저장 후에 창을 옮겼다면 옮긴 쪽이 더 최근의 의도다.
+              수동 저장이 영구히 이기면 결국 “언제 저장을 눌렀는지”를 기억해야 하는 앱으로 돌아간다.</p>
+            <p><em>수동 슬롯의 역할이 재정의된다</em> — 기본값이 아니라 <strong>되돌아갈 북마크</strong>다.
+              사라지지 않고, 카드 메뉴에서 언제든 1회성으로 복원할 수 있다.</p>
+            <p><strong>대가 —</strong> 저장한 배치를 계속 쓰려면 그날 창을 크게 옮기지 않거나, 실험실을 끄면 된다.
+              드리프트 방지(5px) 때문에 미세 조정은 애초에 안 잡히므로, 실제로 문제가 되는 건 큰 이동뿐이다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S8 -->
+    <article class="sc" id="s8" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S8</span>
+        <div class="sc-title">
+          <h3>화면 두 대 — 사무실과 집</h3>
+          <p>화면별 독립성이 후보에도 적용되는지</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">모델</span><span class="e">후보를 <code>[screenID: Profile]</code>로 든다</span></div>
+          <div class="step"><span class="t">A만 뽑음</span><span class="e"><code>removed</code>에 A만 → <b>A의 후보만 확정</b>. B는 그대로</span></div>
+          <div class="step"><span class="t">비교</span><span class="e">최신순 판정도 화면별로 따로 — 사무실은 자동, 집은 수동이 이길 수 있다</span></div>
+          <div class="step"><span class="t">지문</span><span class="e">불일치 시 화면 통째 건너뜀 — 슬롯과 무관하게 기존 규칙 그대로</span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p><strong>동작한다.</strong> 구현 주의점 하나 — 후보는 반드시 화면별 딕셔너리여야 한다.
+              단일 후보로 만들면 두 화면이 서로를 덮어쓴다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S9 -->
+    <article class="sc" id="s9" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S9</span>
+        <div class="sc-title">
+          <h3>앱을 종료한다 · 크래시한다</h3>
+          <p>메모리에만 있는 후보의 수명</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">종료</span><span class="e">종료 직전 확정 (2줄) → 자동 슬롯에 기록</span></div>
+          <div class="step"><span class="t">크래시</span><span class="e">후보 유실 → 자동 슬롯은 이전 값 유지 → 최신순 판정도 이전 값으로</span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p>크래시로 잃는 것이 <strong>“오늘 세션 하나”뿐</strong>이고 두 슬롯 다 온전하다. <em>허용 범위.</em>
+              복구 로직을 따로 만들 이유가 없다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S10 -->
+    <article class="sc" id="s10" data-status="warn">
+      <div class="sc-head">
+        <span class="sc-id">S10</span>
+        <div class="sc-title">
+          <h3>어떤 앱의 창 열거가 실패한다</h3>
+          <p>실측으로 확인된 사건 — <code>8b21eaa</code></p>
+        </div>
+        <span class="chip">수용</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">실측</span><span class="e">재연결 순간 Aside 열거 실패, <b>평시에도 Fork 1회</b> (2026-08-18)</span></div>
+          <div class="step"><span class="t">현재</span><span class="e">250ms 초과 시 1초 한도로 <b>1회 재시도</b>. 재시도까지 실패한 앱만 빠진다</span></div>
+          <div class="step"><span class="t">수집</span><span class="e">그 앱이 후보에서 빠짐 → <code>capture</code>가 병합이라 <b>옛 위치가 살아남는다</b></span></div>
+          <div class="step mark"><span class="t">확정</span><span class="e">그 앱만 아침 위치, 나머지는 저녁 위치 — <b>시각이 섞인 배치</b></span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p><strong>새 구멍은 아니다.</strong> 병합의 기존 성질이고 수동 저장도 오늘 똑같이 동작한다.
+              그리고 <code>8b21eaa</code>의 재시도는 이 확률을 <em>줄인다.</em></p>
+            <p>다만 “실제로 일어나는 일”이 실측으로 확인됐으므로 기록해 둔다.
+              손실은 없다 — 항목이 지워지는 게 아니라 오래된 값이 남는 것이고, 수동 슬롯은 무관하다.</p>
+            <p><strong>비용 갱신 —</strong> 앱당 최악 열거 시간이 250ms에서 <strong>1.25초</strong>가 됐다.
+              수집이 앱 전환마다 도는 만큼, 최소 간격 결정의 입력값이 바뀌었다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- S11 -->
+    <article class="sc" id="s11" data-status="pass">
+      <div class="sc-head">
+        <span class="sc-id">S11</span>
+        <div class="sc-title">
+          <h3>실험이 실패했다 — 되돌릴 수 있나</h3>
+          <p>실험실 기능의 전제조건</p>
+        </div>
+        <span class="chip">통과</span>
+      </div>
+      <div class="sc-body">
+        <div class="timeline">
+          <div class="step"><span class="t">경로 1</span><span class="e"><b>수동 저장 한 번</b> → 수동이 최신이 됨 → 다음 복원이 수동으로. 가장 짧다</span></div>
+          <div class="step"><span class="t">경로 2</span><span class="e">카드 메뉴 <b>“수동 저장으로 복원”</b> → 1회성. 지금 당장 되돌린다</span></div>
+          <div class="step"><span class="t">경로 3</span><span class="e"><b>실험실 OFF</b> → 자동 슬롯이 비교에서 빠짐. 오늘의 앱과 동일한 동작</span></div>
+          <div class="step"><span class="t">경로 4</span><span class="e"><code>lab-auto.json</code> <b>삭제</b> → 완전 초기화. <code>profiles.json</code>은 무관</span></div>
+          <div class="step mark"><span class="t">기능 제거</span><span class="e">코드에서 걷어내면 그 파일을 <b>안 읽을 뿐</b>. 마이그레이션 0줄</span></div>
+        </div>
+        <div class="verdict">
+          <span class="vlabel">판정</span>
+          <div>
+            <p><strong>이 시나리오가 저장소 설계를 바꿨다.</strong> 자동 슬롯을 <code>profiles.json</code>에
+              <code>screenID#auto</code> 같은 키로 넣으면 되돌리기가 깨진다 —
+              설정 창의 <code>allProfiles</code>가 같은 화면을 두 번 표시하고,
+              <code>removeProfile(screenID)</code>가 자동 슬롯을 안 지운다.</p>
+            <p>별도 파일로 두면 <em>기존 파일도, 키도, 마이그레이션도 건드리지 않는다.</em>
+              <code>ProfileStore</code>에 파일명 파라미터 하나(2줄) 추가하면 클래스를 그대로 재사용한다.</p>
+            <p>손상 처리도 분리된다. <code>profiles.json</code>의 백업·초기화 로직과
+              <code>saveBlocked</code> 판정이 실험 때문에 흔들리지 않는다.
+              실험실 파일이 안 읽히면 <strong>자동 슬롯이 없는 것으로 취급</strong>하면 그만이다.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+  </main>
+</div>
+
+<footer class="close">
+  <div class="wrap close-inner">
+
+    <div class="rule">
+      <p class="eyebrow">1차의 구멍 3개를 없앤 규칙</p>
+      <blockquote>복원 소스는 저장하지 않는다. 더 최근에 저장된 슬롯이 이긴다.</blockquote>
+      <ul>
+        <li><strong>자동이 최신</strong> — 켜두면 저절로 쓰인다. 활성 슬롯을 손댈 일이 없다 <span style="color:var(--ink-3)">(구멍 1)</span></li>
+        <li><strong>실험실 OFF</strong> — 자동 슬롯이 비교에서 빠진다. 강제 되돌림이 필요 없다 <span style="color:var(--ink-3)">(구멍 2)</span></li>
+        <li><strong>저장 뒤 이동</strong> — 옮긴 쪽이 더 최근의 의도다. 구멍이 아니라 스펙이다 <span style="color:var(--ink-3)">(구멍 3)</span></li>
+        <li><strong>한쪽만 있음</strong> — <code>max</code>가 알아서 그쪽을 고른다. 폴백을 따로 짜지 않는다</li>
+        <li><strong>둘 다 없음</strong> — 복원 자체를 하지 않는다. 기존 동작 그대로 (US-007 AC-5)</li>
+      </ul>
+      <p class="tail">
+        시각은 이미 필요했다 — 카드가 슬롯마다 저장 시각을 보여줘야 하기 때문이다.
+        그 값을 비교에 쓰는 것뿐이라 <strong>새 상태가 늘지 않는다.</strong>
+      </p>
+    </div>
+
+    <div>
+      <h2 style="margin-bottom:14px;">남은 결정</h2>
+      <div class="open">
+        <div class="open-item">
+          <h4>수집 최소 간격 — 30초?</h4>
+          <p>자동 슬롯은 “마지막 앱 전환 시점”의 배치이므로 간격이 곧 오차 상한이다.
+            <code>8b21eaa</code>로 앱당 최악 열거가 1.25초가 됐으니, 짧게 잡으려면 이 비용을 먼저 실측해야 한다.</p>
+        </div>
+        <div class="open-item">
+          <h4>수동 슬롯 개수 — 1개로 시작</h4>
+          <p>v1은 자동/수동 2칸. 3칸 세그먼티드는 셋이 대등하다는 거짓 대칭을 만든다.
+            “배치 두 개를 번갈아 쓴다”가 실제로 확인되면 그때 늘린다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      부품 · 슬롯 2개 · 수집/확정 · 최신순 파생 · 실험실 토글 = <b>4</b> &nbsp;(1차 11 → 2차 5 → 현재 4)<br>
+      알려진 한계 · 하루 종일 앱 하나만 쓰면 후보가 갱신되지 않는다 — 도킹 사용자 패턴은 아니지만 사실이다.<br>
+      미검증 · 앱 전환 알림 빈도와 <code>standardWindows</code> 실측 비용은 아직 재지 않았다. 실기기 측정 필요.
+    </div>
+
+  </div>
+</footer>
