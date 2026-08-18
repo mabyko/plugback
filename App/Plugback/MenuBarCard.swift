@@ -146,6 +146,12 @@ private struct Card: View {
                     Text("저장됨 · 대상 앱 \(count)개")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
+                // 실험실이 꺼져 있으면 이 줄이 아예 없다 — 카드가 오늘과 완전히 같다.
+                // 켜져 있으면 어느 슬롯이 이겼는지 항상 보인다 (조용함 ≠ 불투명함).
+                if controller.labAutoSlot, let slot = controller.activeSlot {
+                    Text(CardPresentation.sourceLabel(slot: slot, savedAt: controller.profile?.savedAt))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
         }
     }

@@ -28,8 +28,14 @@ public enum CaptureEngine {
         for (bundleID, window) in ordered {
             let rect = UnitRect(window.frame, in: screen.frame)
             if let index = profile.apps.firstIndex(where: { $0.bundleID == bundleID }) {
-                profile.apps[index].unitRect = rect
                 profile.apps[index].displayName = window.appName
+                // 허용 오차 안의 차이는 좌표를 갱신하지 않는다 (드리프트 방지).
+                // 복원은 몇 px 어긋나게 착지해도 성공으로 기록한다(F-02.3). 그 값을 저장하면
+                // 다음 회차가 그것을 목표로 삼아 또 어긋나고, 검증을 통과한 채로 창이 계속 밀린다.
+                // 사용자가 실제로 옮긴 거리는 이 오차보다 크다.
+                let stored = profile.apps[index].unitRect.frame(in: screen.frame)
+                if RestoreEngine.approximatelyEqual(window.frame, stored) { continue }
+                profile.apps[index].unitRect = rect
             } else {
                 profile.apps.append(TargetApp(bundleID: bundleID, displayName: window.appName, unitRect: rect))
             }

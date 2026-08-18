@@ -20,6 +20,24 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.describe(.skipped(.noWindow)), "창이 없어 건너뜀")
     }
 
+    func testSourceLabelNamesTheWinningSlotAndItsTime() {
+        // 자동으로 뭔가 저장되는데 볼 수 없으면 조용한 게 아니라 불투명한 것이다.
+        // 날짜를 고정해 넣는다 — 오늘/오늘 아님 두 분기를 시계 없이 검증한다.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 8, day: 18, hour: 20))!
+        let sameDay = calendar.date(from: DateComponents(year: 2026, month: 8, day: 18, hour: 18, minute: 2))!
+        let earlier = calendar.date(from: DateComponents(year: 2026, month: 8, day: 15, hour: 15, minute: 12))!
+
+        XCTAssertEqual(CardPresentation.sourceLabel(slot: .auto, savedAt: sameDay, now: now, calendar: calendar),
+                       "복원 소스 · 자동 · 오후 6:02")
+        XCTAssertEqual(CardPresentation.sourceLabel(slot: .manual, savedAt: earlier, now: now, calendar: calendar),
+                       "복원 소스 · 수동 · 8월 15일 오후 3:12")
+        // 구버전 파일에는 시각이 없다 — 지어내지 않고 슬롯만 말한다
+        XCTAssertEqual(CardPresentation.sourceLabel(slot: .manual, savedAt: nil, now: now, calendar: calendar),
+                       "복원 소스 · 수동")
+    }
+
     func testDotFollowsPrediction() {
         // 점의 제품 약속: 찬 점 = 복원이 잘 될 것, 빈 점 = 건너뜀 예정, 회색 = 꺼짐 (US-006 AC-1)
         XCTAssertEqual(CardPresentation.dotStyle(for: .willMove), .filled)

@@ -110,12 +110,31 @@ public struct Profile: Codable, Equatable, Sendable {
     public var apps: [TargetApp]
     /// 저장 당시 화면 지문. 복원 직전 검증에 쓴다 — 없으면(구버전 파일) 검증을 건너뛴다.
     public var fingerprint: ScreenFingerprint?
+    /// 이 슬롯이 마지막으로 저장된 시각. 복원 소스 판정("더 최근 것이 이긴다")의 유일한 근거다.
+    /// 구버전 파일은 nil — 아주 오래된 것으로 취급한다.
+    public var savedAt: Date?
 
     public init(screenID: String, screenName: String, apps: [TargetApp] = [],
-                fingerprint: ScreenFingerprint? = nil) {
+                fingerprint: ScreenFingerprint? = nil, savedAt: Date? = nil) {
         self.screenID = screenID; self.screenName = screenName; self.apps = apps
-        self.fingerprint = fingerprint
+        self.fingerprint = fingerprint; self.savedAt = savedAt
     }
+}
+
+/// 프로필 슬롯 (실험실 · 자동 슬롯). 수동 슬롯의 키는 화면 식별자 그대로다 —
+/// 실험을 걷어내도 기존 파일이 그대로 읽히고 마이그레이션이 없다.
+public enum Slot: String, Equatable, Sendable {
+    case manual, auto
+
+    /// 자동 슬롯만 접미사를 단다. 화면 식별자에는 '#'이 없다(WindowServer UUID).
+    static let autoSuffix = "#auto"
+
+    public func key(_ screenID: String) -> String {
+        self == .auto ? screenID + Slot.autoSuffix : screenID
+    }
+
+    /// 저장소 키가 자동 슬롯의 것인가 — 프로필 목록에서 걸러낼 때 쓴다.
+    public static func isAutoKey(_ key: String) -> Bool { key.hasSuffix(autoSuffix) }
 }
 
 /// 건너뜀 사유 (F-02.2). 사용자가 이해할 문구로의 변환은 UI의 몫이다.
