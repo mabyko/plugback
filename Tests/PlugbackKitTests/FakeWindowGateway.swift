@@ -5,7 +5,7 @@ import Foundation
 /// 테스트용 페이크 — 이 심 하나로 두 엔진의 정책 전부를 실기기 없이 검증한다 (docs/ARCHITECTURE.md).
 /// @MainActor: 테스트(전부 @MainActor)가 상태를 동기로 만지게 — 격리는 심의 Sendable 요구를 충족한다.
 @MainActor
-final class FakeWindowGateway: WindowGateway {
+final class FakeWindowGateway: WindowGateway, WindowMoveSource {
     enum MoveBehavior {
         case honest                      // 요청대로 이동
         case clampWidth(min: CGFloat)    // 앱 최소 크기 제약 흉내 (US-008 AC-3)

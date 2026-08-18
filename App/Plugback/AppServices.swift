@@ -4,9 +4,12 @@ import PlugbackKit
 @MainActor
 enum AppServices {
     static let controller: PlugbackController = {
-        let controller = PlugbackController(gateway: AXWindowGateway(),
+        // 같은 어댑터가 두 인터페이스를 만족한다 — AX는 여전히 이 어댑터 안뿐이다.
+        let ax = AXWindowGateway()
+        let controller = PlugbackController(gateway: ax,
                                             screenProvider: SystemScreenProvider(),
-                                            store: ProfileStore())
+                                            store: ProfileStore(),
+                                            moveSource: ax)
         controller.authorizationCheck = { PermissionGate.isTrusted }
         controller.checkAuthorization() // 첫 카드가 열리기 전에도 상태가 맞도록
         controller.startWatching()

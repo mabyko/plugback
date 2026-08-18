@@ -31,7 +31,7 @@ final class LabAutoSlotTests: XCTestCase {
     private func makeController() -> PlugbackController {
         PlugbackController(gateway: gateway, screenProvider: screens,
                            store: ProfileStore(directory: dir), defaults: testDefaults,
-                           collectInterval: 0)
+                           collectInterval: 0, moveSource: gateway)
     }
 
     private func chrome(at frame: CGRect) -> WindowInfo {
