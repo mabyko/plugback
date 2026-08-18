@@ -156,6 +156,20 @@ final class LabAutoSlotTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(controller.profile?.apps.first?.unitRect.x), 0.5, accuracy: 0.001)
     }
 
+    func testMoveObserversRegisterWithoutAPriorScreenSync() async {
+        // 앱을 켤 때 외장 화면이 이미 꽂혀 있으면 연결 이벤트가 없다.
+        // 시작 직후 화면 상태는 '기억만'이라, 스스로 동기화하지 않으면 등록이 통째로 빠진다.
+        placeChrome(at: left)
+        let first = makeController()
+        await first.captureNow()
+
+        let second = makeController() // 새 실행 — 아직 화면을 동기화한 적이 없다
+        second.labAutoSlot = true
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(gateway.observedBundleIDs, ["com.chrome"])
+    }
+
     func testTurningLabOffReleasesMoveObservers() async {
         placeChrome(at: left)
         let controller = makeController()
