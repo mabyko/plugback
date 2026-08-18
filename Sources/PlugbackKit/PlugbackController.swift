@@ -57,7 +57,8 @@ public final class PlugbackController: ObservableObject {
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
-    @Published public private(set) var storeNotice: ProfileStore.LoadOutcome.Trouble?
+    /// **파생이다** — 슬롯 모듈이 유일한 출처다. 사본을 들면 손으로 맞춰야 하고, 그러면 어긋난다.
+    public var storeNotice: ProfileStore.LoadOutcome.Trouble? { slots.trouble }
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
     @Published public var restoreMode: RestoreMode {
         didSet { defaults.set(restoreMode.rawValue, forKey: Keys.restoreMode) }
@@ -160,7 +161,6 @@ public final class PlugbackController: ObservableObject {
         let lab = defaults.bool(forKey: Keys.labAutoSlot)
         labAutoSlot = lab
         slots = ProfileSlots(store: store, isLabEnabled: lab)
-        storeNotice = slots.trouble
         // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다 (이름순 첫 프로필).
         if let stored = slots.firstByName {
             screenPresence = .remembered(screenID: stored.screenID, name: stored.screenName)
@@ -261,7 +261,9 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return .notConnected }
         let windows = await gateway.standardWindows(of: nil)
-        let count = slots.capture(windows: windows, on: externalScreens)
+        slots.capture(windows: windows, on: externalScreens)
+        // 「카드가 보여주는 화면 기준」은 컨트롤러의 규칙이다 — 저장소가 알 일이 아니다.
+        let count = profile?.apps.count ?? 0
         lastCaptureCount = count
         await updatePredictions()
         return .captured(appCount: count)
@@ -388,7 +390,7 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
-    public func dismissStoreNotice() { storeNotice = nil; slots.dismissTrouble() }
+    public func dismissStoreNotice() { slots.dismissTrouble() }
 
     /// UserDefaults 키 — 읽기·쓰기가 같은 이름을 쓰도록 한곳에 (오타는 조용한 버그다).
     private enum Keys {

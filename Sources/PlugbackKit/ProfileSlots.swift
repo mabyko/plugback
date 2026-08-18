@@ -95,8 +95,7 @@ final class ProfileSlots: ObservableObject {
 
     /// 수동 저장 (F-03). **수동 슬롯에만 쓴다** — 사람이 저장한 배치를 앱이 덮지 않는다.
     /// 방금 저장한 것이 가장 최근이 되므로 다음 복원이 이 배치를 쓴다 — 슬롯 전환 조작이 필요 없는 이유다.
-    @discardableResult
-    func capture(windows: [WindowInfo], on screens: [ScreenInfo]) -> Int {
+    func capture(windows: [WindowInfo], on screens: [ScreenInfo]) {
         let now = Date()
         for screen in screens {
             let key = Slot.manual.key(screen.id)
@@ -106,7 +105,6 @@ final class ProfileSlots: ObservableObject {
             profiles[key] = merged
         }
         persist()
-        return screens.first.flatMap { source(for: $0.id)?.profile.apps.count } ?? 0
     }
 
     /// 수집 — 지금 배치를 메모리 후보에 담는다. **파일에는 닿지 않는다.**
