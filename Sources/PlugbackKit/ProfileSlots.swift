@@ -102,6 +102,9 @@ final class ProfileSlots: ObservableObject {
             merged.fingerprint = screen.fingerprint
             merged.savedAt = now
             profiles[key] = merged
+            // 사람이 방금 이 배치를 선언했다 — 그 전에 모아둔 후보는 낡았다.
+            // 버리지 않으면 종료·분리 시 확정이 낡은 배치를 더 새 시각으로 써서 방금 저장한 것을 이긴다.
+            candidates.removeValue(forKey: screen.id)
         }
         persist()
     }

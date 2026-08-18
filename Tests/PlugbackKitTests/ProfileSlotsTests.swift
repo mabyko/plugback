@@ -164,6 +164,21 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertEqual(slots.source(for: "ext-2")?.slot, .auto)
     }
 
+    func testManualSaveIsNotOvertakenByAStaleCandidate() {
+        // 낡은 후보가 확정되면서 방금 저장한 배치를 이기면 안 된다.
+        // 재현: 수집(배치 A) → 수동 저장(배치 B) → 앱 종료로 확정.
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        slots.isLabEnabled = true
+
+        slots.collect(windows: [window("com.chrome", right)], on: [screen]) // 후보 = 오른쪽
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])  // 사람이 왼쪽으로 저장
+        slots.confirmAll()                                                   // 종료 시 확정
+
+        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.unitRect.x, 0,
+                       "방금 저장한 배치가 낡은 후보에 밀리면 안 된다")
+    }
+
     // MARK: - 수집 바탕과 대상
 
     func testTargetsPreferCandidateThenAutoThenManual() {
