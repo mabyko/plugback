@@ -1,3 +1,4 @@
+import Foundation
 import PlugbackKit
 
 /// 카드·Intent의 표현 매핑 — 뷰에서 분리한 순수 함수들. PlugbackTests가 여기에 닿는다.
@@ -73,6 +74,20 @@ enum CardPresentation {
         case .none:
             return nil
         }
+    }
+
+    // MARK: - 복원 소스 (실험실 · 자동 슬롯) — 어느 슬롯이 이겼는지 카드가 말한다
+
+    /// 자동으로 뭔가 저장되는데 사용자가 그 사실을 볼 수 없으면, 조용한 게 아니라 불투명한 것이다.
+    /// 시각까지 붙여야 "어제 수동" vs "오늘 자동"을 보고 고를 수 있다.
+    static func sourceLabel(slot: Slot, savedAt: Date?, now: Date = Date(),
+                            calendar: Calendar = .current) -> String {
+        let name = slot == .auto ? "자동" : "수동"
+        guard let savedAt else { return "복원 소스 · \(name)" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = calendar.isDate(savedAt, inSameDayAs: now) ? "a h:mm" : "M월 d일 a h:mm"
+        return "복원 소스 · \(name) · \(formatter.string(from: savedAt))"
     }
 
     // MARK: - 단축어 다이얼로그 (F-05.5) — restoreNow 반환값이 곧 문구 분기

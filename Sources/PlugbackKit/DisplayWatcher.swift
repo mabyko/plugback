@@ -15,6 +15,9 @@ public final class DisplayWatcher {
     /// 무페이로드 — 어떤 화면인지는 소비자가 어차피 전체 동기화로 알아낸다.
     /// "어느 화면이 새로 왔나"는 발화 여부를 정하는 내부 계산일 뿐, 인터페이스가 아니다.
     private let onExternalScreensAppeared: () -> Void
+    /// 사라진 외장 화면의 식별자들. 등장과 달리 페이로드가 있다 —
+    /// 자동 슬롯 확정은 "어느 화면이 빠졌나"를 알아야 하는데, 그 화면은 이미 목록에 없어 되물을 수 없다.
+    private let onExternalScreensRemoved: (Set<String>) -> Void
 
     private var knownExternalIDs: Set<String>
     private var pending: DispatchWorkItem?
@@ -25,10 +28,12 @@ public final class DisplayWatcher {
     public init(provider: ScreenProvider,
                 debounceInterval: TimeInterval = 1.5,
                 wakeSuppressionInterval: TimeInterval = 2.5,
+                onExternalScreensRemoved: @escaping (Set<String>) -> Void = { _ in },
                 onExternalScreensAppeared: @escaping () -> Void) {
         self.provider = provider
         self.debounceInterval = debounceInterval
         self.wakeSuppressionInterval = wakeSuppressionInterval
+        self.onExternalScreensRemoved = onExternalScreensRemoved
         self.onExternalScreensAppeared = onExternalScreensAppeared
         knownExternalIDs = Set(provider.screens().filter { !$0.isBuiltin }.map(\.id))
     }
@@ -66,7 +71,12 @@ public final class DisplayWatcher {
     private func stabilized() {
         let current = Set(provider.screens().filter { !$0.isBuiltin }.map(\.id))
         let added = current.subtracting(knownExternalIDs)
+        let removed = knownExternalIDs.subtracting(current)
         knownExternalIDs = current // 제거·복귀도 기준선에 반영 — 다음 비교의 기준 (F-01.3)
+        // 제거는 잠자기 억제를 타지 않는다. 억제는 "해제 직후의 가짜 등장"을 막는 규칙이고,
+        // 해제 시점에 화면이 진짜로 빠져 있으면 그건 진짜 제거다. 순서도 제거가 먼저다 —
+        // 화면을 바꿔 끼우면 확정이 재복원보다 앞서야 직전 배치를 잃지 않는다.
+        if !removed.isEmpty { onExternalScreensRemoved(removed) }
         guard !added.isEmpty, Date() >= suppressUntil else { return }
         onExternalScreensAppeared()
     }

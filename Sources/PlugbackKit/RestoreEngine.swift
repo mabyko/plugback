@@ -177,7 +177,9 @@ public enum RestoreEngine {
         return .window(window)
     }
 
-    private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
+    /// internal — CaptureEngine의 드리프트 방지가 같은 판정을 써야 한다.
+    /// 복원이 "제자리"라고 본 차이를 저장이 "옮겨졌다"고 보면 두 엔진이 서로 어긋난다.
+    static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
         abs(a.minX - b.minX) <= tolerance && abs(a.minY - b.minY) <= tolerance
             && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }

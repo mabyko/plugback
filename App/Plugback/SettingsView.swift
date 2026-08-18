@@ -47,6 +47,16 @@ struct SettingsView: View {
                     NSWorkspace.shared.open(URL(string: "shortcuts://")!)
                 }
             }
+            // 실험은 본 설정과 섞지 않는다 — 걷어낼 때 이 구획만 들어내면 된다.
+            Section("실험실") {
+                Toggle("자동 슬롯", isOn: $controller.labAutoSlot)
+                Text("""
+                     외장 화면을 쓰는 동안 배치를 기록하고, 화면을 분리할 때 자동 슬롯에 저장합니다.
+                     복원은 자동·수동 중 더 최근에 저장된 쪽을 씁니다.
+                     수동 저장은 영향받지 않습니다 — 끄면 자동 슬롯은 복원에 쓰이지 않습니다.
+                     """)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 400, height: 400)
