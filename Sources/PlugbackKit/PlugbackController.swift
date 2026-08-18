@@ -335,6 +335,9 @@ public final class PlugbackController: ObservableObject {
     /// 창 이동 관찰 대상을 지금 상태에 맞춘다.
     /// 수집 열거와 **같은 앱 집합**을 쓴다 — 어긋나면 관찰은 되는데 수집이 안 되는 앱이 생긴다.
     private func refreshMoveObservers() async {
+        syncScreens() // 명령은 화면 상태를 스스로 동기화한다 — 호출자에게 순서 의식이 없다.
+        // 이게 없으면 앱을 켤 때 화면이 이미 꽂혀 있는 경우 등록이 통째로 빠진다:
+        // 시작 직후 화면 상태는 '기억만'이고, 연결 이벤트는 이미 지나갔기 때문이다.
         guard labAutoSlot, isConnected else {
             await gateway.observeWindowMoves(of: [], onSettled: {})
             return
