@@ -38,6 +38,20 @@ final class CardPresentationTests: XCTestCase {
                        "복원 소스 · 수동")
     }
 
+    func testPendingLabelSeparatesCollectedFromSaved() {
+        // "수집됨"이 "저장됨"으로 읽히면, 방금 옮겼는데 복원이 왜 다른 자리로 가는지 설명이 없다.
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-3),
+                                                     hasPending: true, now: now),
+                       "대기 중 · 방금 배치 — 뽑을 때 저장")
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-120),
+                                                     hasPending: true, now: now),
+                       "대기 중 · 2분 전 배치 — 뽑을 때 저장")
+        // 후보가 자동 슬롯과 같으면 기다리는 것이 없다 — 시각을 보여줘봐야 오해만 만든다
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now, hasPending: false, now: now),
+                       "대기 중 변경 없음")
+    }
+
     func testDotFollowsPrediction() {
         // 점의 제품 약속: 찬 점 = 복원이 잘 될 것, 빈 점 = 건너뜀 예정, 회색 = 꺼짐 (US-006 AC-1)
         XCTAssertEqual(CardPresentation.dotStyle(for: .willMove), .filled)

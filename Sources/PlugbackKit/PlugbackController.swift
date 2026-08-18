@@ -160,6 +160,16 @@ public final class PlugbackController: ObservableObject {
     /// 앱이 죽으면 그 세션의 수집만 사라지고 두 슬롯은 온전하다.
     private var candidates: [String: Profile] = [:]
 
+    /// 확정을 기다리는 변경이 있나 — 후보가 자동 슬롯과 다른 화면이 하나라도 있는가.
+    /// 카드가 **"지금 복원되는 값"과 "뽑을 때 저장될 값"을 구별해** 보여주기 위한 것이다.
+    /// 이 구별이 없으면 "수집됨"이 "저장됨"으로 읽혀서, 방금 옮겼는데 복원이 왜 다른
+    /// 자리로 가는지 설명할 길이 없다 (2026-08-19에 실제로 그 질문을 받았다).
+    public var hasPendingCollect: Bool {
+        candidates.contains { id, candidate in
+            candidate.apps != profiles[Slot.auto.key(id)]?.apps
+        }
+    }
+
     /// 마지막으로 수집이 실제로 돈 시각 (실험실). 카드가 보여준다.
     /// 수집은 눈에 보이는 일을 하지 않아서, 이게 없으면 "돌고 있는지"를 물어볼 곳이 없다 —
     /// 트리거가 잘못됐을 때 확정된 뒤에야 알게 된다 (2026-08-18에 실제로 그랬다).
