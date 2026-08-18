@@ -22,18 +22,17 @@ final class ProfileSlots: ObservableObject {
     @Published private(set) var lastCollectedAt: Date?
 
     /// 로드 중 만난 문제. 표시는 바깥의 일이다.
-    private(set) var trouble: ProfileStore.LoadOutcome.Trouble?
+    @Published private(set) var trouble: ProfileStore.LoadOutcome.Trouble?
 
     /// 읽지 못한 파일 위에 쓰지 않는다 — 알림을 닫아도 이 금지는 프로세스 수명 동안 유지된다.
     let isSaveBlocked: Bool
 
     /// 실험실 · 자동 슬롯. 켜면 수동 슬롯을 씨앗으로 복사하고, 끄면 후보를 버린다.
     /// 꺼져 있는 동안 자동 슬롯은 **복원 소스 후보에 아예 들어가지 않는다** — 파일은 남는다.
-    var isLabEnabled: Bool {
+    @Published var isLabEnabled: Bool {
         didSet {
             guard isLabEnabled != oldValue else { return }
             if isLabEnabled { seed() } else { candidates.removeAll() }
-            objectWillChange.send()
         }
     }
 
@@ -164,7 +163,7 @@ final class ProfileSlots: ObservableObject {
         persist()
     }
 
-    func dismissTrouble() { trouble = nil; objectWillChange.send() }
+    func dismissTrouble() { trouble = nil }
 
     // MARK: - 내부
 
