@@ -63,7 +63,7 @@ final class LabAutoSlotTests: XCTestCase {
         controller.confirmCandidates(for: ["ext-1"])
 
         XCTAssertEqual(try storedKeys(), ["ext-1"])
-        XCTAssertEqual(controller.activeSlot, .manual)
+        XCTAssertEqual(controller.restoreSource, .manual)
     }
 
     // MARK: - S2 · 오늘 안 켠 앱이 사라지지 않는다 (US-002 AC-4)
@@ -86,7 +86,7 @@ final class LabAutoSlotTests: XCTestCase {
         controller.confirmCandidates(for: ["ext-1"])
 
         // 자동 슬롯이 이겼는데도 Slack이 살아 있다 (병합)
-        XCTAssertEqual(controller.activeSlot, .auto)
+        XCTAssertEqual(controller.restoreSource, .auto)
         XCTAssertEqual(controller.profile?.apps.map(\.bundleID).sorted(), ["com.chrome", "com.slack"])
     }
 
@@ -102,7 +102,7 @@ final class LabAutoSlotTests: XCTestCase {
         await controller.collectCandidate()
         controller.confirmCandidates(for: ["ext-1"])
 
-        XCTAssertEqual(controller.activeSlot, .auto)
+        XCTAssertEqual(controller.restoreSource, .auto)
         XCTAssertEqual(try XCTUnwrap(controller.profile?.apps.first?.unitRect.x), 0.5, accuracy: 0.001)
     }
 
@@ -161,12 +161,12 @@ final class LabAutoSlotTests: XCTestCase {
         gateway.windowsList = [chrome(at: right)]
         await controller.collectCandidate()
         controller.confirmCandidates(for: ["ext-1"])
-        XCTAssertEqual(controller.activeSlot, .auto)
+        XCTAssertEqual(controller.restoreSource, .auto)
 
         // 사람이 저장을 누른다 — 활성 슬롯을 따로 전환하지 않는데도 수동이 소스가 된다
         gateway.windowsList = [chrome(at: left)]
         await controller.captureNow()
-        XCTAssertEqual(controller.activeSlot, .manual)
+        XCTAssertEqual(controller.restoreSource, .manual)
 
         gateway.windowsList = [chrome(at: CGRect(x: 2000, y: 300, width: 800, height: 600))]
         await controller.restoreNow()
@@ -183,14 +183,14 @@ final class LabAutoSlotTests: XCTestCase {
         gateway.windowsList = [chrome(at: right)]
         await controller.collectCandidate()
         controller.confirmCandidates(for: ["ext-1"])
-        XCTAssertEqual(controller.activeSlot, .auto)
+        XCTAssertEqual(controller.restoreSource, .auto)
 
         controller.labAutoSlot = false
-        XCTAssertEqual(controller.activeSlot, .manual)
+        XCTAssertEqual(controller.restoreSource, .manual)
         // 파일은 남는다 — 다시 켜면 이어진다
         XCTAssertEqual(try storedKeys(), ["ext-1", "ext-1#auto"])
         controller.labAutoSlot = true
-        XCTAssertEqual(controller.activeSlot, .auto)
+        XCTAssertEqual(controller.restoreSource, .auto)
     }
 
     // MARK: - 카드가 보여주는 슬롯을 고친다
@@ -203,7 +203,7 @@ final class LabAutoSlotTests: XCTestCase {
         gateway.windowsList = [chrome(at: right)]
         await controller.collectCandidate()
         controller.confirmCandidates(for: ["ext-1"])
-        XCTAssertEqual(controller.activeSlot, .auto)
+        XCTAssertEqual(controller.restoreSource, .auto)
 
         controller.setAppEnabled("com.chrome", false)
 
