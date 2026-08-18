@@ -148,12 +148,15 @@ private struct Card: View {
                 }
                 // 실험실이 꺼져 있으면 이 줄이 아예 없다 — 카드가 오늘과 완전히 같다.
                 // 켜져 있으면 어느 슬롯이 이겼는지 항상 보인다 (조용함 ≠ 불투명함).
+                // 두 줄인 이유: 위는 지금 복원되는 값, 아래는 뽑을 때 저장될 값이다.
+                // 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
                 if controller.labAutoSlot {
-                    HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 1) {
                         if let slot = controller.restoreSource {
                             Text(CardPresentation.sourceLabel(slot: slot, savedAt: controller.profile?.savedAt))
                         }
-                        Text(CardPresentation.collectLabel(lastCollectedAt: controller.lastCollectedAt))
+                        Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
+                                                           hasPending: controller.hasPendingCollect))
                             .foregroundStyle(.tertiary)
                     }
                     .font(.system(size: 11)).foregroundStyle(.secondary)

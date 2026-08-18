@@ -90,16 +90,23 @@ enum CardPresentation {
         return "복원 소스 · \(name) · \(formatter.string(from: savedAt))"
     }
 
-    /// 수집은 눈에 보이는 일을 하지 않는다 — 이 줄이 없으면 트리거가 죽어 있어도 알 수 없다.
-    /// 실험실이 켜져 있을 때만 보이는 진단 줄이다.
-    static func collectLabel(lastCollectedAt: Date?, now: Date = Date()) -> String {
-        guard let lastCollectedAt else { return "수집 · 아직 없음" }
-        let seconds = Int(now.timeIntervalSince(lastCollectedAt))
+    /// 확정을 기다리는 배치 — **복원은 아직 이 값을 쓰지 않는다.**
+    /// 위의 복원 소스 줄과 짝이다: 하나는 "지금 복원되는 값", 하나는 "뽑을 때 저장될 값".
+    /// 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽혀, 방금 옮겼는데 복원이 왜 다른 자리로
+    /// 가는지 설명할 길이 없어진다.
+    static func pendingLabel(collectedAt: Date?, hasPending: Bool, now: Date = Date()) -> String {
+        guard hasPending else { return "대기 중 변경 없음" }
+        return "대기 중 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
+    }
+
+    private static func relative(_ date: Date?, _ now: Date) -> String {
+        guard let date else { return "확인 안 됨" }
+        let seconds = Int(now.timeIntervalSince(date))
         switch seconds {
-        case ..<10:   return "수집 · 방금"
-        case ..<60:   return "수집 · \(seconds)초 전"
-        case ..<3600: return "수집 · \(seconds / 60)분 전"
-        default:      return "수집 · \(seconds / 3600)시간 전"
+        case ..<10:   return "방금"
+        case ..<60:   return "\(seconds)초 전"
+        case ..<3600: return "\(seconds / 60)분 전"
+        default:      return "\(seconds / 3600)시간 전"
         }
     }
 
