@@ -122,6 +122,25 @@ public actor AXWindowGateway: WindowGateway {
         return false
     }
 
+    // MARK: - 창 이동 관찰 (실험실 · 자동 슬롯)
+
+    // ponytail: 앱에 게이트웨이는 하나뿐이라 관찰자도 하나로 둔다.
+    // 인스턴스 프로퍼티로 두면 actor(비메인)가 MainActor 객체를 들게 되고, 그 격리를 푸는 값이 없다.
+    @MainActor private static let moveObserver = WindowMoveObserver()
+
+    public func observeWindowMoves(of bundleIDs: [String], onSettled: @escaping @Sendable () -> Void) async {
+        // pid로 등록한다 — AX 옵저버는 프로세스 단위다. 앱 목록 조회는 NSWorkspace(메인)의 일이다.
+        await MainActor.run {
+            let pids = bundleIDs.isEmpty ? [] : NSWorkspace.shared.runningApplications.compactMap {
+                app -> pid_t? in
+                guard app.activationPolicy == .regular,
+                      let id = app.bundleIdentifier, bundleIDs.contains(id) else { return nil }
+                return app.processIdentifier
+            }
+            Self.moveObserver.observe(pids: pids, onSettled: onSettled)
+        }
+    }
+
     // MARK: - AX helpers
 
     private func copy<T>(_ element: AXUIElement, _ attribute: String) -> T? {
