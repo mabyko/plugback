@@ -90,6 +90,17 @@ final class LabAutoSlotTests: XCTestCase {
         XCTAssertEqual(controller.profile?.apps.map(\.bundleID).sorted(), ["com.chrome", "com.slack"])
     }
 
+    func testTieGoesToManual() async {
+        // 씨앗은 수동의 저장 시각을 그대로 물려받으므로 켜자마자는 동점이다.
+        // 규칙이 "동점이면 사람 것"이 아니면, 켜는 순간 복원 소스가 말없이 바뀐다.
+        placeChrome(at: left)
+        let controller = makeController()
+        await controller.captureNow()
+        controller.labAutoSlot = true
+
+        XCTAssertEqual(controller.restoreSource, .manual)
+    }
+
     // MARK: - 수집 → 확정
 
     func testConfirmWritesCollectedLayoutToAutoSlot() async throws {
