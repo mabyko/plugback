@@ -167,6 +167,96 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(controller.lastResult?.entries.first?.outcome, .moved)
     }
 
+    func testSectionsCoverEveryConnectedScreen() async {
+        // 화면 인식이 아니라 표시의 문제였다 — 카드가 첫 화면만 그려서 두 번째 화면의 앱이
+        // 사라진 것처럼 보였다. 섹션은 연결된 모든 화면을 식별자 정렬 순서로 담는다.
+        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.orca", "com.slack"]
+        gateway.windowsList = [
+            WindowInfo(id: 1, appBundleID: "com.orca", appName: "Orca",
+                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),   // ext-1
+            WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
+                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),    // ext-2
+        ]
+        let controller = makeController()
+        await controller.captureNow()
+
+        var sections = controller.sections
+        XCTAssertEqual(sections.map(\.screenID), ["ext-1", "ext-2"])
+        XCTAssertEqual(sections[0].profile?.apps.map(\.bundleID), ["com.orca"])
+        XCTAssertEqual(sections[1].profile?.apps.map(\.bundleID), ["com.slack"])
+        // 두 번째 화면의 예측도 계산된다 — 첫 화면만 계산하던 시절엔 빈 채였다
+        XCTAssertEqual(sections[1].predictions["com.slack"], .alreadyInPlace)
+
+        // 새 앱이 두 번째 화면에 떴다 — 그 화면의 「저장하지 않는 앱」에만 나타난다
+        gateway.runningBundleIDs.insert("com.figma")
+        gateway.windowsList.append(WindowInfo(id: 3, appBundleID: "com.figma", appName: "Figma",
+                                              frame: CGRect(x: 4500, y: 100, width: 800, height: 600)))
+        await controller.cardOpened()
+        sections = controller.sections
+        XCTAssertEqual(sections[0].untrackedApps.map(\.bundleID), [])
+        XCTAssertEqual(sections[1].untrackedApps.map(\.bundleID), ["com.figma"])
+
+        // 두 번째 화면이 어질러졌다 — 복원 결과가 그 섹션과 lastResults에 온다
+        gateway.windowsList[1] = WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        await controller.restoreNow()
+        XCTAssertEqual(controller.lastResults.map(\.screenID), ["ext-1", "ext-2"])
+        XCTAssertEqual(controller.sections[1].lastResult?.movedCount, 1)
+    }
+
+    func testCheckAndRemoveActOnTheGivenScreenOnly() async {
+        // 같은 앱이 두 화면 프로필에 있어도 체크/삭제는 넘긴 화면의 프로필만 바꾼다 —
+        // 화면 식별자 없이 부르면 첫 화면이라, 두 번째 화면의 행은 조작할 수 없었다.
+        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [
+            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),   // ext-1
+            WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),    // ext-2
+        ]
+        let controller = makeController()
+        await controller.captureNow()
+
+        await controller.setTracked("com.chrome", false, on: "ext-2")
+        XCTAssertEqual(controller.sections[0].profile?.apps.first?.isEnabled, true)
+        XCTAssertEqual(controller.sections[1].profile?.apps.first?.isEnabled, false)
+        XCTAssertEqual(controller.sections[1].untrackedApps.map(\.bundleID), ["com.chrome"])
+
+        controller.removeApp("com.chrome", on: "ext-2")
+        XCTAssertEqual(controller.sections[1].profile?.apps ?? [], [])
+        XCTAssertEqual(controller.sections[0].profile?.apps.count, 1) // 첫 화면은 그대로
+    }
+
+    func testRestorableWhenOnlyALaterScreenHasAProfile() async {
+        // 프로필이 정렬상 뒤 화면에만 있어도 복원할 수 있어야 한다 —
+        // 첫 화면의 프로필만 보던 판정은 이 상황에서 복원 버튼을 잠갔다.
+        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
+        screens.screensList = [builtin, external2] // ext-2만 연결된 동안 저장
+        gateway.runningBundleIDs = ["com.slack"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.slack", appName: "Slack",
+                                          frame: CGRect(x: 4072, y: 0, width: 960, height: 1080))]
+        let controller = makeController()
+        await controller.captureNow()
+
+        screens.screensList = [builtin, external, external2] // ext-1이 새로 연결 — 프로필 없음
+        await controller.cardOpened()
+        XCTAssertNil(controller.profile)                    // 첫 화면 기준으로는 프로필이 없다
+        XCTAssertTrue(controller.hasRestorableProfile)      // 그래도 복원은 가능해야 한다
+
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.slack", appName: "Slack",
+                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        guard case .restored(let results) = await controller.restoreNow() else { return XCTFail() }
+        XCTAssertEqual(results.map(\.screenID), ["ext-2"])
+        XCTAssertEqual(results.first?.movedCount, 1)
+    }
+
     func testPredictionsFollowWindowStateAndOptions() async {
         // 실행 중 + 창 0개 → "창 없음" 예측. 새 창 열기 옵션을 켜면 같은 상태가 "복원 대상"이 된다 —
         // 점이 옵션까지 반영한 엔진 예측을 그린다는 증거

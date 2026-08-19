@@ -41,10 +41,11 @@ private struct Card: View {
                         .font(.system(size: 12)).foregroundStyle(.orange)
                 }
             }
-            // lastResult는 지금 화면의 것만 온다 — 인터페이스가 보증하므로 재확인하지 않는다
-            if controller.isConnected, let result = controller.lastResult, result.screenSkipReason == nil {
+            // 연결된 모든 화면의 결과를 합산한다 — 두 번째 화면의 실패 사유도 여기서 보인다.
+            // 지문 불일치로 통째 건너뛴 화면은 lastResults가 이미 뺐다 — 그건 위 경고 배너의 몫이다.
+            if controller.isConnected, !controller.lastResults.isEmpty {
                 Divider()
-                resultStrip(result)
+                resultStrip(controller.lastResults)
             }
             Divider()
             appList
@@ -63,7 +64,7 @@ private struct Card: View {
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 if let badge = CardPresentation.headerBadge(for: controller.screenPresence,
-                                                           hasProfile: controller.profile != nil) {
+                                                           hasProfile: controller.hasRestorableProfile) {
                     Text(badge.text)
                         .font(.system(size: 11))
                         .foregroundStyle(badge.highlighted ? Color.orange : Color.secondary)
@@ -97,60 +98,94 @@ private struct Card: View {
         }
     }
 
-    private func resultStrip(_ result: RestoreResult) -> some View {
+    private func resultStrip(_ results: [RestoreResult]) -> some View {
         zone {
             VStack(alignment: .leading, spacing: 4) {
-                Text("마지막 복원 · 이동 \(result.movedCount) · 건너뜀 \(result.skippedCount) · 실패 \(result.failedCount)")
+                let moved = results.map(\.movedCount).reduce(0, +)
+                let skipped = results.map(\.skippedCount).reduce(0, +)
+                let failed = results.map(\.failedCount).reduce(0, +)
+                Text("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
                     .font(.system(size: 12)).monospacedDigit()
-                // 건너뜀·실패는 이유를 보여준다 — "왜 안 옮겨졌지?"의 유일한 답 (US-008)
-                ForEach(result.entries.filter { $0.outcome != .moved }, id: \.bundleID) { entry in
-                    Text("⚠ \(entry.displayName) — \(CardPresentation.describe(entry.outcome))")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                // 건너뜀·실패는 이유를 보여준다 — "왜 안 옮겨졌지?"의 유일한 답 (US-008).
+                // 모든 화면의 결과를 편평하게 — 같은 앱은 중복 제거(F-01.6)로 한 화면에만 온다.
+                ForEach(results, id: \.screenID) { result in
+                    ForEach(result.entries.filter { $0.outcome != .moved }, id: \.bundleID) { entry in
+                        Text("⚠ \(entry.displayName) — \(CardPresentation.describe(entry.outcome))")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
     }
 
+    // 연결된 모든 화면의 섹션을 다 그린다 — 첫 화면만 보여주면 뒷 화면의 앱이 사라진 것처럼 보인다.
     private var appList: some View {
         zone {
-            if let profile = controller.profile, !profile.apps.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
-                    ForEach(profile.apps.filter(\.isEnabled), id: \.bundleID) { app in
-                        AppRow(app: app,
-                               prediction: controller.predictions[app.bundleID], // 없으면 없다고 그린다
-                               setTracked: { tracked in
-                                   Task { await controller.setTracked(app.bundleID, tracked) }
-                               },
-                               remove: { controller.removeApp(app.bundleID) })
-                    }
-                    untrackedRows
-                }
-            } else if controller.isConnected {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                    untrackedRows
-                }
-            } else {
+            let sections = controller.sections
+            if !controller.isConnected, !sections.contains(where: { $0.profile?.apps.isEmpty == false }) {
                 Text("외장 화면을 연결하면 그 화면의 프로필대로\n복원할 수 있습니다")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                // 앱이 많으면 목록 부분만 스크롤된다 — 카드 전체가 화면을 넘지 않게.
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        let titles = CardPresentation.sectionTitles(names: sections.map(\.name))
+                        ForEach(Array(zip(sections, titles)), id: \.0.id) { section, title in
+                            screenSection(section, title: title, showTitle: sections.count > 1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 320)
             }
         }
     }
 
-    /// 저장하지 않는 앱 — 껐던 대상 앱과 프로필에 없는 앱이 같은 칸에 온다.
+    /// 화면 하나의 섹션 — 그 화면의 프로필 앱, 저장하지 않는 앱, (실험실) 복원 소스.
+    /// 화면이 하나면 제목을 생략한다 — 헤더가 이미 그 이름이다.
+    @ViewBuilder
+    private func screenSection(_ section: PlugbackController.ScreenSection,
+                               title: String, showTitle: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if showTitle {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            if let profile = section.profile, !profile.apps.isEmpty {
+                // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
+                ForEach(profile.apps.filter(\.isEnabled), id: \.bundleID) { app in
+                    AppRow(app: app,
+                           prediction: section.predictions[app.bundleID], // 없으면 없다고 그린다
+                           setTracked: { tracked in
+                               Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
+                           },
+                           remove: { controller.removeApp(app.bundleID, on: section.screenID) })
+                }
+            } else if controller.isConnected {
+                Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            // 실험실 — 이 화면의 복원 소스. 이기는 슬롯은 화면마다 다를 수 있어 섹션에 붙는다.
+            if controller.labAutoSlot, let slot = section.restoreSource {
+                Text(CardPresentation.sourceLabel(slot: slot, savedAt: section.profile?.savedAt))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            untrackedRows(for: section)
+        }
+    }
+
+    /// 저장하지 않는 앱 — 껐던 대상 앱과 그 화면 프로필에 없는 앱이 같은 칸에 온다.
     /// 체크박스의 뜻은 위 묶음과 같다: 「이 앱을 다루나」. 프로필 소속 여부는 내부 사정이다.
-    @ViewBuilder private var untrackedRows: some View {
-        if !controller.untrackedApps.isEmpty {
+    @ViewBuilder private func untrackedRows(for section: PlugbackController.ScreenSection) -> some View {
+        if !section.untrackedApps.isEmpty {
             Divider().padding(.top, 4)
             Text(CardPresentation.untrackedHeader)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.top, 2)
-            ForEach(controller.untrackedApps, id: \.bundleID) { app in
+            ForEach(section.untrackedApps, id: \.bundleID) { app in
                 Toggle(isOn: Binding(
                     get: { false },
-                    set: { tracked in Task { await controller.setTracked(app.bundleID, tracked) } }
+                    set: { tracked in Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) } }
                 )) {
                     Text(app.displayName).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
@@ -165,8 +200,9 @@ private struct Card: View {
                 HStack(spacing: 8) {
                     Button("💾 지금 레이아웃 저장") { Task { await controller.captureNow() } }
                         .disabled(!controller.isConnected || controller.isRestoring)
+                    // 어느 화면에든 프로필이 있으면 복원할 수 있다 — 첫 화면만 보던 판정은 뒷 화면을 잠갔다
                     Button("⚡ 지금 레이아웃 복원") { Task { await controller.restoreNow() } }
-                        .disabled(!controller.isConnected || controller.profile == nil || controller.isRestoring)
+                        .disabled(!controller.isConnected || !controller.hasRestorableProfile || controller.isRestoring)
                 }
                 if let count = controller.lastCaptureCount {
                     // 저장됐다는 것을 화면에서 확인할 수 있다 (US-002 AC-1)
@@ -174,19 +210,13 @@ private struct Card: View {
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
                 // 실험실이 꺼져 있으면 이 줄이 아예 없다 — 카드가 오늘과 완전히 같다.
-                // 켜져 있으면 어느 슬롯이 이겼는지 항상 보인다 (조용함 ≠ 불투명함).
-                // 두 줄인 이유: 위는 지금 복원되는 값, 아래는 뽑을 때 저장될 값이다.
-                // 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
+                // 복원 소스(지금 복원되는 값)는 화면마다 다를 수 있어 각 섹션에 붙고,
+                // 여기는 수집(뽑을 때 저장될 값)의 전역 상태 한 줄이다.
+                // 소스와 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
                 if controller.labAutoSlot {
-                    VStack(alignment: .leading, spacing: 1) {
-                        if let slot = controller.restoreSource {
-                            Text(CardPresentation.sourceLabel(slot: slot, savedAt: controller.profile?.savedAt))
-                        }
-                        Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
-                                                           hasPending: controller.hasPendingCollect))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
+                                                       hasPending: controller.hasPendingCollect))
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
             }
         }

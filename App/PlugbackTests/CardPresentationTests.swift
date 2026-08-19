@@ -85,6 +85,16 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.headerTitle(for: .none), "외장 화면 없음")
     }
 
+    func testSectionTitlesNumberDuplicateNamesOnly() {
+        // 같은 모델 두 대는 (1) (2)로 구별한다 — 이름만으로는 어느 화면의 목록인지 알 수 없다.
+        XCTAssertEqual(CardPresentation.sectionTitles(names: ["LG HDR 4K", "LG HDR 4K"]),
+                       ["LG HDR 4K (1)", "LG HDR 4K (2)"])
+        // 이름이 유일하면 그대로 — 한 대에 (1)을 붙이면 없는 두 번째를 암시한다.
+        XCTAssertEqual(CardPresentation.sectionTitles(names: ["LG HDR 4K", "DELL U2723QE"]),
+                       ["LG HDR 4K", "DELL U2723QE"])
+        XCTAssertEqual(CardPresentation.sectionTitles(names: ["LG HDR 4K"]), ["LG HDR 4K"])
+    }
+
     func testHeaderBadge() {
         XCTAssertEqual(CardPresentation.headerBadge(for: .connected(screen, count: 1), hasProfile: true),
                        .init(text: "프로필 있음", highlighted: true))

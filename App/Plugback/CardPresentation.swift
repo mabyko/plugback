@@ -59,6 +59,19 @@ enum CardPresentation {
         }
     }
 
+    /// 화면 섹션 제목 — 같은 이름의 화면이 여럿이면 (1) (2)를 붙인다 (식별자 정렬 순서 = 입력 순서).
+    /// 이름이 유일하면 그대로 둔다 — 화면 한 대에 (1)을 붙이면 없는 두 번째를 암시한다.
+    static func sectionTitles(names: [String]) -> [String] {
+        var total: [String: Int] = [:]
+        for name in names { total[name, default: 0] += 1 }
+        var ordinal: [String: Int] = [:]
+        return names.map { name in
+            guard total[name, default: 0] > 1 else { return name }
+            ordinal[name, default: 0] += 1
+            return "\(name) (\(ordinal[name]!))"
+        }
+    }
+
     struct HeaderBadge: Equatable {
         let text: String
         let highlighted: Bool // 주황 강조 — 프로필 있음일 때만
