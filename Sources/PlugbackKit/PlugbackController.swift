@@ -269,7 +269,8 @@ public final class PlugbackController: ObservableObject {
         let windows = await gateway.standardWindows(of: nil)
         slots.capture(windows: windows, on: externalScreens)
         // 「카드가 보여주는 화면 기준」은 컨트롤러의 규칙이다 — 저장소가 알 일이 아니다.
-        let count = profile?.apps.count ?? 0
+        // 체크된 앱만 센다 — 해제한 앱은 저장 대상이 아니므로 「저장됨 · n개」에 들어가면 거짓이다.
+        let count = profile?.apps.filter(\.isEnabled).count ?? 0
         lastCaptureCount = count
         await updatePredictions()
         return .captured(appCount: count)
@@ -443,7 +444,7 @@ public final class PlugbackController: ObservableObject {
         slots.addTarget(windows: await gateway.standardWindows(of: [bundleID]), on: externalScreens)
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
         await updatePredictions()
-        return .captured(appCount: profile?.apps.count ?? 0)
+        return .captured(appCount: profile?.apps.filter(\.isEnabled).count ?? 0)
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.

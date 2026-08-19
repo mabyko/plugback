@@ -179,6 +179,36 @@ final class ProfileSlotsTests: XCTestCase {
                        "방금 저장한 배치가 낡은 후보에 밀리면 안 된다")
     }
 
+    // MARK: - 체크 해제 = 저장하지 않고 감지하지 않는다
+
+    func testCaptureDoesNotTouchUncheckedApps() {
+        // 실기기에서 나온 것: 체크를 껐는데 저장이 그 앱 좌표를 계속 갱신했다.
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        slots.edit(screenID: "ext-1") { $0.apps[0].isEnabled = false }
+
+        // 창을 옮긴 뒤 저장 — 체크가 꺼진 앱이니 좌표가 그대로여야 한다
+        slots.capture(windows: [window("com.chrome", right)], on: [screen])
+
+        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.unitRect.x, 0,
+                       "체크 해제한 앱은 저장이 건드리지 않는다")
+        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.count, 1, "프로필에는 남는다")
+    }
+
+    func testCollectDoesNotTrackUncheckedApps() {
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        slots.isLabEnabled = true
+        slots.edit(screenID: "ext-1") { $0.apps[0].isEnabled = false }
+
+        XCTAssertTrue(slots.targets(for: [screen]).isEmpty, "체크 해제한 앱은 감지하지 않는다")
+
+        slots.collect(windows: [window("com.chrome", right)], on: [screen])
+        slots.confirm(["ext-1"])
+        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.unitRect.x, 0,
+                       "수집도 그 앱을 건드리지 않는다")
+    }
+
     // MARK: - 수집 바탕과 대상
 
     func testTargetsPreferCandidateThenAutoThenManual() {
@@ -224,7 +254,7 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertEqual(slots.firstByName?.screenName, "LG")
     }
 
-    func testEditHitsTheWinningSlotNotAlwaysManual() {
+    func testEditAppliesToBothSlots() {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])
         slots.isLabEnabled = true
@@ -233,8 +263,9 @@ final class ProfileSlotsTests: XCTestCase {
 
         slots.edit(screenID: "ext-1") { $0.apps[0].isEnabled = false }
 
-        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.isEnabled, false)
-        XCTAssertEqual(slots.all.first?.apps.first?.isEnabled, true, "수동 슬롯은 그대로다")
+        // 한쪽만 고치면 이기는 슬롯이 바뀌는 순간 되살아난다 — 체크 상태는 슬롯마다 다를 이유가 없다.
+        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.isEnabled, false, "이긴 슬롯")
+        XCTAssertEqual(slots.all.first?.apps.first?.isEnabled, false, "수동 슬롯도 함께")
     }
 
     func testRemoveClearsBothSlotsAndTheCandidate() throws {

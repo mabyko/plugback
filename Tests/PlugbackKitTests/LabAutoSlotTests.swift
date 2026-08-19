@@ -292,7 +292,7 @@ final class LabAutoSlotTests: XCTestCase {
 
     // MARK: - 카드가 보여주는 슬롯을 고친다
 
-    func testEditingTargetAppsHitsTheWinningSlot() async {
+    func testEditingTargetAppsAppliesToBothSlots() async {
         placeChrome(at: left)
         let controller = makeController()
         await controller.captureNow()
@@ -304,9 +304,10 @@ final class LabAutoSlotTests: XCTestCase {
 
         controller.setAppEnabled("com.chrome", false)
 
-        // 목록(=이긴 슬롯)이 바뀌고, 수동 슬롯은 그대로다
+        // 목록(=이긴 슬롯)과 수동 슬롯이 함께 바뀐다 — 체크 상태가 슬롯마다 갈리면
+        // 이기는 슬롯이 바뀌는 순간 껐던 앱이 되살아난다.
         XCTAssertEqual(controller.profile?.apps.first?.isEnabled, false)
-        XCTAssertEqual(controller.allProfiles.first?.apps.first?.isEnabled, true)
+        XCTAssertEqual(controller.allProfiles.first?.apps.first?.isEnabled, false)
     }
 
     // MARK: - 목록·삭제는 슬롯을 새지 않는다
