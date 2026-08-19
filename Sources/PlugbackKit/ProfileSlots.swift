@@ -122,6 +122,32 @@ final class ProfileSlots: ObservableObject {
         persist()
     }
 
+    /// 대상 앱 하나를 명부에 올린다 (카드의 「추가」). **저장이 아니다** —
+    /// 배치를 선언하는 게 아니라 이름을 올리는 것이라, 저장의 두 부작용을 갖지 않는다:
+    /// savedAt을 올리지 않고(복원 소스를 뒤집지 않는다), 모으던 후보도 버리지 않는다.
+    ///
+    /// 두 슬롯과 후보 모두에 넣는다 — **명부는 슬롯마다 다를 이유가 없다.**
+    /// 한쪽에만 넣으면 그 슬롯이 이길 때만 보이고, 이기는 슬롯이 바뀌는 순간 사라진다.
+    func addTarget(windows: [WindowInfo], on screens: [ScreenInfo]) {
+        for screen in screens {
+            let manualKey = Slot.manual.key(screen.id)
+            var manual = CaptureEngine.capture(windows: windows, on: screen, merging: profiles[manualKey])
+            manual.fingerprint = screen.fingerprint
+            // 이 화면의 첫 앱이면 프로필이 방금 생긴 것이라 시각이 없다 — 그때만 채운다.
+            if manual.savedAt == nil { manual.savedAt = Date() }
+            profiles[manualKey] = manual
+
+            let autoKey = Slot.auto.key(screen.id)
+            if let auto = profiles[autoKey] {
+                profiles[autoKey] = CaptureEngine.capture(windows: windows, on: screen, merging: auto)
+            }
+            if let candidate = candidates[screen.id] {
+                candidates[screen.id] = CaptureEngine.capture(windows: windows, on: screen, merging: candidate)
+            }
+        }
+        persist()
+    }
+
     /// 수집 — 지금 배치를 메모리 후보에 담는다. **파일에는 닿지 않는다.**
     /// 프로필에 이미 있는 앱만 따라간다. 새 앱 등록은 수동 저장의 몫이다.
     func collect(windows: [WindowInfo], on screens: [ScreenInfo]) {
