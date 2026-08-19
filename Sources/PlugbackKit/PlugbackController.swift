@@ -54,9 +54,11 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 보여주는 화면에서는 판정 규칙이 어긋나지 않는다. 실행 시점 사건(이동 실패·새 창 미등장·
     /// 지문 불일치·체크 해제)은 예측 범위 밖 — 결과 스트립과 알림이 사후에 답한다.
     @Published public private(set) var predictions: [String: RestorePrediction] = [:]
-    /// 이 화면에 창이 있는데 프로필에 없는 앱 — 복원이 건드리지 않는다는 사실을 카드가 보여준다.
-    /// 저장이 잡아갈 창과 같은 규칙으로 고른다(중심점·표준 창·최소화/전체화면 제외) —
-    /// 「추가」를 눌렀는데 아무 일도 안 일어나는 행을 만들지 않기 위해서다.
+    /// 저장하지 않는 앱 — 체크를 껐던 대상 앱과, 이 화면에 있지만 프로필에 없는 앱.
+    /// **화면에서는 같은 칸이다**: 체크 해제는 「아무것도 안 한다」 하나의 뜻이고,
+    /// 프로필 소속 여부는 내부 사정이다. 껐던 앱은 좌표가 남아 있어 다시 켜면 그 자리로 돌아온다.
+    /// 프로필에 없는 앱은 저장이 잡아갈 창과 같은 규칙으로 고른다 — 체크했는데 아무 일도
+    /// 안 일어나는 행을 만들지 않기 위해서다.
     @Published public private(set) var untrackedApps: [UntrackedApp] = []
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
@@ -394,7 +396,10 @@ public final class PlugbackController: ObservableObject {
                 profile: $0, on: screen, windows: windows, running: running,
                 options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
         } ?? [:]
-        untrackedApps = Self.untracked(in: windows, on: screen, excluding: Set(targets))
+        // 껐던 대상 앱이 먼저다 — 좌표가 남아 있어 되돌리기 쉬운 쪽을 위에 둔다.
+        let disabled = (profile?.apps.filter { !$0.isEnabled } ?? [])
+            .map { UntrackedApp(bundleID: $0.bundleID, displayName: $0.displayName) }
+        untrackedApps = disabled + Self.untracked(in: windows, on: screen, excluding: Set(targets))
     }
 
     /// 저장이 잡아갈 창과 같은 규칙 — 중심점이 이 화면이고, 최소화·전체화면이 아닌 표준 창.
@@ -411,6 +416,34 @@ public final class PlugbackController: ObservableObject {
             }
         }
         return out
+    }
+
+    /// 카드 체크박스의 유일한 동작 — 「이 앱을 다루나」.
+    /// 켜면: 프로필에 있으면 다시 복원 대상으로(저장된 좌표 그대로), 없으면 지금 자리로 등록한다.
+    /// 끄면: 복원에서 빼되 **프로필에서 지우지 않는다** (US-006 AC-2 — 좌표는 남는다).
+    /// 화면에서는 이 셋이 한 질문의 답이라 체크박스 하나로 족하다.
+    public func setTracked(_ bundleID: String, _ tracked: Bool) async {
+        if profile?.apps.contains(where: { $0.bundleID == bundleID }) == true {
+            setAppEnabled(bundleID, tracked)
+            await updatePredictions() // 켜고 끈 행이 곧바로 제 묶음으로 간다
+        } else if tracked {
+            await addTargetApp(bundleID) // 이 경로는 스스로 갱신한다
+        }
+    }
+
+    /// 프로필에 없던 앱을 대상 앱 명부에 올린다. **저장이 아니다**:
+    /// 다른 앱의 좌표를 덮지 않고, 복원 소스를 뒤집지 않으며, 모으던 후보도 안 버린다.
+    @discardableResult
+    private func addTargetApp(_ bundleID: String) async -> CaptureOutcome {
+        guard checkAuthorization() else { return .notAuthorized }
+        guard !isRestoring else { return .restoringInProgress }
+        guard !slots.isSaveBlocked else { return .saveBlocked }
+        syncScreens()
+        guard isConnected else { return .notConnected }
+        slots.addTarget(windows: await gateway.standardWindows(of: [bundleID]), on: externalScreens)
+        await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
+        await updatePredictions()
+        return .captured(appCount: profile?.apps.count ?? 0)
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
