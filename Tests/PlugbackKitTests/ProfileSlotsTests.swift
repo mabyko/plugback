@@ -179,63 +179,6 @@ final class ProfileSlotsTests: XCTestCase {
                        "방금 저장한 배치가 낡은 후보에 밀리면 안 된다")
     }
 
-    // MARK: - 「추가」는 저장이 아니다
-
-    func testAddTargetDoesNotFlipTheRestoreSource() {
-        // 앱 하나 올렸을 뿐인데 복원 소스가 뒤집히면, 옛 좌표를 든 슬롯으로 복원이 넘어간다.
-        let slots = makeSlots()
-        slots.capture(windows: [window("com.chrome", left)], on: [screen])
-        slots.isLabEnabled = true
-        slots.collect(windows: [window("com.chrome", right)], on: [screen])
-        slots.confirm(["ext-1"])
-        XCTAssertEqual(slots.source(for: "ext-1")?.slot, .auto)
-
-        slots.addTarget(windows: [window("com.linear", right)], on: [screen])
-
-        XCTAssertEqual(slots.source(for: "ext-1")?.slot, .auto, "명부에 올리는 것은 배치 선언이 아니다")
-        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.unitRect.x, 0.5,
-                       "자동 슬롯이 모은 좌표가 그대로여야 한다")
-    }
-
-    func testAddTargetLandsInBothSlots() {
-        // 한쪽에만 넣으면 이기는 슬롯이 바뀌는 순간 사라진다 — 명부는 슬롯마다 다를 이유가 없다.
-        let slots = makeSlots()
-        slots.capture(windows: [window("com.chrome", left)], on: [screen])
-        slots.isLabEnabled = true
-
-        slots.addTarget(windows: [window("com.linear", right)], on: [screen])
-
-        XCTAssertTrue(slots.all.first!.apps.contains { $0.bundleID == "com.linear" }, "수동 슬롯")
-        slots.collect(windows: [window("com.chrome", right)], on: [screen])
-        slots.confirm(["ext-1"])
-        XCTAssertTrue(slots.source(for: "ext-1")!.profile.apps.contains { $0.bundleID == "com.linear" },
-                      "자동 슬롯")
-    }
-
-    func testAddTargetKeepsTheCollectedCandidate() {
-        // 모으던 배치를 버리면 「대기 중 · 방금 배치」가 사라지고 그 세션의 수집을 잃는다.
-        let slots = makeSlots()
-        slots.capture(windows: [window("com.chrome", left)], on: [screen])
-        slots.isLabEnabled = true
-        slots.collect(windows: [window("com.chrome", right)], on: [screen])
-        XCTAssertTrue(slots.hasPendingCollect)
-
-        slots.addTarget(windows: [window("com.linear", right)], on: [screen])
-
-        XCTAssertTrue(slots.hasPendingCollect, "추가는 모으던 후보를 버리지 않는다")
-        slots.confirm(["ext-1"])
-        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first(where: { $0.bundleID == "com.chrome" })?.unitRect.x,
-                       0.5, "수집한 좌표가 살아남는다")
-    }
-
-    func testAddTargetCreatesTheProfileOnAScreenThatHasNone() {
-        let slots = makeSlots()
-        slots.addTarget(windows: [window("com.linear", right)], on: [screen])
-
-        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.map(\.bundleID), ["com.linear"])
-        XCTAssertNotNil(slots.source(for: "ext-1")?.profile.savedAt, "새 프로필엔 시각이 있어야 비교가 된다")
-    }
-
     // MARK: - 수집 바탕과 대상
 
     func testTargetsPreferCandidateThenAutoThenManual() {

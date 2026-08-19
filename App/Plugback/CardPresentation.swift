@@ -89,7 +89,7 @@ enum CardPresentation {
     /// 쓸 수 없는 말들: 「건너뜀」은 복원 대상인데 안 옮기는 것이고(CONTEXT 정의어) 이 앱은
     /// 애초에 대상이 아니다. 「그대로 둠」은 「제자리」와 겹친다. 「미등록」은 대상 앱의
     /// 금지어(등록 앱)에 스친다.
-    static let untrackedHeader = "새로 감지된 앱"
+    static let untrackedHeader = "새로 감지된 앱 — 저장하면 함께 등록됩니다"
 
     // MARK: - 복원 소스 (실험실 · 자동 슬롯) — 어느 슬롯이 이겼는지 카드가 말한다
 
