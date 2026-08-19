@@ -121,13 +121,38 @@ private struct Card: View {
                                setEnabled: { controller.setAppEnabled(app.bundleID, $0) },
                                remove: { controller.removeApp(app.bundleID) })
                     }
+                    untrackedRows
                 }
             } else if controller.isConnected {
-                Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    untrackedRows
+                }
             } else {
                 Text("외장 화면을 연결하면 그 화면의 프로필대로\n복원할 수 있습니다")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// 이 화면에 있지만 프로필에 없는 앱 — 복원이 건드리지 않는다는 사실을 보여준다.
+    /// 대상 앱 아래 별도 묶음이다: 위 목록은 앱을 켜고 꺼도 흔들리지 않아야 한다.
+    @ViewBuilder private var untrackedRows: some View {
+        if !controller.untrackedApps.isEmpty {
+            Divider().padding(.vertical, 2)
+            ForEach(controller.untrackedApps, id: \.bundleID) { app in
+                HStack(spacing: 8) {
+                    Text(app.displayName)
+                        .font(.system(size: 12)).foregroundStyle(.tertiary)
+                    Spacer()
+                    Text(CardPresentation.untrackedLabel)
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    // 체크박스를 주지 않는다 — 체크는 켜고 끄기의 대칭을 약속하는데,
+                    // 추가한 앱을 다시 체크 해제해도 프로필에서 지워지지 않는다 (US-006 AC-2).
+                    Button("추가") { Task { await controller.addTargetApp(app.bundleID) } }
+                        .font(.system(size: 11))
+                }
             }
         }
     }

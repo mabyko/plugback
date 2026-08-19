@@ -137,6 +137,18 @@ public enum Slot: String, Equatable, Sendable {
     public static func isAutoKey(_ key: String) -> Bool { key.hasSuffix(autoSuffix) }
 }
 
+/// 이 외장 화면에 창이 있지만 프로필에 없는 앱 — **복원이 건드리지 않는다.**
+/// 카드가 이것을 보여주는 이유는 비침해가 이 제품의 약속이기 때문이다:
+/// "왜 내 앱이 목록에 없지?"의 답이 문서에만 있으면 약속이 보이지 않는다.
+public struct UntrackedApp: Equatable, Sendable {
+    public let bundleID: String
+    public let displayName: String
+
+    public init(bundleID: String, displayName: String) {
+        self.bundleID = bundleID; self.displayName = displayName
+    }
+}
+
 /// 건너뜀 사유 (F-02.2). 사용자가 이해할 문구로의 변환은 UI의 몫이다.
 public enum SkipReason: Equatable, Sendable {
     case appNotRunning

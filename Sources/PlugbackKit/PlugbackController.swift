@@ -54,6 +54,10 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 보여주는 화면에서는 판정 규칙이 어긋나지 않는다. 실행 시점 사건(이동 실패·새 창 미등장·
     /// 지문 불일치·체크 해제)은 예측 범위 밖 — 결과 스트립과 알림이 사후에 답한다.
     @Published public private(set) var predictions: [String: RestorePrediction] = [:]
+    /// 이 화면에 창이 있는데 프로필에 없는 앱 — 복원이 건드리지 않는다는 사실을 카드가 보여준다.
+    /// 저장이 잡아갈 창과 같은 규칙으로 고른다(중심점·표준 창·최소화/전체화면 제외) —
+    /// 「추가」를 눌렀는데 아무 일도 안 일어나는 행을 만들지 않기 위해서다.
+    @Published public private(set) var untrackedApps: [UntrackedApp] = []
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
@@ -375,18 +379,53 @@ public final class PlugbackController: ObservableObject {
         // 복원 진행 중엔 양보한다 — 여기의 재열거가 진행 중 복원이 든 창 ID를 무효화한다
         // (ID 수명 계약: 마지막 열거만 유효). 복원이 끝나면 스스로 갱신하므로 잃는 것이 없다.
         guard !isRestoring else { return }
-        guard let profile else { predictions = [:]; return }
-        let targets = profile.apps.map(\.bundleID)
+        let screen: ScreenInfo? = if case .connected(let s, _) = screenPresence { s } else { nil }
+        let targets = profile?.apps.map(\.bundleID) ?? []
+
+        // 전체 열거다 — 카드가 「이 화면에 뭐가 있나」도 답하기 때문이다(대상 아님 행).
+        // 게이트웨이가 actor라 메인은 막히지 않고, 점은 원래 비동기로 채워진다.
+        let windows = await gateway.standardWindows(of: nil)
         var running = Set<String>()
         for bundleID in targets where await gateway.isRunning(bundleID: bundleID) {
             running.insert(bundleID)
         }
-        // 대상 앱만 열거 — 카드가 열릴 때뿐이라 AX 왕복 비용은 감당 범위
-        let windows = await gateway.standardWindows(of: targets)
-        let screen: ScreenInfo? = if case .connected(let s, _) = screenPresence { s } else { nil }
-        predictions = RestoreEngine.predict(
-            profile: profile, on: screen, windows: windows, running: running,
-            options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
+        predictions = profile.map {
+            RestoreEngine.predict(
+                profile: $0, on: screen, windows: windows, running: running,
+                options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
+        } ?? [:]
+        untrackedApps = Self.untracked(in: windows, on: screen, excluding: Set(targets))
+    }
+
+    /// 저장이 잡아갈 창과 같은 규칙 — 중심점이 이 화면이고, 최소화·전체화면이 아닌 표준 창.
+    /// 순수 함수라 규칙이 저장과 어긋나면 테스트가 잡는다.
+    static func untracked(in windows: [WindowInfo], on screen: ScreenInfo?,
+                          excluding targets: Set<String>) -> [UntrackedApp] {
+        guard let screen, !screen.isBuiltin else { return [] }
+        var seen = targets
+        var out: [UntrackedApp] = []
+        for window in windows
+        where !window.isMinimized && !window.isFullscreen && screen.contains(window) {
+            if seen.insert(window.appBundleID).inserted {
+                out.append(UntrackedApp(bundleID: window.appBundleID, displayName: window.appName))
+            }
+        }
+        return out
+    }
+
+    /// 카드의 「추가」 — 이 앱 하나만 수동 슬롯에 넣는다.
+    /// 저장 버튼과 같은 경로를 쓰되 창 목록을 그 앱으로 좁혀, 다른 앱의 좌표를 덮지 않는다.
+    @discardableResult
+    public func addTargetApp(_ bundleID: String) async -> CaptureOutcome {
+        guard checkAuthorization() else { return .notAuthorized }
+        guard !isRestoring else { return .restoringInProgress }
+        guard !slots.isSaveBlocked else { return .saveBlocked }
+        syncScreens()
+        guard isConnected else { return .notConnected }
+        slots.capture(windows: await gateway.standardWindows(of: [bundleID]), on: externalScreens)
+        await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
+        await updatePredictions()
+        return .captured(appCount: profile?.apps.count ?? 0)
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
