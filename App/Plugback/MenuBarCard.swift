@@ -137,23 +137,17 @@ private struct Card: View {
     }
 
     /// 이 화면에 있지만 프로필에 없는 앱 — 복원이 건드리지 않는다는 사실을 보여준다.
-    /// 대상 앱 아래 별도 묶음이다: 위 목록은 앱을 켜고 꺼도 흔들리지 않아야 한다.
+    /// 행에 동작은 없다: 「저장」이 이미 이 앱들을 등록하므로 버튼 하나가 코드 경로 하나를
+    /// 더 데려올 이유가 없다. 대상 앱 아래 별도 묶음인 이유는 위 목록이 앱을 켜고 꺼도
+    /// 흔들리지 않아야 하기 때문이다.
     @ViewBuilder private var untrackedRows: some View {
         if !controller.untrackedApps.isEmpty {
             Divider().padding(.vertical, 2)
-            // 설명은 묶음 머리말로 한 번만 — 행마다 붙는 칩은 이유를 설명하지 못한다.
             Text(CardPresentation.untrackedHeader)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             ForEach(controller.untrackedApps, id: \.bundleID) { app in
-                HStack(spacing: 8) {
-                    Text(app.displayName)
-                        .font(.system(size: 12)).foregroundStyle(.tertiary)
-                    Spacer()
-                    // 체크박스를 주지 않는다 — 체크는 켜고 끄기의 대칭을 약속하는데,
-                    // 추가한 앱을 다시 체크 해제해도 프로필에서 지워지지 않는다 (US-006 AC-2).
-                    Button("추가") { Task { await controller.addTargetApp(app.bundleID) } }
-                        .font(.system(size: 11))
-                }
+                Text(app.displayName)
+                    .font(.system(size: 12)).foregroundStyle(.tertiary)
             }
         }
     }

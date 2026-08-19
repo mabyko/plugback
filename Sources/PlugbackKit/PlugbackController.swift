@@ -413,21 +413,6 @@ public final class PlugbackController: ObservableObject {
         return out
     }
 
-    /// 카드의 「추가」 — 이 앱을 대상 앱 명부에 올린다.
-    /// **저장이 아니다**: 다른 앱의 좌표를 덮지 않고, 복원 소스를 뒤집지 않으며, 모으던 후보도 안 버린다.
-    @discardableResult
-    public func addTargetApp(_ bundleID: String) async -> CaptureOutcome {
-        guard checkAuthorization() else { return .notAuthorized }
-        guard !isRestoring else { return .restoringInProgress }
-        guard !slots.isSaveBlocked else { return .saveBlocked }
-        syncScreens()
-        guard isConnected else { return .notConnected }
-        slots.addTarget(windows: await gateway.standardWindows(of: [bundleID]), on: externalScreens)
-        await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
-        await updatePredictions()
-        return .captured(appCount: profile?.apps.count ?? 0)
-    }
-
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
     public func dismissStoreNotice() { slots.dismissTrouble() }
 
