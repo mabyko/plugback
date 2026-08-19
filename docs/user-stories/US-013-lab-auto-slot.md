@@ -71,4 +71,4 @@ AC-8이 붙어 있는 이유: 복원은 몇 px 어긋나게 착지해도 성공�
 (Memmon #19 — "windows gradually crawl up the screen with each sleep").
 
 실험실인 이유는 졸업을 약속하지 않기 위해서다. 걷어낼 수 있어야 실험이다.
-시나리오 11개의 검증 기록은 `auto-capture-simulation.html`에 있다.
+설계 단계에서 시나리오 11개를 돌려 구멍 3개를 찾았고, 그 검증은 `LabAutoSlotTests`가 이어받는다.
