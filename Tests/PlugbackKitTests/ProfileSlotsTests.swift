@@ -191,6 +191,24 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertEqual(slots.targets(for: [screen]), ["com.chrome"], "후보가 바탕이 돼도 같은 앱")
     }
 
+    func testTargetsIncludeAppsKnownOnlyToTheManualSlot() {
+        // 실기기에서 나온 것: 자동 슬롯이 이미 있는 상태에서 새 앱을 수동 저장하면,
+        // 명부를 자동 슬롯에서만 가져오는 동안 그 앱은 수집에 영영 안 잡힌다.
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        slots.isLabEnabled = true
+        slots.collect(windows: [window("com.chrome", right)], on: [screen])
+        slots.confirm(["ext-1"]) // 자동 슬롯 = { chrome }
+
+        // Linear를 화면에 띄운 채 수동 저장 — 수동 슬롯에만 들어간다
+        slots.capture(windows: [window("com.chrome", left),
+                                WindowInfo(id: 2, appBundleID: "com.linear", appName: "Linear", frame: right)],
+                      on: [screen])
+
+        XCTAssertEqual(slots.targets(for: [screen]).sorted(), ["com.chrome", "com.linear"],
+                       "수동 슬롯에만 있는 앱도 따라가야 자동 슬롯에 도달한다")
+    }
+
     func testTargetsAreEmptyForAnUnknownScreen() {
         XCTAssertTrue(makeSlots().targets(for: [screen]).isEmpty)
     }

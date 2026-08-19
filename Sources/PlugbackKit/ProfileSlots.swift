@@ -77,10 +77,23 @@ final class ProfileSlots: ObservableObject {
         }
     }
 
-    /// 수집·관찰이 따라갈 대상 앱. 두 곳이 **같은 집합**을 써야 한다 —
+    /// 수집·관찰이 따라갈 대상 앱. 수집 열거와 이동 관찰이 **같은 집합**을 써야 한다 —
     /// 어긋나면 관찰은 되는데 수집이 안 되는 앱이 생긴다.
+    ///
+    /// **명부는 합집합이고, 좌표 바탕(`bases`)은 우선순위다.** 한 값으로 답하면
+    /// 수동 저장으로 갓 등록한 앱이 자동 슬롯 명부에 영영 못 들어간다 — 수집이 그 앱을
+    /// 열거하지 않으니 후보에 안 생기고, 확정이 더 새 시각으로 자동 슬롯을 덮어 그 앱을 잃는다.
+    /// 합집합이어도 「수집은 새 앱을 등록하지 않는다」는 유지된다 — 어느 슬롯엔가 이미 있는 앱들이다.
     func targets(for screens: [ScreenInfo]) -> [String] {
-        Array(Set(bases(for: screens).values.flatMap { $0.apps.map(\.bundleID) }))
+        var out = Set<String>()
+        for screen in screens {
+            for profile in [candidates[screen.id],
+                            profiles[Slot.auto.key(screen.id)],
+                            profiles[Slot.manual.key(screen.id)]].compactMap({ $0 }) {
+                out.formUnion(profile.apps.map(\.bundleID))
+            }
+        }
+        return Array(out)
     }
 
     /// 복원 엔진에 넘길 화면당 프로필 하나 — 슬롯은 여기서 끝난다.
