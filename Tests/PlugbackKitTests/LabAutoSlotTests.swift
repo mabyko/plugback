@@ -1,7 +1,7 @@
 import XCTest
 @testable import PlugbackKit
 
-// 실험실 · 자동 슬롯. 시뮬레이션 문서(auto-capture-simulation.html)의 시나리오를 코드로 옮긴 것.
+// 실험실 · 자동 슬롯. 설계 단계에서 돌린 시나리오 11개를 코드로 옮긴 것.
 // 규칙은 하나다 — 더 최근에 저장된 슬롯이 이긴다. 저장된 "활성 슬롯"은 없다.
 
 private let builtin = ScreenInfo(id: "builtin", name: "내장 화면",
