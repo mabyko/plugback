@@ -141,13 +141,14 @@ private struct Card: View {
     @ViewBuilder private var untrackedRows: some View {
         if !controller.untrackedApps.isEmpty {
             Divider().padding(.vertical, 2)
+            // 설명은 묶음 머리말로 한 번만 — 행마다 붙는 칩은 이유를 설명하지 못한다.
+            Text(CardPresentation.untrackedHeader)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             ForEach(controller.untrackedApps, id: \.bundleID) { app in
                 HStack(spacing: 8) {
                     Text(app.displayName)
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
                     Spacer()
-                    Text(CardPresentation.untrackedLabel)
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
                     // 체크박스를 주지 않는다 — 체크는 켜고 끄기의 대칭을 약속하는데,
                     // 추가한 앱을 다시 체크 해제해도 프로필에서 지워지지 않는다 (US-006 AC-2).
                     Button("추가") { Task { await controller.addTargetApp(app.bundleID) } }
