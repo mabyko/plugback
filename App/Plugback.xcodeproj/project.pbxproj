@@ -11,9 +11,19 @@
 		7B1DBAC00000000000000011 /* PlugbackKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7B1DBAC00000000000000012 /* PlugbackKit */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		7B1DBAC0000000000000001A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 449761C730319F7700AA4358 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 449761CE30319F7700AA4358;
+			remoteInfo = Plugback;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		449761CF30319F7700AA4358 /* Plugback.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Plugback.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		7B1DBAC00000000000000004 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
+		7B1DBAC00000000000000004 /* Config/Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
 		7B1DBAC00000000000000013 /* PlugbackTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PlugbackTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -55,7 +65,7 @@
 			children = (
 				449761D130319F7700AA4358 /* Plugback */,
 				7B1DBAC00000000000000014 /* PlugbackTests */,
-				7B1DBAC00000000000000004 /* Base.xcconfig */,
+				7B1DBAC00000000000000004 /* Config/Base.xcconfig */,
 				449761D030319F7700AA4358 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -145,11 +155,11 @@
 			);
 			mainGroup = 449761C630319F7700AA4358;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
-			productRefGroup = 449761D030319F7700AA4358 /* Products */;
 			packageReferences = (
 				7B1DBAC00000000000000003 /* XCLocalSwiftPackageReference ".." */,
 			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 449761D030319F7700AA4358 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -186,16 +196,6 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin PBXContainerItemProxy section */
-		7B1DBAC0000000000000001A /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 449761C730319F7700AA4358 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 449761CE30319F7700AA4358;
-			remoteInfo = Plugback;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXTargetDependency section */
 		7B1DBAC00000000000000019 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -203,24 +203,6 @@
 			targetProxy = 7B1DBAC0000000000000001A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
-
-/* Begin XCLocalSwiftPackageReference section */
-		7B1DBAC00000000000000003 /* XCLocalSwiftPackageReference ".." */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "..";
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		7B1DBAC00000000000000002 /* PlugbackKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = PlugbackKit;
-		};
-		7B1DBAC00000000000000012 /* PlugbackKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = PlugbackKit;
-		};
-/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		449761D830319F7800AA4358 /* Debug */ = {
@@ -343,13 +325,14 @@
 		};
 		449761DB30319F7800AA4358 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Config/Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4R2Q85G3SP;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -374,13 +357,14 @@
 		};
 		449761DC30319F7800AA4358 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Config/Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4R2Q85G3SP;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -405,7 +389,7 @@
 		};
 		7B1DBAC0000000000000001B /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Config/Base.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -425,7 +409,7 @@
 		};
 		7B1DBAC0000000000000001C /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 7B1DBAC00000000000000004 /* Base.xcconfig */;
+			baseConfigurationReference = 7B1DBAC00000000000000004 /* Config/Base.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -474,6 +458,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		7B1DBAC00000000000000003 /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7B1DBAC00000000000000002 /* PlugbackKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PlugbackKit;
+		};
+		7B1DBAC00000000000000012 /* PlugbackKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PlugbackKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 449761C730319F7700AA4358 /* Project object */;
 }
