@@ -89,7 +89,7 @@ enum CardPresentation {
     /// 쓸 수 없는 말들: 「건너뜀」은 복원 대상인데 안 옮기는 것이고(CONTEXT 정의어) 이 앱은
     /// 애초에 대상이 아니다. 「그대로 둠」은 「제자리」와 겹친다. 「미등록」은 대상 앱의
     /// 금지어(등록 앱)에 스친다.
-    static let untrackedHeader = "새로 감지된 앱 — 저장하면 함께 등록됩니다"
+    static let untrackedHeader = "새로 감지된 앱"
 
     // MARK: - 복원 소스 (실험실 · 자동 슬롯) — 어느 슬롯이 이겼는지 카드가 말한다
 
@@ -110,7 +110,14 @@ enum CardPresentation {
     /// 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽혀, 방금 옮겼는데 복원이 왜 다른 자리로
     /// 가는지 설명할 길이 없어진다.
     static func pendingLabel(collectedAt: Date?, hasPending: Bool, now: Date = Date()) -> String {
-        guard hasPending else { return "대기 중 변경 없음" }
+        guard hasPending else {
+            // 변경이 없을 때도 **마지막으로 확인한 시각**은 보여준다.
+            // 없으면 수집이 도는지 알 길이 없다 — 창을 안 옮긴 상태에서는 화면이 계속 같아서,
+            // 트리거가 죽은 것과 "바뀐 게 없다"가 구별되지 않는다.
+            // 「확인」이라고 쓴다: 「저장」으로 읽히면 안 된다.
+            guard let collectedAt else { return "대기 중 변경 없음 · 아직 확인 안 함" }
+            return "대기 중 변경 없음 · 확인 \(relative(collectedAt, now))"
+        }
         return "대기 중 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
     }
 

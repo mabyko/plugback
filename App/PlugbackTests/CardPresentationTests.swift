@@ -47,9 +47,16 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-120),
                                                      hasPending: true, now: now),
                        "대기 중 · 2분 전 배치 — 뽑을 때 저장")
-        // 후보가 자동 슬롯과 같으면 기다리는 것이 없다 — 시각을 보여줘봐야 오해만 만든다
-        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now, hasPending: false, now: now),
-                       "대기 중 변경 없음")
+        // 기다리는 것이 없어도 확인 시각은 보여준다 — 없으면 트리거가 죽은 것과
+        // "바뀐 게 없다"가 구별되지 않는다. 「확인」이라 써서 「저장」으로 안 읽히게 한다.
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-30),
+                                                     hasPending: false, now: now),
+                       "대기 중 변경 없음 · 확인 30초 전")
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-5),
+                                                     hasPending: false, now: now),
+                       "대기 중 변경 없음 · 확인 방금", "10초 미만은 「방금」으로 접힌다")
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: nil, hasPending: false, now: now),
+                       "대기 중 변경 없음 · 아직 확인 안 함")
     }
 
     func testDotFollowsPrediction() {
