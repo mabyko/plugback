@@ -115,10 +115,13 @@ private struct Card: View {
         zone {
             if let profile = controller.profile, !profile.apps.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(profile.apps, id: \.bundleID) { app in
+                    // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
+                    ForEach(profile.apps.filter(\.isEnabled), id: \.bundleID) { app in
                         AppRow(app: app,
                                prediction: controller.predictions[app.bundleID], // 없으면 없다고 그린다
-                               setEnabled: { controller.setAppEnabled(app.bundleID, $0) },
+                               setTracked: { tracked in
+                                   Task { await controller.setTracked(app.bundleID, tracked) }
+                               },
                                remove: { controller.removeApp(app.bundleID) })
                     }
                     untrackedRows
@@ -136,18 +139,22 @@ private struct Card: View {
         }
     }
 
-    /// 이 화면에 있지만 프로필에 없는 앱 — 복원이 건드리지 않는다는 사실을 보여준다.
-    /// 행에 동작은 없다: 「저장」이 이미 이 앱들을 등록하므로 버튼 하나가 코드 경로 하나를
-    /// 더 데려올 이유가 없다. 대상 앱 아래 별도 묶음인 이유는 위 목록이 앱을 켜고 꺼도
-    /// 흔들리지 않아야 하기 때문이다.
+    /// 저장하지 않는 앱 — 껐던 대상 앱과 프로필에 없는 앱이 같은 칸에 온다.
+    /// 체크박스의 뜻은 위 묶음과 같다: 「이 앱을 다루나」. 프로필 소속 여부는 내부 사정이다.
     @ViewBuilder private var untrackedRows: some View {
         if !controller.untrackedApps.isEmpty {
-            Divider().padding(.vertical, 2)
+            Divider().padding(.top, 4)
             Text(CardPresentation.untrackedHeader)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+                .padding(.top, 2)
             ForEach(controller.untrackedApps, id: \.bundleID) { app in
-                Text(app.displayName)
-                    .font(.system(size: 12)).foregroundStyle(.tertiary)
+                Toggle(isOn: Binding(
+                    get: { false },
+                    set: { tracked in Task { await controller.setTracked(app.bundleID, tracked) } }
+                )) {
+                    Text(app.displayName).font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .toggleStyle(.checkbox)
             }
         }
     }
@@ -210,12 +217,12 @@ private struct AppRow: View {
     let app: TargetApp
     /// nil = 아직 계산 안 됨 — "모름"을 "꺼짐"으로 지어내지 않고 점을 그리지 않는다
     let prediction: RestorePrediction?
-    let setEnabled: (Bool) -> Void
+    let setTracked: (Bool) -> Void
     let remove: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Toggle(isOn: Binding(get: { app.isEnabled }, set: setEnabled)) {
+            Toggle(isOn: Binding(get: { app.isEnabled }, set: setTracked)) {
                 Text(app.displayName).font(.system(size: 12))
             }
             .toggleStyle(.checkbox)

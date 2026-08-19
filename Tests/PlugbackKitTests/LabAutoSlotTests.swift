@@ -194,6 +194,43 @@ final class LabAutoSlotTests: XCTestCase {
         XCTAssertTrue(gateway.observedBundleIDs.isEmpty, "꺼진 기능이 창을 관찰하고 있으면 꺼짐이 아니다")
     }
 
+    // MARK: - 체크박스 하나 = 「이 앱을 다루나」
+
+    func testUncheckingKeepsTheSavedPlaceSoRecheckingReturnsToIt() async {
+        // 2상태로 보이지만 좌표는 남는다 — 잠깐 뺐다가 다시 켜면 예전 자리로 돌아와야 한다 (US-006 AC-2).
+        placeChrome(at: left)
+        let controller = makeController()
+        await controller.captureNow()
+
+        await controller.setTracked("com.chrome", false)
+        XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["com.chrome"], "껐던 앱이 아래 묶음으로")
+        XCTAssertEqual(controller.profile?.apps.first?.unitRect.x, 0, "좌표는 프로필에 남는다")
+
+        // 창을 다른 데로 옮겨둔 채 다시 켠다 — 지금 자리가 아니라 저장된 자리를 써야 한다
+        gateway.windowsList = [chrome(at: right)]
+        await controller.setTracked("com.chrome", true)
+
+        XCTAssertTrue(controller.untrackedApps.isEmpty)
+        XCTAssertEqual(controller.profile?.apps.first?.unitRect.x, 0, "예전 자리 그대로")
+    }
+
+    func testCheckingAnAppThatWasNeverSavedRegistersItWhereItIs() async {
+        placeChrome(at: left)
+        let controller = makeController()
+        await controller.captureNow()
+
+        gateway.runningBundleIDs = ["com.chrome", "com.linear"]
+        gateway.windowsList = [chrome(at: left),
+                               WindowInfo(id: 2, appBundleID: "com.linear", appName: "Linear", frame: right)]
+        await controller.cardOpened()
+        XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["com.linear"])
+
+        await controller.setTracked("com.linear", true)
+
+        XCTAssertTrue(controller.untrackedApps.isEmpty)
+        XCTAssertEqual(controller.profile?.apps.map(\.bundleID).sorted(), ["com.chrome", "com.linear"])
+    }
+
     // MARK: - S1 · 더 최근 슬롯이 이긴다
 
     func testMoreRecentAutoSlotWinsAndRestoresToIt() async {
