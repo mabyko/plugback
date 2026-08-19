@@ -90,7 +90,7 @@ final class ProfileSlots: ObservableObject {
             for profile in [candidates[screen.id],
                             profiles[Slot.auto.key(screen.id)],
                             profiles[Slot.manual.key(screen.id)]].compactMap({ $0 }) {
-                out.formUnion(profile.apps.map(\.bundleID))
+                out.formUnion(profile.apps.filter(\.isEnabled).map(\.bundleID))
             }
         }
         return Array(out)
@@ -111,7 +111,10 @@ final class ProfileSlots: ObservableObject {
         let now = Date()
         for screen in screens {
             let key = Slot.manual.key(screen.id)
-            var merged = CaptureEngine.capture(windows: windows, on: screen, merging: profiles[key])
+            // 체크 해제한 앱의 창은 넘기지 않는다 — 「저장하지 않고 감지하지 않는다」가 해제의 뜻이다.
+            // 프로필 항목과 좌표는 그대로 남는다(병합) — 다시 켜면 그 자리로 돌아온다 (US-006 AC-2).
+            var merged = CaptureEngine.capture(windows: kept(windows, for: key), on: screen,
+                                               merging: profiles[key])
             merged.fingerprint = screen.fingerprint
             merged.savedAt = now
             profiles[key] = merged
@@ -154,7 +157,8 @@ final class ProfileSlots: ObservableObject {
         let bases = bases(for: screens)
         for screen in screens {
             guard let base = bases[screen.id] else { continue }
-            var next = CaptureEngine.capture(windows: windows, on: screen, merging: base)
+            var next = CaptureEngine.capture(windows: kept(windows, for: Slot.manual.key(screen.id)),
+                                             on: screen, merging: base)
             next.fingerprint = screen.fingerprint
             candidates[screen.id] = next
         }
@@ -184,15 +188,23 @@ final class ProfileSlots: ObservableObject {
     @discardableResult
     func confirmAll() -> Bool { confirm(Set(candidates.keys)) }
 
-    /// 대상 앱 편집(체크 해제·삭제)은 **카드에 보이는 슬롯**을 고친다.
-    /// 목록은 이긴 슬롯의 것인데 수정이 수동 슬롯으로 가면 보이는 것과 고쳐지는 것이 어긋난다
-    /// (체크를 껐는데 그대로 복원되는 증상). 창 위치를 건드리지 않으므로 위 안전장치는 유지된다.
+    /// 대상 앱 편집 — 체크 켜고 끄기, 프로필에서 삭제.
+    ///
+    /// **두 슬롯과 후보에 모두 적용한다.** 체크 상태와 명부는 슬롯마다 다를 이유가 없다 —
+    /// 한쪽만 고치면 이기는 슬롯이 바뀌는 순간 되살아난다. (체크를 껐는데 자동 슬롯엔
+    /// 켜진 채 남아 수집이 계속 따라가던 버그가 이것이었다.)
+    ///
+    /// 창 위치는 건드리지 않으므로 「자동은 자동 슬롯만, 사람은 수동 슬롯만 쓴다」는 유지된다.
     func edit(screenID: String, _ change: (inout Profile) -> Void) {
-        guard let slot = source(for: screenID)?.slot else { return }
-        let key = slot.key(screenID)
-        guard var profile = profiles[key] else { return }
-        change(&profile)
-        profiles[key] = profile
+        for key in [Slot.manual.key(screenID), Slot.auto.key(screenID)] {
+            guard var profile = profiles[key] else { continue }
+            change(&profile)
+            profiles[key] = profile
+        }
+        if var candidate = candidates[screenID] {
+            change(&candidate)
+            candidates[screenID] = candidate
+        }
         persist()
     }
 
@@ -208,6 +220,13 @@ final class ProfileSlots: ObservableObject {
     func dismissTrouble() { trouble = nil }
 
     // MARK: - 내부
+
+    /// 그 슬롯에서 체크 해제된 앱의 창을 걸러낸다.
+    private func kept(_ windows: [WindowInfo], for key: String) -> [WindowInfo] {
+        let disabled = Set((profiles[key]?.apps.filter { !$0.isEnabled } ?? []).map(\.bundleID))
+        guard !disabled.isEmpty else { return windows }
+        return windows.filter { !disabled.contains($0.appBundleID) }
+    }
 
     /// 화면별 수집 바탕 — 후보가 있으면 후보, 없으면 자동 슬롯, 그것도 없으면 수동 슬롯.
     private func bases(for screens: [ScreenInfo]) -> [String: Profile] {
