@@ -82,6 +82,31 @@ final class DisplayWatcherTests: XCTestCase {
         XCTAssertEqual(calls, 1) // 억제가 정상 동작까지 막지 않는다
     }
 
+    func testLockedConnectionIsDeferredUntilUnlock() async {
+        // 덮개를 열며 꽂는 흐름: 잠금과 잠자기 억제가 겹쳐도 그 회차를 버리지 않는다 (F-01.3)
+        let provider = FakeScreenProvider()
+        provider.screensList = [builtin]
+        var calls = 0
+        var locked = true
+        let watcher = DisplayWatcher(provider: provider, debounceInterval: 0.02,
+                                     wakeSuppressionInterval: 10, isLocked: { locked }) { calls += 1 }
+
+        watcher.systemDidWake()
+        provider.screensList = [builtin, ext1]
+        watcher.screenParametersChanged()
+        await wait(0.06)
+        XCTAssertEqual(calls, 0) // 잠긴 동안에는 복원하지 않는다
+
+        locked = false
+        watcher.screenDidUnlock()
+        await wait(0.06)
+        XCTAssertEqual(calls, 1) // 억제 창 한가운데여도 미뤄둔 회차는 소비된다
+
+        watcher.screenDidUnlock() // 두 번째 해제는 소비할 회차가 없다 (US-009 AC-3)
+        await wait(0.06)
+        XCTAssertEqual(calls, 1)
+    }
+
     func testDisconnectThenReconnectFires() async {
         // 진짜 뽑았다 꽂기: 안정화가 두 번 일어나면 복귀는 '새 추가'다 (US-001, US-003 AC-2)
         let provider = FakeScreenProvider()
