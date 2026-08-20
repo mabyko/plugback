@@ -25,6 +25,9 @@ struct MenuBarCard: View {
 // 액션·목록의 상하 순서는 미결(프로토타입 A/B) — M5에서 결정. 지금은 A(목록 위) 순서.
 private struct Card: View {
     @ObservedObject var controller: PlugbackController
+    /// 앱 목록의 실측 콘텐츠 높이 — ScrollView는 이상 높이를 ≈0으로 보고해
+    /// MenuBarExtra(.window)가 목록을 통째로 접는다. 실측으로 명시적 높이를 잡는다.
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -127,6 +130,8 @@ private struct Card: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
                 // 앱이 많으면 목록 부분만 스크롤된다 — 카드 전체가 화면을 넘지 않게.
+                // maxHeight만 두면 MenuBarExtra가 목록을 최소 높이로 접어 아무것도 안 보인다 —
+                // 콘텐츠 실측 높이로 명시적 높이를 잡고, 캡(320)을 넘을 때만 스크롤한다.
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 12) {
                         let titles = CardPresentation.sectionTitles(names: sections.map(\.name))
@@ -135,8 +140,9 @@ private struct Card: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
                 }
-                .frame(maxHeight: 320)
+                .frame(height: min(max(listHeight, 1), 320))
             }
         }
     }
