@@ -21,7 +21,7 @@ verification; no signed release yet. Design documents live in
 
 ## Build from source
 
-Requires macOS 13+ and Xcode 15+. There is no signed release yet, so building
+Requires macOS 13+ and Xcode 16+. There is no signed release yet, so building
 it yourself is the only way to run it.
 
 ```sh
