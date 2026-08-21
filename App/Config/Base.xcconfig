@@ -6,6 +6,10 @@
 //
 //   PLUGBACK_BUNDLE_ID = com.example.plugback.<github핸들>
 //   PLUGBACK_BUNDLE_ID[config=Debug] = com.example.plugback.<github핸들>.dev
+//   DEVELOPMENT_TEAM = <자기 팀 ID>
+//
+// 서명 팀도 여기가 아니라 Local.xcconfig에 둔다. Xcode Signing UI에서 팀을 고르면
+// project.pbxproj에 기록되므로, 그 줄은 커밋 전에 되돌린다.
 //
 PLUGBACK_BUNDLE_ID = forked.plugback.local
 
