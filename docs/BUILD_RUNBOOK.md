@@ -13,7 +13,7 @@
 | 항목    | 값                                       |
 | ----- | --------------------------------------- |
 | macOS | 13 이상 (`LSMinimumSystemVersion`)        |
-| Xcode | 15 이상. `xcode-select -p`가 Xcode를 가리킬 것        |
+| Xcode | 16 이상. `xcode-select -p`가 Xcode를 가리킬 것        |
 | 하드웨어  | 외장 화면 1대. 이 제품의 동작은 외장 화면 없이는 확인할 수 없다  |
 
 
