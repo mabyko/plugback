@@ -16,7 +16,8 @@ struct MenuBarCard: View {
                 PermissionOnboarding(recheck: { controller.checkAuthorization() })
             }
         }
-        .frame(width: 296)
+        .frame(width: 320)
+        .tint(.orange)
         // 카드를 열 때마다 권한·화면·프로필을 재확인한다 (US-010 AC-3)
         .onAppear { Task { await controller.cardOpened() } }
     }
@@ -40,8 +41,14 @@ private struct Card: View {
                 Divider()
                 zone {
                     // UUID는 맞는데 지문이 다름 — 잘못된 화면에 옮기는 대신 아무것도 안 했다 (F-01.4)
-                    Text("⚠ 화면 정보가 저장 당시와 달라 복원하지 않았습니다.\n지금 배치가 맞다면 저장을 다시 눌러 갱신하세요.")
-                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                        Text("화면 정보가 저장 당시와 달라 복원하지 않았습니다.\n지금 배치가 맞다면 저장을 다시 눌러 갱신하세요.")
+                            .foregroundStyle(.primary)
+                    }
+                    .font(.system(size: 12))
                 }
             }
             // 연결된 모든 화면의 결과를 합산한다 — 두 번째 화면의 실패 사유도 여기서 보인다.
@@ -62,15 +69,25 @@ private struct Card: View {
     // 빈 상태에서도 카드는 비지 않는다 — 문구는 CardPresentation의 것, 여기는 배치와 색뿐
     private var header: some View {
         zone {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(spacing: 8) {
+                Image(systemName: "display")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
                 Text(CardPresentation.headerTitle(for: controller.screenPresence))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 if let badge = CardPresentation.headerBadge(for: controller.screenPresence,
                                                            hasProfile: controller.hasRestorableProfile) {
                     Text(badge.text)
-                        .font(.system(size: 11))
-                        .foregroundStyle(badge.highlighted ? Color.orange : Color.secondary)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(badge.highlighted ? Color.primary : Color.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            badge.highlighted ? Color.orange.opacity(0.16) : Color.secondary.opacity(0.10),
+                            in: Capsule()
+                        )
                 }
             }
         }
@@ -82,8 +99,13 @@ private struct Card: View {
             VStack(alignment: .leading, spacing: 4) {
                 switch notice {
                 case .corruptionBackedUp(let backupURL):
-                    Text("프로필 파일이 손상되어 초기화했습니다")
-                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    HStack(spacing: 7) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                        Text("프로필 파일이 손상되어 초기화했습니다")
+                    }
+                    .font(.system(size: 12))
                     HStack(spacing: 8) {
                         Button("백업 파일 보기") {
                             NSWorkspace.shared.activateFileViewerSelecting([backupURL])
@@ -92,8 +114,13 @@ private struct Card: View {
                     }
                     .font(.system(size: 11))
                 case .unreadable:
-                    Text("프로필 파일을 읽지 못해 이번 실행에서는 저장하지 않습니다.\n파일을 지키기 위해 덮어쓰기를 막았습니다 — 재시작하면 다시 시도합니다.")
-                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                        Text("프로필 파일을 읽지 못해 이번 실행에서는 저장하지 않습니다.\n파일을 지키기 위해 덮어쓰기를 막았습니다 — 재시작하면 다시 시도합니다.")
+                    }
+                    .font(.system(size: 12))
                     Button("확인") { controller.dismissStoreNotice() }
                         .font(.system(size: 11))
                 }
@@ -107,14 +134,25 @@ private struct Card: View {
                 let moved = results.map(\.movedCount).reduce(0, +)
                 let skipped = results.map(\.skippedCount).reduce(0, +)
                 let failed = results.map(\.failedCount).reduce(0, +)
-                Text("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
-                    .font(.system(size: 12)).monospacedDigit()
+                HStack(spacing: 7) {
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                    Text("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
+                        .monospacedDigit()
+                }
+                .font(.system(size: 12, weight: .medium))
                 // 건너뜀·실패는 이유를 보여준다 — "왜 안 옮겨졌지?"의 유일한 답 (US-008).
                 // 모든 화면의 결과를 편평하게 — 같은 앱은 중복 제거(F-01.6)로 한 화면에만 온다.
                 ForEach(results, id: \.screenID) { result in
                     ForEach(result.entries.filter { $0.outcome != .moved }, id: \.bundleID) { entry in
-                        Text("⚠ \(entry.displayName) — \(CardPresentation.describe(entry.outcome))")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            Image(systemName: "exclamationmark.circle")
+                                .accessibilityHidden(true)
+                            Text("\(entry.displayName) — \(CardPresentation.describe(entry.outcome))")
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -204,10 +242,21 @@ private struct Card: View {
         zone {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Button("💾 지금 레이아웃 저장") { Task { await controller.captureNow() } }
+                    Button { Task { await controller.captureNow() } } label: {
+                        Label("지금 레이아웃 저장", systemImage: "tray.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
                         .disabled(!controller.isConnected || controller.isRestoring)
                     // 어느 화면에든 프로필이 있으면 복원할 수 있다 — 첫 화면만 보던 판정은 뒷 화면을 잠갔다
-                    Button("⚡ 지금 레이아웃 복원") { Task { await controller.restoreNow() } }
+                    Button { Task { await controller.restoreNow() } } label: {
+                        Label("지금 레이아웃 복원", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                            .foregroundStyle(Color.black.opacity(0.82))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
                         .disabled(!controller.isConnected || !controller.hasRestorableProfile || controller.isRestoring)
                 }
                 if let count = controller.lastCaptureCount {
@@ -245,7 +294,7 @@ private struct Card: View {
     private func zone(@ViewBuilder _ content: () -> some View) -> some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14).padding(.vertical, 10)
+            .padding(.horizontal, 16).padding(.vertical, 12)
     }
 }
 
@@ -257,7 +306,7 @@ private struct AppRow: View {
     let remove: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Toggle(isOn: Binding(get: { app.isEnabled }, set: setTracked)) {
                 Text(app.displayName).font(.system(size: 12))
             }
@@ -273,6 +322,7 @@ private struct AppRow: View {
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
         }
+        .padding(.vertical, 1)
     }
 
     @ViewBuilder private func dot(for prediction: RestorePrediction) -> some View {
@@ -290,9 +340,11 @@ private struct SettingsButton: View {
         if #available(macOS 14.0, *) {
             ModernSettingsButton()
         } else {
-            Button("설정") {
+            Button {
                 NSApp.activate(ignoringOtherApps: true)
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            } label: {
+                Label("설정", systemImage: "gearshape")
             }
             .font(.system(size: 12))
         }
@@ -304,9 +356,11 @@ private struct ModernSettingsButton: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        Button("설정") {
+        Button {
             NSApp.activate(ignoringOtherApps: true)
             openSettings()
+        } label: {
+            Label("설정", systemImage: "gearshape")
         }
         .font(.system(size: 12))
     }
@@ -317,15 +371,23 @@ private struct PermissionOnboarding: View {
     let recheck: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "display")
-                .font(.system(size: 28)).foregroundStyle(.secondary)
+        VStack(spacing: 12) {
+            ZStack {
+                Circle().fill(Color.orange.opacity(0.14))
+                Image(systemName: "display")
+                    .font(.system(size: 25, weight: .medium))
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 52, height: 52)
+            .accessibilityHidden(true)
             Text("손쉬운 사용 권한이 필요합니다")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
             Text("창을 읽고 옮기려면 이 권한 하나만 필요합니다.\n화면 기록 권한은 요구하지 않습니다.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("시스템 설정 열기") { PermissionGate.requestPermission() }
+            Button { PermissionGate.requestPermission() } label: {
+                Label("시스템 설정 열기", systemImage: "gearshape")
+            }
                 .keyboardShortcut(.defaultAction)
             HStack {
                 Button("다시 확인") { recheck() }.font(.system(size: 12))
@@ -333,6 +395,6 @@ private struct PermissionOnboarding: View {
                 Button("종료") { NSApp.terminate(nil) }.font(.system(size: 12))
             }
         }
-        .padding(16)
+        .padding(20)
     }
 }
