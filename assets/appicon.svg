@@ -1,14 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Plugback 앱 아이콘 — 맥북(화면 + 하판 쐐기) 위에 겹쳐 놓인 창들, 앰버 1장이 앞.
-       하판 쐐기는 hero.svg의 맥북과 같은 도형이다. 악센트는 전기 앰버 1색. -->
-  <rect x="70" y="70" width="884" height="884" rx="200" fill="#26262A"/>
-  <!-- 창 3장 — 뒤 회색 2장은 흰색 저투명도(겹침이 그대로 보인다), 앞 1장만 앰버 -->
-  <rect x="608" y="363" width="178" height="162" rx="20" fill="#F5F5F7" opacity="0.16" transform="rotate(8 697 444)"/>
-  <rect x="211" y="373" width="251" height="177" rx="22" fill="#F5A200" transform="rotate(-7 336 461)"/>
-  <rect x="274" y="436" width="355" height="178" rx="22" fill="#F5F5F7" opacity="0.13" transform="rotate(-2 451 525)"/>
-  <!-- 맥북: 화면 테두리 + 하판 -->
-  <rect x="182" y="266" width="660" height="420" rx="40" stroke="#F5F5F7" stroke-width="26" fill="none"/>
-  <!-- 노치 — 상단 베젤에서 내려온 탭 (맥북임을 밝히는 유일한 디테일) -->
-  <path d="M450 266 h124 v20 a12 12 0 0 1 -12 12 h-100 a12 12 0 0 1 -12 -12 z" fill="#F5F5F7"/>
-  <path d="M127 712 h770 l-47 46 h-676 z" fill="#F5F5F7" opacity="0.85"/>
+  <!-- Plugback 앱 아이콘 — 저장된 자리에 반듯하게 놓인 창 하나.
+       겹침과 이동 표현을 덜어 16pt에서도 화면·창·맥북 실루엣만 남긴다. -->
+  <rect x="64" y="64" width="896" height="896" rx="220" fill="#202124"/>
+
+  <!-- 맥북 화면 -->
+  <rect x="174" y="238" width="676" height="472" rx="84" fill="#F4F4F6"/>
+  <rect x="202" y="266" width="620" height="416" rx="58" fill="#202124"/>
+  <path d="M438 238h148v24a18 18 0 0 1-18 18H456a18 18 0 0 1-18-18z" fill="#F4F4F6"/>
+
+  <!-- 움직이는 대상은 앰버 창 하나뿐이다 -->
+  <rect x="270" y="350" width="360" height="240" rx="46" fill="#FFB000"/>
+
+  <!-- 하판 -->
+  <path d="M132 736h760l-70 76H202z" fill="#F4F4F6" opacity="0.92"/>
 </svg>
