@@ -76,6 +76,27 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.dotLabel(for: .willSkip(.minimized)), "최소화")
     }
 
+    func testSpaceGroupLabelsUseStableLocalSpaceNumber() {
+        let current = PlugbackController.SpaceGroup.Kind.regular(number: 1, isCurrent: true)
+        let inactive = PlugbackController.SpaceGroup.Kind.regular(number: 2, isCurrent: false)
+        let unknown = PlugbackController.SpaceGroup.Kind.regular(number: 3, isCurrent: nil)
+
+        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: current), "Space 1")
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: current), "현재")
+        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: inactive), "Space 2")
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: inactive), "방문 시 복원")
+        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: unknown), "Space 3")
+        XCTAssertNil(CardPresentation.spaceGroupStatus(for: unknown))
+        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .fullscreen), "전체 화면")
+        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .unresolved), "Space 확인 필요")
+
+        XCTAssertNil(CardPresentation.prediction(.willSkip(.noWindow), in: inactive))
+        XCTAssertEqual(
+            CardPresentation.prediction(.willSkip(.appNotRunning), in: inactive),
+            .willSkip(.appNotRunning)
+        )
+    }
+
     func testHeaderTitleForThreePresences() {
         // 빈 상태에서도 카드는 비지 않는다 (ARCHITECTURE 고정 결정)
         XCTAssertEqual(CardPresentation.headerTitle(for: .connected(screen, count: 1)), "LG UltraFine 27")

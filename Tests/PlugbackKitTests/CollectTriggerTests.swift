@@ -22,7 +22,7 @@ private final class FakeMoveSource: WindowMoveSource, @unchecked Sendable {
 }
 
 /// 수집 트리거를 자기 인터페이스에서 검증한다.
-/// 신호원이 둘이라는 사실을 이 모듈이 덮는다 — 쓰는 쪽은 「수집할 때가 됐다」 하나만 안다.
+/// 여러 신호원이 있다는 사실을 이 모듈이 덮는다 — 쓰는 쪽은 「수집할 때가 됐다」 하나만 안다.
 @MainActor
 final class CollectTriggerTests: XCTestCase {
     private func wait(_ seconds: TimeInterval = 0.1) async {
@@ -97,7 +97,7 @@ final class CollectTriggerTests: XCTestCase {
         XCTAssertEqual(source.registrations, 0, "시작하지 않은 트리거가 관찰을 걸면 안 된다")
     }
 
-    func testStopReleasesBothSources() async {
+    func testStopReleasesAllSources() async {
         let source = FakeMoveSource()
         var collects = 0
         let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { collects += 1 }
@@ -138,5 +138,19 @@ final class CollectTriggerTests: XCTestCase {
         await wait()
         XCTAssertEqual(collects, 1)
         await trigger.stop()
+    }
+
+    func testMissionControlCloseReachesTheCollectCallbackOnce() async {
+        var collects = 0
+        let watcher = MissionControlWatcher(settleDelay: 0) { collects += 1 }
+
+        watcher.treeChanged(isOpen: false)
+        watcher.treeChanged(isOpen: true)
+        watcher.treeChanged(isOpen: true)
+        watcher.treeChanged(isOpen: false)
+        watcher.treeChanged(isOpen: false)
+        await wait()
+
+        XCTAssertEqual(collects, 1)
     }
 }

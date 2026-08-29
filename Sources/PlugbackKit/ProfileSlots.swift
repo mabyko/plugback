@@ -21,11 +21,18 @@ enum SpaceBlockReason: Equatable, Sendable {
 
 enum SpaceBinding: Equatable, Sendable {
     case regular(SpaceHint)
+    /// 이 화면에서 single native fullscreen으로 다시 만들 의도.
+    /// 화면은 슬롯이 이미 정하므로 별도 식별자를 중복 저장하지 않는다.
+    case fullscreen
     case unresolved(SpaceBlockReason)
 }
 
 struct SlotSpaceOverlay: Equatable, Sendable {
     var byBundle: [String: SpaceBinding] = [:]
+    /// 이 화면에 속해야 하는 식별 가능한 일반 Space 전체. 앱이 하나도 없어도 남는다.
+    var regularSpaces: [SpaceHint] = []
+
+    var isEmpty: Bool { byBundle.isEmpty && regularSpaces.isEmpty }
 
     mutating func keepOnly(_ bundleIDs: Set<String>) {
         byBundle = byBundle.filter { bundleIDs.contains($0.key) }
@@ -123,13 +130,9 @@ final class ProfileSlots: ObservableObject {
         }
     }
 
-    /// 수집·관찰이 따라갈 대상 앱. 수집 열거와 이동 관찰이 **같은 집합**을 써야 한다 —
-    /// 어긋나면 관찰은 되는데 수집이 안 되는 앱이 생긴다.
-    ///
-    /// **명부는 합집합이고, 좌표 바탕(`bases`)은 우선순위다.** 한 값으로 답하면
-    /// 수동 저장으로 갓 등록한 앱이 자동 슬롯 명부에 영영 못 들어간다 — 수집이 그 앱을
-    /// 열거하지 않으니 후보에 안 생기고, 확정이 더 새 시각으로 자동 슬롯을 덮어 그 앱을 잃는다.
-    /// 합집합이어도 「수집은 새 앱을 등록하지 않는다」는 유지된다 — 어느 슬롯엔가 이미 있는 앱들이다.
+    /// 창 이동 observer가 따라갈 기존 대상 앱. 수집 자체는 현재 표준 창 전체를 읽으므로
+    /// 처음 본 앱은 Space 방문·앱 전환 때 등록되고, 그다음 이동부터 이 명부로 관찰된다.
+    /// 명부는 candidate/auto/manual 합집합이다 — 소스가 바뀌어도 관찰 대상을 잃지 않는다.
     func targets(for screens: [ScreenInfo]) -> [String] {
         var out = Set<String>()
         for screen in screens {
@@ -152,12 +155,17 @@ final class ProfileSlots: ObservableObject {
     /// Space-aware 경로용 pair. profile과 overlay는 반드시 같은 슬롯에서 나온다.
     func resolvedWithSpaces(for screens: [ScreenInfo]) -> [String: ResolvedProfile] {
         screens.reduce(into: [String: ResolvedProfile]()) { out, screen in
-            guard let found = source(for: screen.id) else { return }
-            out[screen.id] = ResolvedProfile(
-                profile: found.profile,
-                overlay: overlays[found.slot.key(screen.id)]
-            )
+            out[screen.id] = resolvedWithSpaces(for: screen.id)
         }
+    }
+
+    /// 카드처럼 ScreenInfo가 없어도 저장 화면 하나의 같은-slot pair를 읽는 경로.
+    func resolvedWithSpaces(for screenID: String) -> ResolvedProfile? {
+        guard let found = source(for: screenID) else { return nil }
+        return ResolvedProfile(
+            profile: found.profile,
+            overlay: overlays[found.slot.key(screenID)]
+        )
     }
 
     // MARK: - 쓰기
@@ -238,18 +246,37 @@ final class ProfileSlots: ObservableObject {
     }
 
     /// 수집 — 지금 배치를 메모리 후보에 담는다. **파일에는 닿지 않는다.**
-    /// 프로필에 이미 있는 앱만 따라간다. 새 앱 등록은 수동 저장의 몫이다.
+    /// 자동 슬롯이 켜진 동안 방문한 외장 Space의 새 앱도 candidate에 등록한다.
+    /// 체크 해제된 앱과 복원 pending 앱은 갱신하지 않는다.
     func collect(
-        windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil
+        windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil,
+        excluding excludedBundleIDs: Set<String> = []
     ) {
         let bases = spaceBases(for: screens)
+        var collected = false
         for screen in screens {
-            guard let base = bases[screen.id] else { continue }
-            let selected = kept(windows, for: Slot.manual.key(screen.id))
+            let base = bases[screen.id] ?? ResolvedProfile(
+                profile: Profile(screenID: screen.id, screenName: screen.name),
+                overlay: SlotSpaceOverlay()
+            )
+            let disabled = Set(base.profile.apps.filter { !$0.isEnabled }.map(\.bundleID))
+            let updating = Set(windows.map(\.appBundleID))
+                .subtracting(disabled)
+                .subtracting(excludedBundleIDs)
+            let presentElsewhere = Set(windows.lazy
+                .filter { !$0.isMinimized }
+                .map(\.appBundleID))
+                .subtracting(Set(windows.lazy
+                    .filter { screen.contains($0) }
+                    .map(\.appBundleID)))
+                .subtracting(disabled)
+                .subtracting(excludedBundleIDs)
+            let selected = windows.filter { updating.contains($0.appBundleID) }
             var next: Profile
             if let snapshot {
                 let captured = CaptureEngine.capture(
-                    windows: selected, on: screen, merging: base, snapshot: snapshot
+                    windows: windows, on: screen, merging: base, snapshot: snapshot,
+                    updating: updating
                 )
                 next = captured.profile
                 setCandidateOverlay(captured.overlay, for: screen.id)
@@ -258,10 +285,35 @@ final class ProfileSlots: ObservableObject {
                                              merging: base.profile)
                 candidateOverlays.removeValue(forKey: screen.id)
             }
+            next.apps.removeAll { presentElsewhere.contains($0.bundleID) }
+            var overlay = candidateOverlays[screen.id] ?? SlotSpaceOverlay()
+            overlay.keepOnly(Set(next.apps.map(\.bundleID)))
+
+            // 비활성 native fullscreen은 AX 표준 창 열거에 없으므로 WindowServer가 확실히
+            // 식별한 후보로 보충한다. 같은 앱의 fullscreen이 둘이면 앱 단위 프로필로는 모호하다.
+            let fullscreen = snapshot?.fullscreenCandidates.filter {
+                $0.screenID == screen.id
+                    && !disabled.contains($0.bundleID)
+                    && !excludedBundleIDs.contains($0.bundleID)
+            } ?? []
+            let counts = Dictionary(grouping: fullscreen, by: \.bundleID)
+            for candidate in fullscreen where counts[candidate.bundleID]?.count == 1 {
+                if let index = next.apps.firstIndex(where: { $0.bundleID == candidate.bundleID }) {
+                    next.apps[index].displayName = candidate.displayName
+                } else {
+                    next.apps.append(TargetApp(
+                        bundleID: candidate.bundleID, displayName: candidate.displayName,
+                        unitRect: UnitRect(screen.frame, in: screen.frame)
+                    ))
+                }
+                overlay.byBundle[candidate.bundleID] = .fullscreen
+            }
+            setCandidateOverlay(overlay.isEmpty ? nil : overlay, for: screen.id)
             next.fingerprint = screen.fingerprint
             candidates[screen.id] = next
+            collected = true
         }
-        lastCollectedAt = Date()
+        if collected { lastCollectedAt = Date() }
     }
 
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다.
@@ -344,13 +396,9 @@ final class ProfileSlots: ObservableObject {
                 out[screen.id] = ResolvedProfile(
                     profile: candidate, overlay: candidateOverlays[screen.id]
                 )
-            } else if let auto = profiles[Slot.auto.key(screen.id)] {
+            } else if let source = source(for: screen.id) {
                 out[screen.id] = ResolvedProfile(
-                    profile: auto, overlay: overlays[Slot.auto.key(screen.id)]
-                )
-            } else if let manual = profiles[Slot.manual.key(screen.id)] {
-                out[screen.id] = ResolvedProfile(
-                    profile: manual, overlay: overlays[Slot.manual.key(screen.id)]
+                    profile: source.profile, overlay: overlays[source.slot.key(screen.id)]
                 )
             }
         }
@@ -419,11 +467,15 @@ final class ProfileSlots: ObservableObject {
     }
 
     private func setOverlay(_ overlay: SlotSpaceOverlay?, for key: String) {
-        if let overlay { overlays[key] = overlay } else { overlays.removeValue(forKey: key) }
+        if let overlay, !overlay.isEmpty {
+            overlays[key] = overlay
+        } else {
+            overlays.removeValue(forKey: key)
+        }
     }
 
     private func setCandidateOverlay(_ overlay: SlotSpaceOverlay?, for screenID: String) {
-        if let overlay {
+        if let overlay, !overlay.isEmpty {
             candidateOverlays[screenID] = overlay
         } else {
             candidateOverlays.removeValue(forKey: screenID)

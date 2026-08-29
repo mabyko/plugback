@@ -8,14 +8,17 @@ enum AppServices {
         let ax = AXWindowGateway()
 #if DEBUG
         let spaceReader: SpaceReading? = SpaceReader()
+        let spaceRelocator: SpaceRelocating? = MissionControlSpaceRelocator()
 #else
         let spaceReader: SpaceReading? = nil
+        let spaceRelocator: SpaceRelocating? = nil
 #endif
         let controller = PlugbackController(gateway: ax,
                                             screenProvider: SystemScreenProvider(),
                                             store: ProfileStore(),
                                             moveSource: ax,
-                                            spaceReader: spaceReader)
+                                            spaceReader: spaceReader,
+                                            spaceRelocator: spaceRelocator)
         controller.authorizationCheck = { PermissionGate.isTrusted }
         controller.checkAuthorization() // 첫 카드가 열리기 전에도 상태가 맞도록
         controller.startWatching()

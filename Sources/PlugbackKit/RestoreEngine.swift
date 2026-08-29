@@ -28,10 +28,11 @@ public enum RestorePrediction: Equatable, Sendable {
     case willSkip(SkipReason)
 }
 
-/// Space-aware 경로의 순수 선택 결과. 이동과 pending 수명은 P4 controller의 일이다.
+/// Space-aware 경로의 순수 선택 결과. 이동과 pending 수명은 controller의 일이다.
 enum SpaceWindowSelection: Equatable, Sendable {
     case legacy
     case window(WindowInfo)
+    case enterFullscreen(WindowInfo)
     case inactive
     case unavailable
     case fullscreen
@@ -63,6 +64,10 @@ public enum RestoreEngine {
         let hint: SpaceHint
         switch binding {
         case .regular(let value): hint = value
+        case .fullscreen:
+            return selectFullscreenWindow(
+                bundleID: bundleID, on: screen, windows: windows, snapshot: snapshot
+            )
         case .unresolved(.fullscreen): return .fullscreen
         case .unresolved: return .unavailable
         }
@@ -90,27 +95,67 @@ public enum RestoreEngine {
         guard boundSpace.isCurrent else { return .inactive }
         guard !candidates.isEmpty else { return .unavailable }
 
-        var memberships: [SpaceRuntimeID] = []
-        for window in candidates {
-            guard let windowID = window.windowServerID,
-                  let ids = snapshot.membershipsByWindowServerID[windowID],
-                  ids.count == 1,
-                  let runtimeID = ids.first else { return .unavailable }
-            let joinedSpaces = snapshot.displays.flatMap(\.spaces).filter {
-                $0.runtimeID == runtimeID
-            }
-            guard joinedSpaces.count == 1, let joinedSpace = joinedSpaces.first else {
-                return .unavailable
-            }
-            switch joinedSpace.kind {
-            case .fullscreen: return .fullscreen
-            case .unknown: return .unavailable
-            case .regular: memberships.append(runtimeID)
-            }
+        guard candidates.count == 1, let window = candidates.first,
+              let windowID = window.windowServerID,
+              let memberships = snapshot.membershipsByWindowServerID[windowID],
+              memberships.count == 1, let runtimeID = memberships.first else {
+            return .unavailable
         }
-        guard Set(memberships) == [boundSpace.runtimeID], candidates.count == 1,
-              let window = candidates.first else { return .unavailable }
+        let joinedSpaces = snapshot.displays.flatMap(\.spaces).filter {
+            $0.runtimeID == runtimeID
+        }
+        guard joinedSpaces.count == 1, let joinedSpace = joinedSpaces.first else {
+            return .unavailable
+        }
+        switch joinedSpace.kind {
+        case .fullscreen: return .fullscreen
+        case .unknown: return .unavailable
+        case .regular:
+            // 분리 후 창은 다른 화면의 현재 일반 Space로 밀려난다. 목표 Space가 현재라면
+            // 그 창을 데려오는 것이 복원이고, 숨겨진 Space의 창만 건드리지 않으면 된다.
+            guard joinedSpace.isCurrent else { return .inactive }
+        }
         return .window(window)
+    }
+
+    private static func selectFullscreenWindow(
+        bundleID: String,
+        on screen: ScreenInfo,
+        windows: [WindowInfo],
+        snapshot: SpaceSnapshot?
+    ) -> SpaceWindowSelection {
+        guard let snapshot else { return .unavailable }
+        let candidates = windows.filter { $0.appBundleID == bundleID }
+        guard candidates.count == 1, let window = candidates.first else { return .unavailable }
+        guard window.fullscreenState != .unknown,
+              let windowID = window.windowServerID,
+              let memberships = snapshot.membershipsByWindowServerID[windowID],
+              memberships.count == 1, let runtimeID = memberships.first else {
+            return .unavailable
+        }
+        let locations = snapshot.displays.flatMap { display in
+            display.spaces.filter { $0.runtimeID == runtimeID }.map { (display, $0) }
+        }
+        guard locations.count == 1, let location = locations.first,
+              location.1.isCurrent else { return .inactive }
+
+        switch location.1.kind {
+        case .unknown:
+            return .unavailable
+        case .fullscreen:
+            // 두 표준 창이 같은 type 4에 있으면 Split View다. 감지만 하고 건드리지 않는다.
+            let joined = windows.filter { candidate in
+                guard let id = candidate.windowServerID else { return false }
+                return snapshot.membershipsByWindowServerID[id] == [runtimeID]
+            }
+            guard joined.count == 1, window.fullscreenState == .fullscreen else {
+                return .fullscreen
+            }
+            return location.0.screenID == screen.id ? .fullscreen : .enterFullscreen(window)
+        case .regular:
+            guard window.fullscreenState == .windowed else { return .unavailable }
+            return .enterFullscreen(window)
+        }
     }
 
     /// 연결된 외장 화면들에 각 프로필을 적용한다. 반환 시점 = 완료 시점 — 최종 결과다.
@@ -175,6 +220,9 @@ public enum RestoreEngine {
         var results: [RestoreResult] = []
         var completed: [String: Set<String>] = [:]
         var claimed = Set<String>()
+        // fullscreen 전환은 current Space와 AX 가시성을 바꾼다. 한 stable snapshot에서
+        // 둘을 연달아 조작하지 않고 다음 Space 알림의 새 snapshot으로 이어간다.
+        var attemptedFullscreenTransition = false
 
         for screen in screens.sorted(by: { $0.id < $1.id }) {
             guard let pair = resolved[screen.id] else { continue }
@@ -207,6 +255,7 @@ public enum RestoreEngine {
                 }
 
                 let outcome: RestoreResult.Outcome
+                var completesBinding = false
                 switch selectSpaceWindow(
                     bundleID: app.bundleID, in: pair, on: screen,
                     windows: windows, snapshot: snapshot
@@ -230,8 +279,16 @@ public enum RestoreEngine {
                     outcome = await restore(
                         app, window: window, on: screen, using: gateway, options: options
                     )
+                    completesBinding = outcome == .moved || outcome == .skipped(.alreadyInPlace)
+                case .enterFullscreen(let window):
+                    guard !attemptedFullscreenTransition else { continue }
+                    attemptedFullscreenTransition = true
+                    outcome = await restoreFullscreen(
+                        app, window: window, on: screen, using: gateway, options: options
+                    )
                 case .fullscreen:
                     outcome = .skipped(.fullscreen)
+                    completesBinding = true
                 case .inactive, .unavailable:
                     continue
                 }
@@ -239,8 +296,7 @@ public enum RestoreEngine {
                 result.entries.append(.init(
                     bundleID: app.bundleID, displayName: app.displayName, outcome: outcome
                 ))
-                if outcome == .moved || outcome == .skipped(.alreadyInPlace)
-                    || outcome == .skipped(.fullscreen) {
+                if completesBinding {
                     completed[screen.id, default: []].insert(app.bundleID)
                 }
             }
@@ -290,6 +346,28 @@ public enum RestoreEngine {
             }
         }
         return .failed
+    }
+
+    private static func restoreFullscreen(
+        _ app: TargetApp, window: WindowInfo, on screen: ScreenInfo,
+        using gateway: WindowGateway, options: RestoreOptions
+    ) async -> RestoreResult.Outcome {
+        if window.fullscreenState == .fullscreen {
+            guard await gateway.setFullscreen(windowID: window.id, false) else {
+                return .failed
+            }
+        }
+
+        let placement = await restore(
+            app, window: window, on: screen, using: gateway, options: options
+        )
+        guard placement == .moved || placement == .skipped(.alreadyInPlace) else {
+            return placement
+        }
+        guard await gateway.setFullscreen(windowID: window.id, true) else { return .failed }
+        // AX 상태 변화만으로 pending을 끝내지 않는다. 다음 stable Space snapshot에서
+        // 목표 화면의 single type 4로 확인돼야 controller가 binding을 완료한다.
+        return .moved
     }
 
     // MARK: - 예측 (점의 어휘) — 진실과 같은 선택 규칙

@@ -233,6 +233,35 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(controller.sections[0].profile?.apps.count, 1) // 첫 화면은 그대로
     }
 
+    func testRemovingAnUncheckedAppAllowsLaterExternalDetection() async {
+        gateway.runningBundleIDs = ["cc.ffitch.shottr"]
+        gateway.windowsList = [
+            WindowInfo(id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
+                       frame: CGRect(x: 1800, y: 100, width: 800, height: 600)),
+        ]
+        let controller = makeController()
+        await controller.captureNow()
+        await controller.setTracked("cc.ffitch.shottr", false, on: external.id)
+
+        gateway.windowsList[0] = WindowInfo(
+            id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
+            frame: CGRect(x: 100, y: 100, width: 800, height: 600)
+        )
+        await controller.cardOpened()
+        XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
+
+        await controller.removeUntrackedApp("cc.ffitch.shottr", on: external.id)
+        XCTAssertFalse(controller.profile?.apps.contains { $0.bundleID == "cc.ffitch.shottr" } ?? true)
+        XCTAssertTrue(controller.untrackedApps.isEmpty)
+
+        gateway.windowsList[0] = WindowInfo(
+            id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
+            frame: CGRect(x: 1800, y: 100, width: 800, height: 600)
+        )
+        await controller.cardOpened()
+        XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
+    }
+
     func testRestorableWhenOnlyALaterScreenHasAProfile() async {
         // 프로필이 정렬상 뒤 화면에만 있어도 복원할 수 있어야 한다 —
         // 첫 화면의 프로필만 보던 판정은 이 상황에서 복원 버튼을 잠갔다.
@@ -590,4 +619,3 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertNil(controller.lastCaptureCount)
     }
 }
-

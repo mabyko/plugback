@@ -46,6 +46,38 @@ enum CardPresentation {
         }
     }
 
+    // MARK: - Space 그룹 — 번호는 외장 화면 안에서 저장된 일반 Space의 로컬 순서다
+
+    static func spaceGroupTitle(for kind: PlugbackController.SpaceGroup.Kind) -> String {
+        switch kind {
+        case .regular(let number, _):
+            return "Space \(number)"
+        case .fullscreen:
+            return "전체 화면"
+        case .unresolved:
+            return "Space 확인 필요"
+        }
+    }
+
+    static func spaceGroupStatus(for kind: PlugbackController.SpaceGroup.Kind) -> String? {
+        guard case .regular(_, let isCurrent) = kind else { return nil }
+        if isCurrent == true { return "현재" }
+        if isCurrent == false { return "방문 시 복원" }
+        return nil
+    }
+
+    /// 비활성 Space가 AX에서 숨긴 창을 「창 없음」으로 오해해 표시하지 않는다.
+    static func prediction(
+        _ prediction: RestorePrediction?, in kind: PlugbackController.SpaceGroup.Kind
+    ) -> RestorePrediction? {
+        switch kind {
+        case .regular(_, true), .unresolved:
+            return prediction
+        case .regular, .fullscreen:
+            return prediction == .willSkip(.appNotRunning) ? prediction : nil
+        }
+    }
+
     // MARK: - 헤더 — 화면 상태 3상태 (빈 상태에서도 카드는 비지 않는다)
 
     static func headerTitle(for presence: ScreenPresence) -> String {

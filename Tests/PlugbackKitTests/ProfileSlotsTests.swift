@@ -136,6 +136,20 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertFalse(slots.hasPendingCollect, "확정하면 기다리는 변경이 없다")
     }
 
+    func testCollectCanStartAnAutoSlotFromVisibleApps() {
+        let slots = makeSlots(lab: true)
+        slots.collect(windows: [
+            window("com.chrome", left),
+            WindowInfo(id: 2, appBundleID: "com.linear", appName: "Linear", frame: right),
+        ], on: [screen])
+
+        XCTAssertTrue(slots.confirm(["ext-1"]))
+        XCTAssertEqual(
+            slots.source(for: "ext-1")?.profile.apps.map(\.bundleID).sorted(),
+            ["com.chrome", "com.linear"]
+        )
+    }
+
     func testConfirmDoesNothingWhileLabIsOff() {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])

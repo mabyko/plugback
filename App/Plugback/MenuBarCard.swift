@@ -196,14 +196,14 @@ private struct Card: View {
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             }
             if let profile = section.profile, !profile.apps.isEmpty {
-                // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
-                ForEach(profile.apps.filter(\.isEnabled), id: \.bundleID) { app in
-                    AppRow(app: app,
-                           prediction: section.predictions[app.bundleID], // 없으면 없다고 그린다
-                           setTracked: { tracked in
-                               Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
-                           },
-                           remove: { controller.removeApp(app.bundleID, on: section.screenID) })
+                if section.spaceGroups.isEmpty {
+                    appRows(profile.apps.filter(\.isEnabled), in: section)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(section.spaceGroups) { group in
+                            spaceGroup(group, in: section)
+                        }
+                    }
                 }
             } else if controller.isConnected {
                 Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
@@ -218,6 +218,55 @@ private struct Card: View {
         }
     }
 
+    private func spaceGroup(
+        _ group: PlugbackController.SpaceGroup,
+        in section: PlugbackController.ScreenSection
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text(CardPresentation.spaceGroupTitle(for: group.kind))
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                Spacer()
+                if let status = CardPresentation.spaceGroupStatus(for: group.kind) {
+                    Text(status)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .foregroundStyle(.secondary)
+
+            if group.apps.isEmpty {
+                Text("저장된 앱 없음")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            } else {
+                appRows(group.apps, in: section, groupKind: group.kind)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func appRows(
+        _ apps: [TargetApp],
+        in section: PlugbackController.ScreenSection,
+        groupKind: PlugbackController.SpaceGroup.Kind? = nil
+    ) -> some View {
+        // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
+        ForEach(apps, id: \.bundleID) { app in
+            let rawPrediction = section.predictions[app.bundleID]
+            let prediction = groupKind.map {
+                CardPresentation.prediction(rawPrediction, in: $0)
+            } ?? rawPrediction
+            AppRow(app: app,
+                   prediction: prediction,
+                   setTracked: { tracked in
+                       Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
+                   },
+                   remove: { controller.removeApp(app.bundleID, on: section.screenID) })
+        }
+    }
+
     /// 저장하지 않는 앱 — 껐던 대상 앱과 그 화면 프로필에 없는 앱이 같은 칸에 온다.
     /// 체크박스의 뜻은 위 묶음과 같다: 「이 앱을 다루나」. 프로필 소속 여부는 내부 사정이다.
     @ViewBuilder private func untrackedRows(for section: PlugbackController.ScreenSection) -> some View {
@@ -227,13 +276,27 @@ private struct Card: View {
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.top, 2)
             ForEach(section.untrackedApps, id: \.bundleID) { app in
-                Toggle(isOn: Binding(
-                    get: { false },
-                    set: { tracked in Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) } }
-                )) {
-                    Text(app.displayName).font(.system(size: 12)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Toggle(isOn: Binding(
+                        get: { false },
+                        set: { tracked in Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) } }
+                    )) {
+                        Text(app.displayName).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                    .toggleStyle(.checkbox)
+                    if section.profile?.apps.contains(where: { $0.bundleID == app.bundleID }) == true {
+                        Spacer(minLength: 0)
+                        Button {
+                            Task { await controller.removeUntrackedApp(app.bundleID, on: section.screenID) }
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("프로필에서 삭제")
+                        .accessibilityLabel("\(app.displayName) 프로필에서 삭제")
+                    }
                 }
-                .toggleStyle(.checkbox)
             }
         }
     }

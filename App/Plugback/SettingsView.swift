@@ -78,6 +78,12 @@ struct SettingsView: View {
                          수동 저장은 영향받지 않습니다 — 끄면 자동 슬롯은 복원에 쓰이지 않습니다.
                          """)
                         .font(.caption).foregroundStyle(.secondary)
+#if DEBUG
+                    Toggle("일반 Space 자체 복원", isOn: $controller.labSpaceRelocation)
+                        .disabled(!controller.labAutoSlot)
+                    Text("저장된 일반 Space가 다른 화면에 남으면 Mission Control을 열어 외장 화면으로 되돌립니다. 자동 슬롯이 켜져 있을 때만 동작합니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+#endif
                 }
             }
             .formStyle(.grouped)

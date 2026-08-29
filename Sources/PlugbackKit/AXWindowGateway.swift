@@ -19,11 +19,15 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
     /// 창 목록 조회가 한도를 넘겼을 때 한 번만 쓰는 재시도 한도 (F-02.4의 250ms는 평시 한도다).
     /// 화면 재구성 순간의 앱은 느리다 — 실기기 측정 후 조정하는 보정 노브다.
     private let retryTimeout: TimeInterval
+    /// native fullscreen 전환 애니메이션이 끝나 AX 상태가 바뀌길 기다리는 한도.
+    private let fullscreenWaitDeadline: TimeInterval
     private let axWindowID: AXUIElementGetWindowFunction?
 
-    public init(windowWaitDeadline: TimeInterval = 3.0, retryTimeout: TimeInterval = 1.0) {
+    public init(windowWaitDeadline: TimeInterval = 3.0, retryTimeout: TimeInterval = 1.0,
+                fullscreenWaitDeadline: TimeInterval = 8.0) {
         self.windowWaitDeadline = windowWaitDeadline
         self.retryTimeout = retryTimeout
+        self.fullscreenWaitDeadline = fullscreenWaitDeadline
         let applicationServices = dlopen(
             "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
             RTLD_LAZY | RTLD_LOCAL
@@ -100,6 +104,26 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
         AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
         // 성공 반환값을 믿지 않는다 — 실제 프레임을 다시 읽는다 (F-02.3, 부록 1)
         return frame(of: element)
+    }
+
+    public func setFullscreen(windowID: Int, _ fullscreen: Bool) async -> Bool {
+        guard let element = refs[windowID] else { return false }
+        let attribute = "AXFullScreen" as CFString
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, attribute, &settable) == .success,
+              settable.boolValue,
+              AXUIElementSetAttributeValue(
+                element, attribute, fullscreen ? kCFBooleanTrue : kCFBooleanFalse
+              ) == .success else { return false }
+
+        let deadline = Date().addingTimeInterval(fullscreenWaitDeadline)
+        repeat {
+            if fullscreenState(of: element) == (fullscreen ? .fullscreen : .windowed) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        } while Date() < deadline
+        return false
     }
 
     public func unminimize(windowID: Int) async -> CGRect? {
