@@ -6,13 +6,8 @@ enum AppServices {
     static let controller: PlugbackController = {
         // 같은 어댑터가 두 인터페이스를 만족한다 — AX는 여전히 이 어댑터 안뿐이다.
         let ax = AXWindowGateway()
-#if DEBUG
         let spaceReader: SpaceReading? = SpaceReader()
         let spaceRelocator: SpaceRelocating? = MissionControlSpaceRelocator()
-#else
-        let spaceReader: SpaceReading? = nil
-        let spaceRelocator: SpaceRelocating? = nil
-#endif
         let controller = PlugbackController(gateway: ax,
                                             screenProvider: SystemScreenProvider(),
                                             store: ProfileStore(),

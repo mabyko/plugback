@@ -211,8 +211,15 @@ private struct Card: View {
             }
             // 실험실 — 이 화면의 복원 소스. 이기는 슬롯은 화면마다 다를 수 있어 섹션에 붙는다.
             if controller.labAutoSlot, let slot = section.restoreSource {
-                Text(CardPresentation.sourceLabel(slot: slot, savedAt: section.profile?.savedAt))
+                Text(CardPresentation.sourceLabel(
+                    slot: slot, savedAt: section.profile?.savedAt,
+                    pending: section.usesPendingSource
+                ))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            if !controller.labAutoSlot, section.spaceConfigurationDiffers {
+                Text(CardPresentation.manualSpaceConfigurationDifference)
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
             untrackedRows(for: section)
         }
@@ -333,7 +340,9 @@ private struct Card: View {
                 // 소스와 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
                 if controller.labAutoSlot {
                     Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
-                                                       hasPending: controller.hasPendingCollect))
+                                                       hasPending: controller.hasPendingCollect,
+                                                       spaceConfigurationChanged:
+                                                           controller.spaceConfigurationDiffers))
                         .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
             }

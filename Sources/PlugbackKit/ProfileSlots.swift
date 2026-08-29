@@ -88,9 +88,21 @@ final class ProfileSlots: ObservableObject {
         }
     }
 
-    init(store: ProfileStore, isLabEnabled: Bool) {
+    /// 수집 후보를 언제 복원에 쓰고 자동 슬롯에 기록할지 정한다.
+    @Published var updateMode: AutoSlotUpdateMode {
+        didSet {
+            guard updateMode != oldValue else { return }
+            if updateMode == .immediate { confirmAll() }
+        }
+    }
+
+    init(
+        store: ProfileStore, isLabEnabled: Bool,
+        updateMode: AutoSlotUpdateMode = .onDisconnect
+    ) {
         self.store = store
         self.isLabEnabled = isLabEnabled
+        self.updateMode = updateMode
         let outcome = store.load()
         profiles = outcome.profiles
         trouble = outcome.trouble
@@ -99,17 +111,25 @@ final class ProfileSlots: ObservableObject {
 
     // MARK: - 읽기
 
-    /// 복원 소스 판정 — **더 최근에 저장된 슬롯이 이긴다.** 저장된 "활성 슬롯"은 없다.
+    /// 복원 소스 판정 — 기본은 **더 최근에 저장된 슬롯이 이긴다.** 저장된 "활성 슬롯"은 없다.
+    /// 「복원 즉시 반영 · 분리 시 저장」에서는 현재 후보가 연결 중 복원 소스로 먼저 쓰인다.
     /// 확정은 케이블을 뽑았다는 이유로 최신이 되고, 사람이 방금 저장했으면 그쪽이 최신이다.
     /// 규칙 하나가 두 경우를 다 설명하므로 어긋날 상태가 존재하지 않는다.
     /// 동점이면 수동이 이긴다 — 후보 배열에서 앞에 두면 `max(by:)`가 그렇게 고른다.
     func source(for screenID: String) -> (slot: Slot, profile: Profile)? {
+        if usesCandidate(for: screenID), let candidate = candidates[screenID] {
+            return (.auto, candidate)
+        }
         var pool: [(Slot, Profile)] = []
         if let manual = profiles[Slot.manual.key(screenID)] { pool.append((.manual, manual)) }
         if isLabEnabled, let auto = profiles[Slot.auto.key(screenID)] { pool.append((.auto, auto)) }
         return pool
             .max { ($0.1.savedAt ?? .distantPast) < ($1.1.savedAt ?? .distantPast) }
             .map { (slot: $0.0, profile: $0.1) }
+    }
+
+    func usesCandidate(for screenID: String) -> Bool {
+        isLabEnabled && updateMode == .liveUntilDisconnect && candidates[screenID] != nil
     }
 
     /// 저장된 모든 프로필 — 연결되지 않은 화면 포함 (F-05.6, US-012 AC-1).
@@ -161,6 +181,9 @@ final class ProfileSlots: ObservableObject {
 
     /// 카드처럼 ScreenInfo가 없어도 저장 화면 하나의 같은-slot pair를 읽는 경로.
     func resolvedWithSpaces(for screenID: String) -> ResolvedProfile? {
+        if usesCandidate(for: screenID), let candidate = candidates[screenID] {
+            return ResolvedProfile(profile: candidate, overlay: candidateOverlays[screenID])
+        }
         guard let found = source(for: screenID) else { return nil }
         return ResolvedProfile(
             profile: found.profile,
@@ -313,7 +336,10 @@ final class ProfileSlots: ObservableObject {
             candidates[screen.id] = next
             collected = true
         }
-        if collected { lastCollectedAt = Date() }
+        if collected {
+            lastCollectedAt = Date()
+            if updateMode == .immediate { confirm(Set(screens.map(\.id))) }
+        }
     }
 
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다.

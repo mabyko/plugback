@@ -65,9 +65,9 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 | **무엇을 판정·변경** | 대상 앱 표준 창의 native fullscreen 상태를 읽고, 확인된 single fullscreen 복원에서만 상태를 변경 |
 | **공개 여부** | 현재 SDK의 공개 AX attribute 상수에 없는 raw 문자열이다 |
 
-**깨졌을 때의 동작** — 읽기 attribute 부재·타임아웃·타입 불일치는 `unknown`이 된다. 기존 flat 경로의 `isFullscreen` 호환값은 종전처럼 `false`지만, Space-aware 경로는 3상태 값을 직접 보고 `unknown` 창을 움직이지 않는다. 쓰기 attribute가 settable이 아니거나 값 설정·8초 안의 상태 확인이 실패하면 fullscreen 복원 결과를 실패로 남기고 pending을 유지한다. raw 값 변경만으로 성공 처리하지 않으며, 다음 stable Space snapshot에서 목표 화면의 단일 type `4` membership까지 확인해야 완료한다.
+**깨졌을 때의 동작** — 읽기 attribute 부재·타임아웃·타입 불일치는 `unknown`이 된다. 기존 flat 경로의 `isFullscreen` 호환값은 종전처럼 `false`지만, Space-aware 경로는 3상태 값을 직접 보고 `unknown` 창을 움직이지 않는다. 쓰기는 별도 「전체 화면 복원」이 ON일 때만 한다. settable이 아니거나 값 설정·8초 안의 상태 확인이 실패하면 fullscreen 복원 결과를 실패로 남기고 pending을 유지한다. raw 값 변경만으로 성공 처리하지 않으며, 다음 stable Space snapshot에서 목표 화면의 단일 type `4` membership까지 확인해야 완료한다.
 
-**공개 대체재** — 다른 앱의 현재 native fullscreen 상태를 직접 주는 공개 AX attribute는 확인되지 않았다. 공개 `kAXFullScreenButtonAttribute` 요소에 `AXPress`를 수행하는 대안은 있지만, 버튼 존재는 현재 상태가 아니고 앱별 동작과 목표 화면을 보장하지 않는다. 현재 Debug/실험실 경로는 상태를 명시할 수 있는 raw attribute 한 경로만 검증한다.
+**공개 대체재** — 다른 앱의 현재 native fullscreen 상태를 직접 주는 공개 AX attribute는 확인되지 않았다. 공개 `kAXFullScreenButtonAttribute` 요소에 `AXPress`를 수행하는 대안은 있지만, 버튼 존재는 현재 상태가 아니고 앱별 동작과 목표 화면을 보장하지 않는다. 현재 실험실 경로는 상태를 명시할 수 있는 raw attribute 한 경로만 검증한다.
 
 ---
 
@@ -115,11 +115,11 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 | `AXRemoveDesktop` | 이동 대상으로 고른 child가 실제로 제거 가능한 Space thumbnail인지 확인 |
 | `AXSelectedChildrenChanged`, `AXUIElementDestroyed` | `mc` tree를 본 Mission Control 회차가 닫힌 시점 감지 |
 
-**쓰는 곳** — `MissionControlWatcher`, `MissionControlSpaceRelocator`. watcher는 자동 슬롯이 켜진 동안 `CollectTrigger` 안에서 Mission Control 닫힘을 수집 1회로 압축한다. relocator는 `AppServices`가 Debug 빌드에서만 주입하고, 별도 「일반 Space 자체 복원」 토글이 ON일 때만 호출한다. Space 생성·삭제 action을 실행하지 않고 stable snapshot이 고른 비활성 regular thumbnail 하나에 공개 `CGEvent` mouse drag를 합성한다. 두 notification 이름 자체는 공개 AX 상수지만 Dock의 `mc` identifier와 tree 수명은 공개 계약이 아니다.
+**쓰는 곳** — `MissionControlWatcher`, `MissionControlSpaceRelocator`. watcher는 자동 슬롯이 켜진 동안 `CollectTrigger` 안에서 Mission Control 닫힘을 수집 1회로 압축한다. relocator는 `AppServices`가 주입하고, 자동 슬롯과 독립된 「일반 Space 복원」 토글이 ON일 때만 호출한다. Space 생성·삭제 action을 실행하지 않고 stable snapshot이 고른 비활성 regular thumbnail 하나에 공개 `CGEvent` mouse drag를 합성한다. 두 notification 이름 자체는 공개 AX 상수지만 Dock의 `mc` identifier와 tree 수명은 공개 계약이 아니다.
 
 **깨졌을 때의 동작** — watcher가 `mc` tree를 보지 못하거나 닫힘 notification이 오지 않으면 Mission Control 직후 수집만 빠진다. 다음 Space 방문·창 이동·앱 전환 수집은 남는다. relocator는 Mission Control이 이미 열려 있거나, raw identifier·display ID·child count·이동 대상 thumbnail action·frame 중 하나라도 snapshot과 맞지 않으면 drag 전에 `false`로 끝난다. 현재·마지막 Space처럼 제거할 수 없는 다른 thumbnail의 action은 요구하지 않는다. 입력 합성 뒤에도 성공 반환을 믿지 않는다. controller가 같은 runtime SID·kind·opaque name, 전체 Space 집합과 current 상태, 다른 regular Space의 화면 소속·상대 순서, 관찰한 window membership을 새 stable snapshot으로 검증한다. 하나라도 다르면 다음 Space를 움직이지 않고 기존 방문 기반 창 복원만 계속한다.
 
-**공개 대체재** — Space 전체를 화면 사이로 옮기는 공개 API는 없다. Apple이 제공하는 사용자 Mission Control drag를 보이는 UI 자동화로 재현하는 Debug 실험 경로다. SkyLight write, Dock 주입, SIP 변경은 사용하지 않는다.
+**공개 대체재** — Space 전체를 화면 사이로 옮기는 공개 API는 없다. Apple이 제공하는 사용자 Mission Control drag를 보이는 UI 자동화로 재현하는 실험실 경로다. SkyLight write, Dock 주입, SIP 변경은 사용하지 않는다.
 
 ---
 

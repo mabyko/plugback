@@ -60,10 +60,14 @@ enum CardPresentation {
     }
 
     static func spaceGroupStatus(for kind: PlugbackController.SpaceGroup.Kind) -> String? {
-        guard case .regular(_, let isCurrent) = kind else { return nil }
-        if isCurrent == true { return "현재" }
-        if isCurrent == false { return "방문 시 복원" }
-        return nil
+        guard case .regular(_, let state) = kind else { return nil }
+        switch state {
+        case .current: return "현재"
+        case .inactive: return "방문 시 복원"
+        case .otherDisplay: return "다른 화면 · 복원 대기"
+        case .missing: return "현재 없음"
+        case .unknown: return nil
+        }
     }
 
     /// 비활성 Space가 AX에서 숨긴 창을 「창 없음」으로 오해해 표시하지 않는다.
@@ -71,7 +75,7 @@ enum CardPresentation {
         _ prediction: RestorePrediction?, in kind: PlugbackController.SpaceGroup.Kind
     ) -> RestorePrediction? {
         switch kind {
-        case .regular(_, true), .unresolved:
+        case .regular(_, .current), .unresolved:
             return prediction
         case .regular, .fullscreen:
             return prediction == .willSkip(.appNotRunning) ? prediction : nil
@@ -140,8 +144,9 @@ enum CardPresentation {
 
     /// 자동으로 뭔가 저장되는데 사용자가 그 사실을 볼 수 없으면, 조용한 게 아니라 불투명한 것이다.
     /// 시각까지 붙여야 "어제 수동" vs "오늘 자동"을 보고 고를 수 있다.
-    static func sourceLabel(slot: Slot, savedAt: Date?, now: Date = Date(),
+    static func sourceLabel(slot: Slot, savedAt: Date?, pending: Bool = false, now: Date = Date(),
                             calendar: Calendar = .current) -> String {
+        if pending { return "복원 소스 · 현재 배치 · 저장 대기" }
         let name = slot == .auto ? "자동" : "수동"
         guard let savedAt else { return "복원 소스 · \(name)" }
         let formatter = DateFormatter()
@@ -154,7 +159,9 @@ enum CardPresentation {
     /// 위의 복원 소스 줄과 짝이다: 하나는 "지금 복원되는 값", 하나는 "뽑을 때 저장될 값".
     /// 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽혀, 방금 옮겼는데 복원이 왜 다른 자리로
     /// 가는지 설명할 길이 없어진다.
-    static func pendingLabel(collectedAt: Date?, hasPending: Bool, now: Date = Date()) -> String {
+    static func pendingLabel(collectedAt: Date?, hasPending: Bool,
+                             spaceConfigurationChanged: Bool = false,
+                             now: Date = Date()) -> String {
         guard hasPending else {
             // 변경이 없을 때도 **마지막으로 확인한 시각**은 보여준다.
             // 없으면 수집이 도는지 알 길이 없다 — 창을 안 옮긴 상태에서는 화면이 계속 같아서,
@@ -163,8 +170,14 @@ enum CardPresentation {
             guard let collectedAt else { return "대기 중 변경 없음 · 아직 확인 안 함" }
             return "대기 중 변경 없음 · 확인 \(relative(collectedAt, now))"
         }
+        if spaceConfigurationChanged {
+            return "대기 중 · Space 구성 변경 — 뽑을 때 저장"
+        }
         return "대기 중 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
     }
+
+    static let manualSpaceConfigurationDifference =
+        "현재 Space 구성이 저장본과 다름 · 저장하면 갱신"
 
     private static func relative(_ date: Date?, _ now: Date) -> String {
         guard let date else { return "확인 안 됨" }

@@ -73,23 +73,53 @@ struct SettingsView: View {
                 Section("실험실") {
                     Toggle("자동 슬롯", isOn: $controller.labAutoSlot)
                     Text("""
-                         외장 화면을 쓰는 동안 배치를 기록하고, 화면을 분리할 때 자동 슬롯에 저장합니다.
+                         외장 화면을 쓰는 동안 배치를 기록합니다.
                          복원은 자동·수동 중 더 최근에 저장된 쪽을 씁니다.
                          수동 저장은 영향받지 않습니다 — 끄면 자동 슬롯은 복원에 쓰이지 않습니다.
                          """)
                         .font(.caption).foregroundStyle(.secondary)
-#if DEBUG
-                    Toggle("일반 Space 자체 복원", isOn: $controller.labSpaceRelocation)
-                        .disabled(!controller.labAutoSlot)
-                    Text("저장된 일반 Space가 다른 화면에 남으면 Mission Control을 열어 외장 화면으로 되돌립니다. 자동 슬롯이 켜져 있을 때만 동작합니다.")
+                    Picker("자동 슬롯 반영", selection: $controller.autoSlotUpdateMode) {
+                        ForEach(AutoSlotUpdateMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(!controller.labAutoSlot)
+                    Text(controller.autoSlotUpdateMode.detail)
                         .font(.caption).foregroundStyle(.secondary)
-#endif
+                    Toggle("일반 Space 복원", isOn: $controller.labRegularSpaceRestore)
+                    Text("일반 Space를 외장 화면으로 되돌린 뒤, Space별 창 위치를 복원합니다. 자동 슬롯을 꺼도 수동 저장·복원에 사용할 수 있습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("전체 화면 복원", isOn: $controller.labFullscreenRestore)
+                    Text("실행 중인 앱의 확인된 단일 전체 화면만 외장 화면에서 다시 만듭니다. Split View와 전체 화면 순서는 건드리지 않습니다.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
         }
-        .frame(width: 440, height: 480)
+        .frame(width: 440, height: 540)
         .tint(.orange)
         .onAppear { launchAtLogin = LoginItem.isEnabled }
+    }
+}
+
+private extension AutoSlotUpdateMode {
+    var title: String {
+        switch self {
+        case .onDisconnect: "분리할 때 저장"
+        case .immediate: "변경 즉시 저장"
+        case .liveUntilDisconnect: "복원 즉시 반영 · 분리 시 저장"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .onDisconnect:
+            "변경을 모아두고 화면을 분리하거나 Plugback을 종료할 때 저장합니다. 그전 복원은 마지막 저장값을 씁니다."
+        case .immediate:
+            "배치가 바뀔 때마다 자동 슬롯에 바로 저장하고, 그 값을 복원에 씁니다."
+        case .liveUntilDisconnect:
+            "현재 연결 중에는 방금 감지한 배치를 복원에 바로 사용합니다.\n파일에는 화면을 분리하거나 Plugback을 종료할 때 저장합니다."
+        }
     }
 }

@@ -127,8 +127,8 @@ final class SpaceAwareRestoreTests: XCTestCase {
 
         let groups = PlugbackController.spaceGroups(in: resolved, snapshot: snapshot)
         XCTAssertEqual(groups.map(\.kind), [
-            .regular(number: 1, isCurrent: true),
-            .regular(number: 2, isCurrent: false),
+            .regular(number: 1, state: .current),
+            .regular(number: 2, state: .inactive),
             .fullscreen,
             .unresolved,
         ])
@@ -137,7 +137,45 @@ final class SpaceAwareRestoreTests: XCTestCase {
         ])
 
         let unavailable = PlugbackController.spaceGroups(in: resolved, snapshot: nil)
-        XCTAssertEqual(unavailable.first?.kind, .regular(number: 1, isCurrent: nil))
+        XCTAssertEqual(unavailable.first?.kind, .regular(number: 1, state: .unknown))
+
+        let movedAndAdded = SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(SpaceRuntimeID(100), "builtin", order: 1, current: true),
+                    space(SpaceRuntimeID(2), "external-empty", order: 2),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(SpaceRuntimeID(1), "external-first", order: 1, current: true),
+                    space(SpaceRuntimeID(3), "new-unsaved", order: 2),
+                ]),
+            ],
+            membershipsByWindowServerID: [:]
+        )
+        let movedGroups = PlugbackController.spaceGroups(in: resolved, snapshot: movedAndAdded)
+        XCTAssertEqual(movedGroups.filter {
+            if case .regular = $0.kind { true } else { false }
+        }.map(\.kind), [
+            .regular(number: 1, state: .current),
+            .regular(number: 2, state: .otherDisplay),
+        ], "live-but-unsaved Space must not become a saved restore-plan row")
+        XCTAssertTrue(PlugbackController.spaceConfigurationDiffers(
+            in: resolved, snapshot: movedAndAdded, targetConnected: true
+        ))
+
+        let missing = SpaceSnapshot(
+            displays: [.init(screenID: external.id, spaces: [
+                space(SpaceRuntimeID(1), "external-first", order: 1, current: true),
+            ])],
+            membershipsByWindowServerID: [:]
+        )
+        XCTAssertEqual(
+            PlugbackController.spaceGroups(in: resolved, snapshot: missing)[1].kind,
+            .regular(number: 2, state: .missing)
+        )
+        XCTAssertFalse(PlugbackController.spaceConfigurationDiffers(
+            in: resolved, snapshot: nil, targetConnected: false
+        ), "a disconnected target has no live configuration to compare")
     }
 
     func testAutoCollectKeepsAnEmptyRegularSpaceForRelocation() {
@@ -700,7 +738,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(gateway.windowsList[0].frame, savedFrame)
     }
 
-    func testReconnectRelocatesAnInactiveBoundRegularSpaceBeforeWindowRestore() async {
+    func testManualRegularSpaceRestoreWorksWhileAutoSlotIsOff() async {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let gateway = FakeWindowGateway()
@@ -710,22 +748,28 @@ final class SpaceAwareRestoreTests: XCTestCase {
         let relocator = FakeSpaceRelocator()
         let controller = makeController(
             gateway: gateway, screens: screens, reader: reader,
-            relocator: relocator, directory: directory
+            relocator: relocator, autoSlot: false,
+            regularSpaceRestore: true, fullscreenRestore: false,
+            directory: directory
         )
+        controller.restoreMode = .manual
         let bound = SpaceRuntimeID(1)
         let externalCurrent = SpaceRuntimeID(2)
         let builtinCurrent = SpaceRuntimeID(100)
         let fullscreenFollower = SpaceRuntimeID(101)
+        let savedFrame = CGRect(x: 1100, y: 100, width: 500, height: 700)
 
         gateway.runningBundleIDs = ["com.app"]
         gateway.windowsList = [window(
-            1, bundleID: "com.app", windowServerID: 11
+            1, bundleID: "com.app", frame: savedFrame, windowServerID: 11
         )]
         reader.availability = .available(makeSnapshot(
             externalSpaces: [space(bound, "return-me", order: 1, current: true)],
             memberships: [11: [bound]]
         ))
         await controller.captureNow()
+        XCTAssertEqual(controller.restoreSource, .manual)
+        XCTAssertNil(controller.lastCollectedAt)
 
         let before = SpaceSnapshot(
             displays: [
@@ -738,7 +782,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
                     space(externalCurrent, "external", order: 1, current: true),
                 ]),
             ],
-            membershipsByWindowServerID: [22: [fullscreenFollower]]
+            membershipsByWindowServerID: [11: [bound], 22: [fullscreenFollower]]
         )
         let after = SpaceSnapshot(
             displays: [
@@ -751,7 +795,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
                     space(bound, "return-me", order: 3),
                 ]),
             ],
-            membershipsByWindowServerID: [22: [fullscreenFollower]]
+            membershipsByWindowServerID: [11: [bound], 22: [fullscreenFollower]]
         )
         reader.availability = .available(before)
         relocator.onRelocate = { request in
@@ -770,10 +814,55 @@ final class SpaceAwareRestoreTests: XCTestCase {
             expectedDestinationCount: 1
         )])
 
-        controller.labSpaceRelocation = false
+        let afterVisit = SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(builtinCurrent, "builtin", order: 1, current: true),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(externalCurrent, "external", order: 1),
+                    space(fullscreenFollower, "fullscreen", order: 2, kind: .fullscreen),
+                    space(bound, "return-me", order: 3, current: true),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [bound], 22: [fullscreenFollower]]
+        )
+        gateway.windowsList = [window(
+            1, bundleID: "com.app",
+            frame: CGRect(x: 100, y: 100, width: 300, height: 300), windowServerID: 11
+        )]
+        reader.availability = .available(afterVisit)
+        await controller.restoreNow()
+        XCTAssertEqual(gateway.moveCalls.last?.target, savedFrame)
+
+        controller.labRegularSpaceRestore = false
         reader.availability = .available(before)
         await controller.restoreNow()
         XCTAssertEqual(relocator.requests.count, 1, "스위치 OFF이면 Space 자체는 움직이지 않아야 한다")
+    }
+
+    func testAllSpaceFeaturesOffKeepManualCaptureOnLegacyPath() async {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, external]
+        let reader = FakeSpaceReader()
+        let controller = makeController(
+            gateway: gateway, screens: screens, reader: reader,
+            autoSlot: false, regularSpaceRestore: false, fullscreenRestore: false,
+            directory: directory
+        )
+        gateway.windowsList = [window(
+            1, bundleID: "com.app",
+            frame: CGRect(x: 1000, y: 0, width: 500, height: 1000),
+            windowServerID: 11
+        )]
+
+        await controller.captureNow()
+
+        XCTAssertTrue(reader.requestedWindowIDs.isEmpty)
+        XCTAssertEqual(controller.restoreSource, .manual)
     }
 
     func testSpaceVisitCollectsOnlyWhileAutoSlotIsEnabled() async {
@@ -784,7 +873,9 @@ final class SpaceAwareRestoreTests: XCTestCase {
         screens.screensList = [builtin, external]
         let reader = FakeSpaceReader()
         let controller = makeController(
-            gateway: gateway, screens: screens, reader: reader, directory: directory
+            gateway: gateway, screens: screens, reader: reader,
+            autoSlot: true, regularSpaceRestore: false, fullscreenRestore: false,
+            directory: directory
         )
         controller.restoreMode = .manual
         let runtimeID = SpaceRuntimeID(1)
@@ -1039,6 +1130,84 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(verified.first?.entries.first?.outcome, .skipped(.fullscreen))
     }
 
+    func testManualFullscreenRestoreWorksWhileAutoSlotIsOffAndHonorsItsSwitch() async {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, external]
+        let reader = FakeSpaceReader()
+        let controller = makeController(
+            gateway: gateway, screens: screens, reader: reader,
+            autoSlot: false, regularSpaceRestore: false, fullscreenRestore: true,
+            directory: directory
+        )
+        controller.restoreMode = .manual
+        let regular = SpaceRuntimeID(1)
+        let externalFullscreen = SpaceRuntimeID(2)
+        let builtinFullscreen = SpaceRuntimeID(100)
+        let savedFrame = CGRect(x: 1100, y: 100, width: 500, height: 700)
+        gateway.runningBundleIDs = ["com.app"]
+
+        gateway.windowsList = [window(
+            1, bundleID: "com.app", frame: savedFrame, windowServerID: 11
+        )]
+        reader.availability = .available(makeSnapshot(
+            externalSpaces: [space(regular, "regular", order: 1, current: true)],
+            memberships: [11: [regular]]
+        ))
+        await controller.captureNow()
+
+        gateway.windowsList = [window(
+            2, bundleID: "com.app", frame: external.frame,
+            fullscreenState: .fullscreen, windowServerID: 22
+        )]
+        reader.availability = .available(makeSnapshot(
+            externalSpaces: [
+                space(regular, "regular", order: 1),
+                space(externalFullscreen, "fullscreen", order: 2,
+                      kind: .fullscreen, current: true),
+            ],
+            memberships: [22: [externalFullscreen]]
+        ))
+        await controller.captureNow()
+        XCTAssertEqual(controller.restoreSource, .manual)
+        XCTAssertNil(controller.lastCollectedAt)
+
+        let stranded = SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [space(
+                    builtinFullscreen, "builtin-fullscreen", order: 1,
+                    kind: .fullscreen, current: true
+                )]),
+                .init(screenID: external.id, spaces: [space(
+                    regular, "regular", order: 1, current: true
+                )]),
+            ],
+            membershipsByWindowServerID: [22: [builtinFullscreen]]
+        )
+        gateway.windowsList = [window(
+            2, bundleID: "com.app", frame: builtin.frame,
+            fullscreenState: .fullscreen, windowServerID: 22
+        )]
+        reader.availability = .available(stranded)
+        await controller.restoreNow()
+        XCTAssertEqual(gateway.fullscreenCalls.map(\.fullscreen), [false, true])
+        XCTAssertEqual(gateway.moveCalls.last?.target, savedFrame)
+
+        let fullscreenCallCount = gateway.fullscreenCalls.count
+        let moveCallCount = gateway.moveCalls.count
+        controller.labFullscreenRestore = false
+        gateway.windowsList = [window(
+            2, bundleID: "com.app", frame: builtin.frame,
+            fullscreenState: .fullscreen, windowServerID: 22
+        )]
+        reader.availability = .available(stranded)
+        await controller.restoreNow()
+        XCTAssertEqual(gateway.fullscreenCalls.count, fullscreenCallCount)
+        XCTAssertEqual(gateway.moveCalls.count, moveCallCount)
+    }
+
     func testUnavailableReaderKeepsTheLegacyRestorePath() async {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1181,10 +1350,19 @@ final class SpaceAwareRestoreTests: XCTestCase {
         screens: FakeScreenProvider,
         reader: FakeSpaceReader,
         relocator: SpaceRelocating? = nil,
+        autoSlot: Bool = true,
+        regularSpaceRestore: Bool? = nil,
+        fullscreenRestore: Bool? = nil,
         directory: URL
     ) -> PlugbackController {
         let defaults = UserDefaults(suiteName: "space-aware-controller-\(UUID().uuidString)")!
-        defaults.set(true, forKey: "labAutoSlot")
+        defaults.set(autoSlot, forKey: "labAutoSlot")
+        if let regularSpaceRestore {
+            defaults.set(regularSpaceRestore, forKey: "labSpaceRelocation")
+        }
+        if let fullscreenRestore {
+            defaults.set(fullscreenRestore, forKey: "labFullscreenRestore")
+        }
         return PlugbackController(
             gateway: gateway,
             screenProvider: screens,

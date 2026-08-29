@@ -58,18 +58,27 @@ public enum RestoreEngine {
         in resolved: ResolvedProfile,
         on screen: ScreenInfo,
         windows: [WindowInfo],
-        snapshot: SpaceSnapshot?
+        snapshot: SpaceSnapshot?,
+        regularSpacesEnabled: Bool = true,
+        fullscreenEnabled: Bool = true
     ) -> SpaceWindowSelection {
         guard let binding = resolved.overlay?.byBundle[bundleID] else { return .legacy }
         let hint: SpaceHint
         switch binding {
-        case .regular(let value): hint = value
+        case .regular(let value):
+            guard regularSpacesEnabled else { return .legacy }
+            hint = value
         case .fullscreen:
+            guard fullscreenEnabled else { return .legacy }
             return selectFullscreenWindow(
                 bundleID: bundleID, on: screen, windows: windows, snapshot: snapshot
             )
-        case .unresolved(.fullscreen): return .fullscreen
-        case .unresolved: return .unavailable
+        case .unresolved(.fullscreen):
+            return fullscreenEnabled ? .fullscreen : .legacy
+        case .unresolved(.fullscreenUnknown):
+            return fullscreenEnabled ? .unavailable : .legacy
+        case .unresolved:
+            return regularSpacesEnabled || fullscreenEnabled ? .unavailable : .legacy
         }
         guard let snapshot else { return .unavailable }
 
@@ -214,6 +223,8 @@ public enum RestoreEngine {
         windows: [WindowInfo],
         snapshot: SpaceSnapshot?,
         onlyBundles: [String: Set<String>]? = nil,
+        regularSpacesEnabled: Bool = true,
+        fullscreenEnabled: Bool = true,
         using gateway: WindowGateway,
         options: RestoreOptions = RestoreOptions()
     ) async -> SpaceRestorePass {
@@ -258,7 +269,9 @@ public enum RestoreEngine {
                 var completesBinding = false
                 switch selectSpaceWindow(
                     bundleID: app.bundleID, in: pair, on: screen,
-                    windows: windows, snapshot: snapshot
+                    windows: windows, snapshot: snapshot,
+                    regularSpacesEnabled: regularSpacesEnabled,
+                    fullscreenEnabled: fullscreenEnabled
                 ) {
                 case .legacy:
                     let candidates = windows.filter { $0.appBundleID == app.bundleID }

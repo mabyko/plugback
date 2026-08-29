@@ -18,8 +18,12 @@ final class ProfileSlotsTests: XCTestCase {
     private let other = ScreenInfo(id: "ext-2", name: "DELL",
                                    frame: CGRect(x: 1000, y: 0, width: 1000, height: 1000), isBuiltin: false)
 
-    private func makeSlots(lab: Bool = false) -> ProfileSlots {
-        ProfileSlots(store: ProfileStore(directory: dir), isLabEnabled: lab)
+    private func makeSlots(
+        lab: Bool = false, updateMode: AutoSlotUpdateMode = .onDisconnect
+    ) -> ProfileSlots {
+        ProfileSlots(
+            store: ProfileStore(directory: dir), isLabEnabled: lab, updateMode: updateMode
+        )
     }
 
     private func window(_ bundleID: String, _ frame: CGRect) -> WindowInfo {
@@ -134,6 +138,33 @@ final class ProfileSlotsTests: XCTestCase {
 
         XCTAssertTrue(slots.confirm(["ext-1"]))
         XCTAssertFalse(slots.hasPendingCollect, "확정하면 기다리는 변경이 없다")
+    }
+
+    func testAutoSlotUpdateModesChooseWhenCandidateIsUsedAndSaved() throws {
+        let delayed = makeSlots(lab: true)
+        delayed.capture(windows: [window("com.chrome", left)], on: [screen])
+        delayed.collect(windows: [window("com.chrome", right)], on: [screen])
+        XCTAssertEqual(delayed.source(for: screen.id)?.profile.apps.first?.unitRect.x, 0)
+        XCTAssertTrue(delayed.hasPendingCollect)
+
+        delayed.updateMode = .liveUntilDisconnect
+        XCTAssertEqual(delayed.source(for: screen.id)?.profile.apps.first?.unitRect.x, 0.5)
+        XCTAssertTrue(delayed.usesCandidate(for: screen.id))
+
+        delayed.updateMode = .immediate
+        XCTAssertFalse(delayed.hasPendingCollect)
+        XCTAssertEqual(delayed.source(for: screen.id)?.profile.apps.first?.unitRect.x, 0.5)
+        let onDisk = try JSONDecoder().decode(
+            [String: Profile].self, from: Data(contentsOf: dir.appendingPathComponent("profiles.json"))
+        )
+        XCTAssertEqual(onDisk["ext-1#auto"]?.apps.first?.unitRect.x, 0.5)
+
+        delayed.collect(windows: [window("com.chrome", left)], on: [screen])
+        XCTAssertFalse(delayed.hasPendingCollect)
+        let updatedOnDisk = try JSONDecoder().decode(
+            [String: Profile].self, from: Data(contentsOf: dir.appendingPathComponent("profiles.json"))
+        )
+        XCTAssertEqual(updatedOnDisk["ext-1#auto"]?.apps.first?.unitRect.x, 0)
     }
 
     func testCollectCanStartAnAutoSlotFromVisibleApps() {

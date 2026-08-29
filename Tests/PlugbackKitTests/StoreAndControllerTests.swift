@@ -539,11 +539,14 @@ final class PlugbackControllerTests: XCTestCase {
     }
 
     func testRestoreModePersists() {
-        // 복원 모드 설정은 재시작을 넘어 보존된다 (F-05.4)
+        // 사용자 모드 설정은 재시작을 넘어 보존된다 (F-05.4, F-08.3)
         let first = makeController()
+        XCTAssertEqual(first.autoSlotUpdateMode, .onDisconnect, "기존 사용자의 기본 동작")
         first.restoreMode = .manual
+        first.autoSlotUpdateMode = .liveUntilDisconnect
         let second = makeController()
         XCTAssertEqual(second.restoreMode, .manual)
+        XCTAssertEqual(second.autoSlotUpdateMode, .liveUntilDisconnect)
     }
 
     func testRemoveProfileDeletesAndPersists() async {

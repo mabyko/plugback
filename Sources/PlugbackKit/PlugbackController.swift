@@ -7,6 +7,13 @@ public enum RestoreMode: String, Sendable {
     case automatic, manual
 }
 
+/// 실험실 · 자동 슬롯의 후보 사용과 기록 시점.
+public enum AutoSlotUpdateMode: String, CaseIterable, Sendable {
+    case onDisconnect
+    case immediate
+    case liveUntilDisconnect
+}
+
 /// captureNow의 반환 — 조용한 거부가 없다 (restoreNow와 같은 원칙).
 public enum CaptureOutcome: Equatable, Sendable {
     /// 저장 완료 — 연결된 모든 외장 화면의 체크된 대상 앱 수 합.
@@ -58,6 +65,8 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var predictionsByScreen: [String: [String: RestorePrediction]] = [:]
     /// 카드 표시용 Space 그룹. 번호는 이 외장 화면에 저장된 일반 Space의 로컬 순서다.
     @Published private var spaceGroupsByScreen: [String: [SpaceGroup]] = [:]
+    /// 저장된 일반 Space 구성과 지금 대상 화면의 구성이 다른가. 연결 중·안정 snapshot에서만 판단한다.
+    @Published private var spaceConfigurationDiffersByScreen: [String: Bool] = [:]
     /// 화면별 · 저장하지 않는 앱 — 체크를 껐던 대상 앱과, 그 화면에 있지만 프로필에 없는 앱.
     /// **화면에서는 같은 칸이다**: 체크 해제는 「아무것도 안 한다」 하나의 뜻이고,
     /// 프로필 소속 여부는 내부 사정이다. 껐던 앱은 좌표가 남아 있어 다시 켜면 그 자리로 돌아온다.
@@ -107,18 +116,48 @@ public final class PlugbackController: ObservableObject {
             guard labAutoSlot != oldValue else { return }
             defaults.set(labAutoSlot, forKey: Keys.labAutoSlot)
             slots.isLabEnabled = labAutoSlot // 씨앗 복사·후보 폐기는 슬롯 모듈의 일이다
+            pendingSpaceBundles.removeAll() // 복원 소스가 manual ↔ auto로 바뀌었으므로 낡은 pending 폐기
+            pendingSpaceRefresh = false
             syncCollectTrigger()
             syncSpaceWatcher()
             refreshPredictionsAfterOptionChange() // 복원 소스가 바뀌면 점도 바뀐다
         }
     }
 
-    /// 실험실 · 일반 Space 자체 복원. 자동 슬롯의 수집·Space별 창 복원은 유지하고,
-    /// Mission Control visible drag만 별도로 켜고 끈다.
-    @Published public var labSpaceRelocation: Bool {
+    /// 실험실 · 자동 슬롯의 반영 방식. 기존 사용자는 분리/종료 확정을 그대로 쓴다.
+    @Published public var autoSlotUpdateMode: AutoSlotUpdateMode {
         didSet {
-            guard labSpaceRelocation != oldValue else { return }
-            defaults.set(labSpaceRelocation, forKey: Keys.labSpaceRelocation)
+            guard autoSlotUpdateMode != oldValue else { return }
+            defaults.set(autoSlotUpdateMode.rawValue, forKey: Keys.autoSlotUpdateMode)
+            slots.updateMode = autoSlotUpdateMode
+            pendingSpaceBundles.removeAll()
+            pendingSpaceRefresh = false
+            refreshPredictionsAfterOptionChange()
+        }
+    }
+
+    /// 실험실 · 일반 Space 복원. Space 자체의 화면 소속과 Space별 창 위치를 함께 복원한다.
+    /// 자동 슬롯과 독립이므로 수동 슬롯만으로도 동작한다.
+    @Published public var labRegularSpaceRestore: Bool {
+        didSet {
+            guard labRegularSpaceRestore != oldValue else { return }
+            defaults.set(labRegularSpaceRestore, forKey: Keys.labRegularSpaceRestore)
+            pendingSpaceBundles.removeAll()
+            pendingSpaceRefresh = false
+            syncSpaceWatcher()
+            refreshPredictionsAfterOptionChange()
+        }
+    }
+
+    /// 실험실 · 확인된 single native fullscreen 복원. 일반 Space 복원과 독립이다.
+    @Published public var labFullscreenRestore: Bool {
+        didSet {
+            guard labFullscreenRestore != oldValue else { return }
+            defaults.set(labFullscreenRestore, forKey: Keys.labFullscreenRestore)
+            pendingSpaceBundles.removeAll()
+            pendingSpaceRefresh = false
+            syncSpaceWatcher()
+            refreshPredictionsAfterOptionChange()
         }
     }
 
@@ -163,8 +202,16 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 화면 하나를 그리는 단위 — 프로필·복원 소스·예측·저장하지 않는 앱·마지막 결과가
     /// 전부 그 화면의 것이다. 첫 화면만 보여주던 카드가 화면을 빠뜨리지 않게 하는 인터페이스.
     public struct SpaceGroup: Identifiable, Equatable, Sendable {
+        public enum RegularState: Equatable, Sendable {
+            case current
+            case inactive
+            case otherDisplay
+            case missing
+            case unknown
+        }
+
         public enum Kind: Equatable, Sendable {
-            case regular(number: Int, isCurrent: Bool?)
+            case regular(number: Int, state: RegularState)
             case fullscreen
             case unresolved
         }
@@ -180,8 +227,10 @@ public final class PlugbackController: ObservableObject {
         public let name: String
         public let profile: Profile?
         public let restoreSource: Slot?
+        public let usesPendingSource: Bool
         public let predictions: [String: RestorePrediction]
         public let spaceGroups: [SpaceGroup]
+        public let spaceConfigurationDiffers: Bool
         public let untrackedApps: [UntrackedApp]
         public let lastResult: RestoreResult?
     }
@@ -202,24 +251,26 @@ public final class PlugbackController: ObservableObject {
         let source = slots.source(for: screenID)
         return ScreenSection(screenID: screenID, name: name,
                              profile: source?.profile, restoreSource: source?.slot,
+                             usesPendingSource: slots.usesCandidate(for: screenID),
                              predictions: predictionsByScreen[screenID] ?? [:],
                              spaceGroups: spaceGroupsByScreen[screenID] ?? [],
+                             spaceConfigurationDiffers: spaceConfigurationDiffersByScreen[screenID] ?? false,
                              untrackedApps: untrackedAppsByScreen[screenID] ?? [],
                              lastResult: resultsByScreen[screenID])
     }
 
     /// 저장 identity는 opaque name 그대로 두고, 저장된 일반 Space 순서만 표시값으로 붙인다.
-    /// live snapshot은 opaque name이 유일하게 대응될 때 현재 Space인지 판정하는 데만 쓴다.
+    /// live snapshot은 저장 행을 늘리거나 지우지 않고 현재 위치 상태만 붙인다.
     static func spaceGroups(
-        in resolved: ResolvedProfile, snapshot: SpaceSnapshot?
+        in resolved: ResolvedProfile, snapshot: SpaceSnapshot?, targetConnected: Bool = true
     ) -> [SpaceGroup] {
         guard let overlay = resolved.overlay else { return [] }
 
-        var liveByName: [String: [Bool]] = [:]
+        var liveByName: [String: [(screenID: String, isCurrent: Bool)]] = [:]
         for display in snapshot?.displays ?? [] {
             for space in display.spaces {
                 guard space.kind == .regular, let name = space.opaqueName else { continue }
-                liveByName[name, default: []].append(space.isCurrent)
+                liveByName[name, default: []].append((display.screenID, space.isCurrent))
             }
         }
 
@@ -246,10 +297,21 @@ public final class PlugbackController: ObservableObject {
             ($0.localOrderHint, $0.opaqueName) < ($1.localOrderHint, $1.opaqueName)
         }.enumerated().map { index, hint in
             let matches = liveByName[hint.opaqueName] ?? []
-            let isCurrent = matches.count == 1 ? matches[0] : nil
+            let state: SpaceGroup.RegularState
+            if !targetConnected || snapshot == nil || matches.count > 1 {
+                state = .unknown
+            } else if let match = matches.first {
+                if match.screenID != resolved.profile.screenID {
+                    state = .otherDisplay
+                } else {
+                    state = match.isCurrent ? .current : .inactive
+                }
+            } else {
+                state = .missing
+            }
             return SpaceGroup(
                 id: "regular:\(hint.opaqueName)",
-                kind: .regular(number: index + 1, isCurrent: isCurrent),
+                kind: .regular(number: index + 1, state: state),
                 apps: appsByName[hint.opaqueName] ?? []
             )
         }
@@ -260,6 +322,29 @@ public final class PlugbackController: ObservableObject {
             groups.append(SpaceGroup(id: "unresolved", kind: .unresolved, apps: unresolvedApps))
         }
         return groups
+    }
+
+    /// 저장 계획과 현재 대상 화면의 일반 Space 식별자·순서가 다른지 비교한다.
+    /// 연결 해제·snapshot 누락·이름 누락은 차이라고 지어내지 않는다.
+    static func spaceConfigurationDiffers(
+        in resolved: ResolvedProfile, snapshot: SpaceSnapshot?, targetConnected: Bool
+    ) -> Bool {
+        guard targetConnected,
+              let saved = resolved.overlay?.regularSpaces, !saved.isEmpty,
+              let display = snapshot?.displays.first(where: {
+                  $0.screenID == resolved.profile.screenID
+              }) else { return false }
+
+        let savedNames = saved.sorted {
+            ($0.localOrderHint, $0.opaqueName) < ($1.localOrderHint, $1.opaqueName)
+        }.map(\.opaqueName)
+        let live = display.spaces.filter { $0.kind == .regular }.sorted {
+            $0.localOrder < $1.localOrder
+        }
+        guard live.count == savedNames.count else { return true }
+        let liveNames = live.compactMap(\.opaqueName)
+        guard liveNames.count == live.count else { return false }
+        return liveNames != savedNames
     }
 
     /// 연결된 화면들의 마지막 복원 결과 — 화면 순서대로. 카드의 결과 스트립이 합산해 그린다.
@@ -276,6 +361,9 @@ public final class PlugbackController: ObservableObject {
     /// 카드가 그리는 실험실 상태 — 전부 슬롯 모듈에서 파생된다.
     public var hasPendingCollect: Bool { slots.hasPendingCollect }
     public var lastCollectedAt: Date? { slots.lastCollectedAt }
+    public var spaceConfigurationDiffers: Bool {
+        spaceConfigurationDiffersByScreen.values.contains(true)
+    }
 
     private let gateway: WindowGateway
     private let screenProvider: ScreenProvider
@@ -286,9 +374,9 @@ public final class PlugbackController: ObservableObject {
     private var collectTrigger: CollectTrigger?
     /// 창 이동 관찰의 어댑터. 게이트웨이와 같은 seam이지만 다른 인터페이스다 (WindowMoveSource).
     private let moveSource: WindowMoveSource?
-    /// Debug/실험실에서만 주입되는 read-only Space adapter. nil이면 기존 제품 경로 그대로다.
+    /// 실험실용 read-only Space adapter. nil이거나 관련 토글이 모두 OFF면 기존 제품 경로 그대로다.
     private let spaceReader: SpaceReading?
-    /// Debug/실험실에서만 주입되는 visible Mission Control adapter.
+    /// 실험실용 visible Mission Control adapter. 「일반 Space 복원」이 ON일 때만 쓴다.
     private let spaceRelocator: SpaceRelocating?
     private let activeSpaceDebounceInterval: TimeInterval
     private var activeSpaceWatcher: ActiveSpaceWatcher?
@@ -322,11 +410,17 @@ public final class PlugbackController: ObservableObject {
         reopenWindowless = defaults.bool(forKey: Keys.reopenWindowless)
         let lab = defaults.bool(forKey: Keys.labAutoSlot)
         labAutoSlot = lab
+        let updateMode = defaults.string(forKey: Keys.autoSlotUpdateMode)
+            .flatMap(AutoSlotUpdateMode.init(rawValue:)) ?? .onDisconnect
+        autoSlotUpdateMode = updateMode
         // 기존 실험실 사용자는 업그레이드 뒤 동작이 갑자기 꺼지지 않게 한 번 이어받는다.
-        let savedSpaceRelocation = defaults.object(forKey: Keys.labSpaceRelocation) as? Bool
-        labSpaceRelocation = savedSpaceRelocation ?? lab
-        if savedSpaceRelocation == nil { defaults.set(lab, forKey: Keys.labSpaceRelocation) }
-        slots = ProfileSlots(store: store, isLabEnabled: lab)
+        let savedRegularRestore = defaults.object(forKey: Keys.labRegularSpaceRestore) as? Bool
+        labRegularSpaceRestore = savedRegularRestore ?? lab
+        if savedRegularRestore == nil { defaults.set(lab, forKey: Keys.labRegularSpaceRestore) }
+        let savedFullscreenRestore = defaults.object(forKey: Keys.labFullscreenRestore) as? Bool
+        labFullscreenRestore = savedFullscreenRestore ?? lab
+        if savedFullscreenRestore == nil { defaults.set(lab, forKey: Keys.labFullscreenRestore) }
+        slots = ProfileSlots(store: store, isLabEnabled: lab, updateMode: updateMode)
         // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다 (이름순 첫 프로필).
         if let stored = slots.firstByName {
             screenPresence = .remembered(screenID: stored.screenID, name: stored.screenName)
@@ -378,11 +472,19 @@ public final class PlugbackController: ObservableObject {
         Task { await collectCandidate() }
     }
 
-    private var spaceModeEnabled: Bool { labAutoSlot && spaceReader != nil }
+    /// 공개 Space 알림이 필요한 경우. 자동 슬롯은 수집에, 두 복원 토글은 방문 복원에 쓴다.
+    private var spaceObservationEnabled: Bool {
+        spaceReader != nil && (labAutoSlot || labRegularSpaceRestore || labFullscreenRestore)
+    }
 
-    /// 실험실이 꺼져 있으면 private read뿐 아니라 공개 Space 알림 구독도 존재하지 않는다.
+    /// Space-aware 복원 범위가 하나라도 켜졌는가. 자동 슬롯은 복원 기능이 아니다.
+    private var spaceRestoreEnabled: Bool {
+        spaceReader != nil && (labRegularSpaceRestore || labFullscreenRestore)
+    }
+
+    /// Space 관찰 기능이 모두 꺼져 있으면 private read뿐 아니라 공개 Space 알림 구독도 존재하지 않는다.
     private func syncSpaceWatcher() {
-        guard spaceModeEnabled else {
+        guard spaceObservationEnabled else {
             activeSpaceWatcher?.stop()
             activeSpaceWatcher = nil
             pendingSpaceBundles.removeAll()
@@ -460,10 +562,10 @@ public final class PlugbackController: ObservableObject {
     }
 
     private func stableSpaceSnapshot(for windows: [WindowInfo]) async -> SpaceSnapshot? {
-        guard spaceModeEnabled, let spaceReader else { return nil }
+        guard let spaceReader else { return nil }
         let ids = Array(Set(windows.compactMap(\.windowServerID))).sorted()
         let availability = await spaceReader.stableSnapshot(windowServerIDs: ids)
-        guard spaceModeEnabled, case .available(let snapshot) = availability else { return nil }
+        guard case .available(let snapshot) = availability else { return nil }
         return snapshot
     }
 
@@ -479,7 +581,9 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return .notConnected }
         let windows = await readWindows(of: nil)
-        let snapshot = await stableSpaceSnapshot(for: windows)
+        let snapshot = spaceObservationEnabled
+            ? await stableSpaceSnapshot(for: windows)
+            : nil
         slots.capture(windows: windows, on: externalScreens, snapshot: snapshot)
         // 사람이 지금 배치를 다시 선언했으므로 이전 재연결 회차의 pending은 더 이상 유효하지 않다.
         for screen in externalScreens { pendingSpaceBundles.removeValue(forKey: screen.id) }
@@ -506,8 +610,9 @@ public final class PlugbackController: ObservableObject {
         guard isConnected else { return }
         let windows = await readWindows(of: nil)
         guard labAutoSlot, !isRestoring else { return }
-        if spaceModeEnabled {
+        if spaceReader != nil {
             guard let snapshot = await stableSpaceSnapshot(for: windows) else { return }
+            guard labAutoSlot, !isRestoring else { return }
             let pending = Set(pendingSpaceBundles.values.flatMap { $0 })
             slots.collect(
                 windows: windows, on: externalScreens, snapshot: snapshot,
@@ -554,14 +659,14 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return .notConnected }
         guard !isRestoring else { return .alreadyRestoring }
-        let results = await performRestore(seedSpacePending: spaceModeEnabled)
+        let results = await performRestore(seedSpacePending: spaceRestoreEnabled)
         return .restored(results)
     }
 
     /// ActiveSpaceWatcher의 무페이로드 이벤트가 들어오는 단일 지점. 복원 중이면 새 열거를
     /// 시작하지 않고, 현재 pass가 끝난 뒤 최신 Space를 한 번만 다시 읽는다.
     func activeSpaceChanged() async {
-        guard spaceModeEnabled else { return }
+        guard spaceObservationEnabled else { return }
         if isRestoring {
             pendingSpaceRefresh = true
             return
@@ -571,7 +676,7 @@ public final class PlugbackController: ObservableObject {
         if restoreMode == .automatic,
            pendingSpaceBundles.values.contains(where: { !$0.isEmpty }) {
             _ = await performRestore(seedSpacePending: false)
-        } else {
+        } else if labAutoSlot {
             await collectCandidate()
         }
     }
@@ -582,7 +687,7 @@ public final class PlugbackController: ObservableObject {
         await drainWindowReads()
 
         let latest: [RestoreResult]
-        if spaceModeEnabled {
+        if spaceRestoreEnabled {
             await relocateBoundRegularSpaces()
             latest = await restoreWithSpaces(seedPending: seedSpacePending)
         } else {
@@ -595,13 +700,13 @@ public final class PlugbackController: ObservableObject {
     }
 
     private func relocateBoundRegularSpaces() async {
-        guard labSpaceRelocation, let spaceRelocator else { return }
+        guard labRegularSpaceRestore, let spaceRelocator else { return }
         let resolved = slots.resolvedWithSpaces(for: externalScreens)
         let moveLimit = SpaceRelocationPlanner.desiredCount(
             resolved: resolved, screens: externalScreens
         )
         for _ in 0..<moveLimit {
-            guard labSpaceRelocation else { return }
+            guard labRegularSpaceRestore else { return }
             let windows = await readWindows(of: nil)
             guard let before = await stableSpaceSnapshot(for: windows) else { return }
             switch SpaceRelocationPlanner.next(
@@ -666,6 +771,8 @@ public final class PlugbackController: ObservableObject {
                 windows: windows,
                 snapshot: snapshot,
                 onlyBundles: onlyBundles,
+                regularSpacesEnabled: labRegularSpaceRestore,
+                fullscreenEnabled: labFullscreenRestore,
                 using: gateway,
                 options: RestoreOptions(
                     restoreMinimized: restoreMinimized,
@@ -692,9 +799,20 @@ public final class PlugbackController: ObservableObject {
             guard let pair = resolved[screen.id] else { continue }
             for app in pair.profile.apps where app.isEnabled
                 && claimed.insert(app.bundleID).inserted
-                && pair.overlay?.byBundle[app.bundleID] != nil {
+                && pair.overlay?.byBundle[app.bundleID].map(shouldRestore) == true {
                 pendingSpaceBundles[screen.id, default: []].insert(app.bundleID)
             }
+        }
+    }
+
+    private func shouldRestore(_ binding: SpaceBinding) -> Bool {
+        switch binding {
+        case .regular:
+            return labRegularSpaceRestore
+        case .fullscreen, .unresolved(.fullscreen), .unresolved(.fullscreenUnknown):
+            return labFullscreenRestore
+        case .unresolved:
+            return labRegularSpaceRestore || labFullscreenRestore
         }
     }
 
@@ -793,7 +911,9 @@ public final class PlugbackController: ObservableObject {
         // 화면별로 계산하되 열거는 한 번이다 — 카드가 「그 화면에 뭐가 있나」도 답하기 때문이다(대상 아님 행).
         // 게이트웨이가 actor라 메인은 막히지 않고, 점은 원래 비동기로 채워진다.
         let windows = await readWindows(of: nil)
-        let snapshot = await stableSpaceSnapshot(for: windows)
+        let snapshot = spaceObservationEnabled
+            ? await stableSpaceSnapshot(for: windows)
+            : nil
         // (화면, 실제 ScreenInfo?) 쌍 — 기억만 상태에서는 화면이 없어 제자리 판정이 생략된다.
         let targets: [(screenID: String, screen: ScreenInfo?)] = if isConnected {
             externalScreens.map { ($0.id, $0) }
@@ -805,6 +925,7 @@ public final class PlugbackController: ObservableObject {
 
         var newPredictions: [String: [String: RestorePrediction]] = [:]
         var newSpaceGroups: [String: [SpaceGroup]] = [:]
+        var newSpaceConfigurationDiffers: [String: Bool] = [:]
         var newUntracked: [String: [UntrackedApp]] = [:]
         for (screenID, screen) in targets {
             let resolved = slots.resolvedWithSpaces(for: screenID)
@@ -819,8 +940,13 @@ public final class PlugbackController: ObservableObject {
                     profile: $0, on: screen, windows: windows, running: running,
                     options: RestoreOptions(restoreMinimized: restoreMinimized, reopenWindowless: reopenWindowless))
             } ?? [:]
-            if let resolved {
-                newSpaceGroups[screenID] = Self.spaceGroups(in: resolved, snapshot: snapshot)
+            if spaceObservationEnabled, let resolved {
+                newSpaceGroups[screenID] = Self.spaceGroups(
+                    in: resolved, snapshot: snapshot, targetConnected: screen != nil
+                )
+                newSpaceConfigurationDiffers[screenID] = Self.spaceConfigurationDiffers(
+                    in: resolved, snapshot: snapshot, targetConnected: screen != nil
+                )
             }
             // 껐던 대상 앱이 먼저다 — 좌표가 남아 있어 되돌리기 쉬운 쪽을 위에 둔다.
             let disabled = (profile?.apps.filter { !$0.isEnabled } ?? [])
@@ -830,6 +956,7 @@ public final class PlugbackController: ObservableObject {
         }
         predictionsByScreen = newPredictions
         spaceGroupsByScreen = newSpaceGroups
+        spaceConfigurationDiffersByScreen = newSpaceConfigurationDiffers
         untrackedAppsByScreen = newUntracked
     }
 
@@ -886,7 +1013,9 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return .notConnected }
         let windows = await readWindows(of: [bundleID])
-        let snapshot = await stableSpaceSnapshot(for: windows)
+        let snapshot = spaceObservationEnabled
+            ? await stableSpaceSnapshot(for: windows)
+            : nil
         slots.addTarget(windows: windows, on: externalScreens, snapshot: snapshot)
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
         await updatePredictions()
@@ -902,7 +1031,10 @@ public final class PlugbackController: ObservableObject {
         static let restoreMinimized = "restoreMinimized"
         static let reopenWindowless = "reopenWindowless"
         static let labAutoSlot = "labAutoSlot"
-        static let labSpaceRelocation = "labSpaceRelocation"
+        static let autoSlotUpdateMode = "autoSlotUpdateMode"
+        // 기존 defaults key를 유지해 현재 실험 설정을 마이그레이션 없이 이어간다.
+        static let labRegularSpaceRestore = "labSpaceRelocation"
+        static let labFullscreenRestore = "labFullscreenRestore"
     }
 
 }

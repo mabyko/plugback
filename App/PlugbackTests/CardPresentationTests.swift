@@ -36,6 +36,8 @@ final class CardPresentationTests: XCTestCase {
         // 구버전 파일에는 시각이 없다 — 지어내지 않고 슬롯만 말한다
         XCTAssertEqual(CardPresentation.sourceLabel(slot: .manual, savedAt: nil, now: now, calendar: calendar),
                        "복원 소스 · 수동")
+        XCTAssertEqual(CardPresentation.sourceLabel(slot: .auto, savedAt: nil, pending: true),
+                       "복원 소스 · 현재 배치 · 저장 대기")
     }
 
     func testPendingLabelSeparatesCollectedFromSaved() {
@@ -47,6 +49,11 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-120),
                                                      hasPending: true, now: now),
                        "대기 중 · 2분 전 배치 — 뽑을 때 저장")
+        XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now,
+                                                     hasPending: true,
+                                                     spaceConfigurationChanged: true,
+                                                     now: now),
+                       "대기 중 · Space 구성 변경 — 뽑을 때 저장")
         // 기다리는 것이 없어도 확인 시각은 보여준다 — 없으면 트리거가 죽은 것과
         // "바뀐 게 없다"가 구별되지 않는다. 「확인」이라 써서 「저장」으로 안 읽히게 한다.
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-30),
@@ -77,15 +84,19 @@ final class CardPresentationTests: XCTestCase {
     }
 
     func testSpaceGroupLabelsUseStableLocalSpaceNumber() {
-        let current = PlugbackController.SpaceGroup.Kind.regular(number: 1, isCurrent: true)
-        let inactive = PlugbackController.SpaceGroup.Kind.regular(number: 2, isCurrent: false)
-        let unknown = PlugbackController.SpaceGroup.Kind.regular(number: 3, isCurrent: nil)
+        let current = PlugbackController.SpaceGroup.Kind.regular(number: 1, state: .current)
+        let inactive = PlugbackController.SpaceGroup.Kind.regular(number: 2, state: .inactive)
+        let other = PlugbackController.SpaceGroup.Kind.regular(number: 3, state: .otherDisplay)
+        let missing = PlugbackController.SpaceGroup.Kind.regular(number: 4, state: .missing)
+        let unknown = PlugbackController.SpaceGroup.Kind.regular(number: 5, state: .unknown)
 
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: current), "Space 1")
         XCTAssertEqual(CardPresentation.spaceGroupStatus(for: current), "현재")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: inactive), "Space 2")
         XCTAssertEqual(CardPresentation.spaceGroupStatus(for: inactive), "방문 시 복원")
-        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: unknown), "Space 3")
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: other), "다른 화면 · 복원 대기")
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: missing), "현재 없음")
+        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: unknown), "Space 5")
         XCTAssertNil(CardPresentation.spaceGroupStatus(for: unknown))
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .fullscreen), "전체 화면")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .unresolved), "Space 확인 필요")

@@ -24,7 +24,7 @@
 
 > macOS 또는 사용자가 외장 화면의 Space를 활성화하면, Plugback은 그 순간 보이는 대상 앱의 창만 해당 Space의 저장된 위치로 복원한다.
 
-`Desktop N`과 runtime SID는 저장하지 않는다. 2026-08-29의 A → B → A 실기기에서 외장 regular Space 자체가 내장 화면에 남는 새 failure mode가 확인돼, Debug·실험실 경로에는 **저장된 opaque name의 비활성 regular Space를 Mission Control의 보이는 drag로 목표 화면에 되돌리는 preflight**를 추가한다. Space 생성·삭제·전환, SkyLight write, type `4` 직접 drag는 하지 않는다.
+`Desktop N`과 runtime SID는 저장하지 않는다. 2026-08-29의 A → B → A 실기기에서 외장 regular Space 자체가 내장 화면에 남는 새 failure mode가 확인돼, 실험실 경로에는 **저장된 opaque name의 비활성 regular Space를 Mission Control의 보이는 drag로 목표 화면에 되돌리는 preflight**를 추가한다. Space 생성·삭제·전환, SkyLight write, type `4` 직접 drag는 하지 않는다.
 
 regular Space의 화면 소속은 앱 binding에서만 간접 추론하지 않는다. 자동 저장이 켜져 있으면 연결된 외장 화면의 식별 가능한 type `0` Space 전체를 메모리 overlay에 함께 담는다. 따라서 창이 없는 Space도 같은 프로세스 안에서는 복구 대상이 된다.
 
@@ -58,9 +58,9 @@ regular Space의 화면 소속은 앱 binding에서만 간접 추론하지 않�
 
 ```text
 외장 화면 연결
-  └─ 「일반 Space 자체 복원」 ON이고 저장된 비활성 regular Space가 다른 화면에 남았으면
+  └─ 「일반 Space 복원」 ON이고 저장된 비활성 regular Space가 다른 화면에 남았으면
       └─ Mission Control visible drag → stable snapshot 검증
-  └─ 현재 활성 Space 즉시 복원
+  └─ 「일반 Space 복원」 ON이면 현재 활성 Space의 창 위치 복원
 
 사용자가 다른 외장 Space로 전환
   └─ Space 변경 알림 수신
@@ -68,16 +68,17 @@ regular Space의 화면 소속은 앱 binding에서만 간접 추론하지 않�
           └─ 현재 활성 Space에 묶인 대상 앱만 복원
 
 방문한 single native fullscreen (처음 본 앱 포함)
-  └─ 방문 시 의도 수집
+  └─ 「전체 화면 복원」 ON이면
       └─ 복원 때 일반 창으로 전환 → 목표 외장 화면으로 이동 → fullscreen 재생성
 
 Split View / 판정 불명 type 4
   └─ 감지하고 그대로 둠
 ```
 
-- 수동 슬롯: 사용자가 각 Space를 연 상태에서 「지금 레이아웃 저장」을 한 번씩 누르면, 방문한 Space의 앱 위치가 기존 프로필에 병합된다.
-- 자동 슬롯: 실험실이 켜져 있으면 Space 방문·창 이동뿐 아니라 Mission Control을 닫을 때도 수집한다. 현재 활성 Space의 명확한 표준 창과 연결된 외장 화면의 식별 가능한 regular Space 전체가 후보이며, regular Space는 앱이나 방문이 없어도 포함된다.
-- 일반 Space 자체 복원: Debug 실험실의 별도 토글이다. OFF이면 위 수집과 방문 기반 창/fullscreen 복원은 유지하고 Mission Control visible drag만 건너뛴다. 자동 슬롯 OFF에서는 비활성화된다.
+- 수동 슬롯: 사용자가 각 Space를 연 상태에서 「지금 레이아웃 저장」을 한 번씩 누르면, 방문한 Space의 앱 위치와 확인된 fullscreen 의도가 기존 프로필에 병합된다. 자동 슬롯과 무관하다.
+- 자동 슬롯: 이 토글이 켜져 있으면 Space 방문·창 이동뿐 아니라 Mission Control을 닫을 때도 수집한다. 현재 활성 Space의 명확한 표준 창과 연결된 외장 화면의 식별 가능한 regular Space 전체가 후보이며, regular Space는 앱이나 방문이 없어도 포함된다.
+- 일반 Space 복원: 실험실의 별도 토글이다. Space 자체의 화면 소속과 Space별 창 위치를 함께 다루며 자동 슬롯 OFF에서도 수동 슬롯으로 동작한다.
+- 전체 화면 복원: 실험실의 별도 토글이다. 확인된 single native fullscreen만 재생성하며 일반 Space 복원·자동 슬롯과 독립이다.
 - 복원 모드가 자동이면 연결 직후의 활성 Space와 이후 방문한 Space를 자동 복원한다.
 - 복원 모드가 수동이면 「지금 레이아웃 복원」은 현재 활성 Space만 다룬다.
 - single fullscreen은 처음 본 앱도 자동 슬롯 후보에 등록한다. 기존 일반 위치가 있으면 그 frame을 유지하고, 처음 본 fullscreen이면 현재 화면 bounds를 임시 frame으로 쓴다. 복원은 fullscreen Space 자체를 옮기지 않고 일반 창으로 되돌린 뒤 목표 외장 화면에서 다시 만든다.
@@ -87,10 +88,10 @@ Split View / 판정 불명 type 4
 
 ## 4. 절대 지킬 규칙
 
-1. **SkyLight로 Space를 쓰지 않는다.** Space 변경 함수를 로드하지 않고 생성·삭제·전환하지 않는다. 유일한 예외는 Debug·실험실에서 검증된 Mission Control regular thumbnail visible drag다.
+1. **SkyLight로 Space를 쓰지 않는다.** Space 변경 함수를 로드하지 않고 생성·삭제·전환하지 않는다. 유일한 예외는 실험실에서 검증된 Mission Control regular thumbnail visible drag다.
 2. **전역 번호를 저장하지 않는다.** `Desktop N`, global order, raw SID, CGWindowID는 프로필이나 UserDefaults에 기록하지 않는다.
 3. **type `4`를 직접 drag하지 않는다.** regular Space 이동에 따라 macOS가 같은 fullscreen Space를 함께 옮길 수는 있다. 이때 SID·kind·name·membership을 전후 검증한다. 따라오지 않은 확인된 single fullscreen은 기존처럼 windowed → 목표 frame → fullscreen으로 재생성한다. Split View·알 수 없는 type·`AXFullScreen` 불명은 움직이지 않는다.
-4. **Space binding이 있으면 추측하지 않는다.** 현재 Space를 확실히 대응하지 못하면 해당 대상 앱만 건너뛰고 legacy 창 선택으로 내려가지 않는다.
+4. **켜진 복원 범위의 Space binding은 추측하지 않는다.** 현재 Space를 확실히 대응하지 못하면 해당 대상 앱만 건너뛴다. 해당 범위 토글이 OFF이면 그 binding은 없는 것처럼 기존 창 복원 규칙을 쓴다.
 5. **내장 화면 배치를 저장하지 않는다.** 내장 Space 레코드는 목표로 사용하지 않는다. 다만 저장 대상 창이 내장 화면에 밀려 있으면 목표 외장 화면으로 회수할 수 있다.
 6. **기존 기능을 보존한다.** 실험실이 꺼졌거나 private reader가 로드되지 않으면 현재 flat 프로필 동작과 테스트 결과가 그대로다.
 7. **오버레이는 먼저 영속화하지 않는다.** 첫 vertical slice는 같은 Plugback 프로세스 안의 분리·재연결만 지원한다.
@@ -512,7 +513,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - `SpaceRelocationPlanner`는 앱 binding과 독립 목록의 합집합을 사용한다. 따라서 profile app이 0개인 regular Space도 기존 visible drag와 전후 snapshot 검증 경로를 그대로 탄다.
 - 한 desired Space가 현재·소실 등으로 막혀도 뒤의 안전한 비활성 Space 이동을 계속 고르도록 planner를 보강했다. 첫 blocked 항목 하나가 전체 복구를 가리는 회귀 테스트를 포함한다.
 - 빈 Space 수집→확정→재배치 plan, 이름 없음 제외, Mission Control open/closed burst 압축을 포함한 전체 150개 테스트가 통과했다.
-- `labSpaceRelocation`을 별도 저장 설정으로 두고 controller의 visible drag 진입점 하나에서 게이트한다. 새 값이 없는 기존 자동 슬롯 사용자는 최초에 그 값을 이어받고, OFF 회귀 테스트는 relocator 호출이 늘지 않음을 확인한다.
+- `labRegularSpaceRestore`를 별도 저장 설정으로 두고 controller의 visible drag와 Space별 창 복원을 함께 게이트한다. 기존 `labSpaceRelocation` defaults key는 유지한다. 새 값이 없는 기존 자동 슬롯 사용자는 최초에 그 값을 이어받고, OFF 회귀 테스트는 relocator 호출이 늘지 않음을 확인한다.
 - 실제 앱에서 A의 regular Space 세 개를 후보로 모은 뒤, 가운데 Space를 A→내장으로 옮기고 Mission Control을 닫자 후보가 3→2로 바뀌었다. 다른 내장 Space를 A로 옮기자 2→3이 되면서 이전 identity가 아니라 새 opaque name이 들어왔다. slot 수 추측이 아니라 Space identity와 화면 소속을 다시 읽은 결과다.
 - A 분리 시 이 세 opaque name이 자동 슬롯에 확정됐다. B에는 A 프로필을 적용하지 않았고, B 분리 뒤 A를 연결하자 저장된 비활성 Space 두 개는 macOS가 같은 SID·name으로 A에 스스로 다시 붙였다. relocation 중단점은 0회였고, A 대상이 아니었던 별도 Space는 내장 화면에 남았다.
 - 경로를 강제로 검증하려고 A에서 다시 저장한 뒤 저장 대상 비활성 Space 하나를 내장 화면으로 옮기고 수동 복원을 실행했다. planner와 relocator가 각각 1회 실행됐고 Mission Control visible drag 뒤 같은 SID `dbc7…`·opaque name `2f5f…`이 A local order 3으로 돌아왔다. 다른 내장 Space는 움직이지 않았고 복원 후 두 read의 topology·membership이 동일했다.
@@ -523,6 +524,32 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 1. macOS가 저장 Space를 스스로 A에 다시 붙이지 않는 A → B → A 회차에서 자동 relocation을 2회 더 확인해 합계 3/3 만들기
 2. 자동 슬롯 OFF에서는 같은 Mission Control drag가 후보와 저장값을 바꾸지 않는지 확인
 
+### P5.7 — 저장 방식과 복원 범위 분리
+
+사용자 설정을 세 독립 축으로 정리한다.
+
+- 「자동 슬롯」은 이동·방문·Mission Control 닫힘 수집과 분리/종료 확정만 제어한다.
+- 「일반 Space 복원」은 Space 자체의 화면 복구와 Space별 창 위치 복원을 함께 제어한다.
+- 「전체 화면 복원」은 확인된 single native fullscreen 재생성만 제어한다.
+- 수동 저장은 자동 슬롯 OFF에서도 일반 Space 또는 전체 화면 복원이 ON이면 manual overlay를 함께 잡는다. 두 복원 토글은 manual/auto 중 선택된 슬롯에 같은 방식으로 적용된다.
+- 복원 범위가 OFF인 binding은 legacy 창 복원으로 내려가며 raw fullscreen write나 Mission Control drag를 실행하지 않는다.
+- 이전 「일반 Space 자체 복원」 값과 기존 자동 슬롯 사용자의 fullscreen 동작은 각각 한 번 이어받고, 이후 세 값은 독립적으로 저장한다.
+
+자동 슬롯 OFF에서 수동 슬롯만으로 regular Space를 외장 화면에 되돌린 뒤 방문한 창 위치를 복원하는 회귀 테스트와, single fullscreen 재생성·별도 OFF 시 fullscreen write 0회 회귀 테스트를 추가했다.
+
+### P5.8 — Release 실험실 노출
+
+- `AppServices`가 Release에도 `SpaceReader`와 `MissionControlSpaceRelocator`를 주입하고 설정의 세 실험실 토글을 표시한다.
+- 세 토글이 모두 OFF이면 private Space snapshot을 읽지 않고 기존 flat 저장·복원 경로만 쓴다.
+- 기능은 Release에 포함되지만 기본 꺼짐인 실험실 상태를 유지한다.
+
+### P5.9 — 자동 슬롯 반영 방식
+
+- 실험실의 자동 슬롯 아래에서 「분리할 때 저장」(기본), 「변경 즉시 저장」, 「복원 즉시 반영 · 분리 시 저장」을 고른다.
+- 세 방식은 같은 화면별 candidate와 auto slot을 공유한다. 저장 시점과 연결 중 후보를 복원 소스로 쓸지만 달라지므로 A/B 프로필 격리는 유지된다.
+- 기존 설정에는 새 값이 없으므로 현재 동작인 「분리할 때 저장」으로 이어간다. 「변경 즉시 저장」으로 바꾸면 이미 대기 중인 후보도 곧바로 확정한다.
+- 「복원 즉시 반영 · 분리 시 저장」의 카드는 저장된 자동 슬롯과 혼동하지 않도록 `복원 소스 · 현재 배치 · 저장 대기`로 표시한다.
+
 ### P6 — 결과 표시와 현재 문서 동기화
 
 실기기 vertical slice가 통과한 뒤에만 사용자 surface를 늘린다.
@@ -532,13 +559,13 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - `CONTEXT.md`, `FUNCTIONAL_SPEC.md`, `ARCHITECTURE.md`, `RESTORE_FLOW.md`, `UNDOCUMENTED_APIS.md` 갱신
 - 필요하면 `US-014-active-space-restore.md` 추가
 
-이 단계 전까지 이 기능은 Debug/실험실 검증 경로이며 제품 동작으로 문서화하지 않는다.
+이 기능은 Release에도 기본 꺼짐인 실험실로 노출한다. 정식 동작으로 승격하기 전에는 아래 호환성·실기기 게이트를 계속 적용한다.
 
 진행 기록(2026-08-29, 사용자 확인용 Debug surface):
 
 - 카드의 평면 앱 목록을 저장된 일반 Space별로 묶고, 한 외장 화면 안의 저장 순서대로 `Space N`을 붙인다. macOS의 전역 `데스크탑 N`을 흉내 내지 않으며 overlay identity나 저장값으로 쓰지 않는다.
-- snapshot이 없거나 name 대응이 유일하지 않아도 저장된 로컬 순번은 유지하고 현재 여부만 표시하지 않는다. single fullscreen은 `전체 화면`, 불명 binding은 `Space 확인 필요`로 분리한다.
-- 앱이 없는 저장 regular Space도 `저장된 앱 없음`으로 보인다. 비활성 Space 때문에 legacy 예측이 만든 `창 없음`은 숨기고 그룹에 `방문 시 복원`을 표시한다.
+- 카드 행은 live inventory가 아니라 저장된 복원 계획이다. snapshot이 없거나 name 대응이 유일하지 않아도 저장된 로컬 순번을 유지하고 상태만 숨긴다. unique 대응이면 `현재`, `방문 시 복원`, `다른 화면 · 복원 대기`, `현재 없음`을 구분하며 live-but-unsaved Space는 행으로 섞지 않는다.
+- 앱이 없는 저장 regular Space도 `저장된 앱 없음`으로 보인다. 비활성 Space 때문에 legacy 예측이 만든 `창 없음`은 숨긴다. 목표 화면의 현재 regular Space 구성과 저장본이 다르면 자동 슬롯은 분리 시 확정될 변경으로, 수동 슬롯은 저장 버튼으로 갱신할 변경으로 알린다. single fullscreen은 `전체 화면`, 불명 binding은 `Space 확인 필요`로 분리한다.
 - core의 로컬 순번 테스트와 앱 표현 테스트를 추가했다. 최종 제품 surface 확정과 P6 전체 문서 승격은 남은 relocation 실기기 게이트 뒤에 한다.
 
 ### P7 — 영속화 여부: 별도 결정
@@ -598,7 +625,7 @@ xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback \
 | 대안 | 보류 이유 | 다시 볼 조건 |
 |---|---|---|
 | 키보드로 모든 Space 자동 순회 | 포커스·애니메이션·사용자 단축키·대상 화면에 의존 | 방문 기반 UX가 사용자 검증에서 실패할 때 별도 실험 |
-| Mission Control UI 자동화 | **Debug·실험실에서 regular relocation preflight로 채택.** 화면에 보이고 UI 변경에 취약하므로 strict AX/snapshot gate 뒤 한 번만 수행 | Release 승격은 A → B → A 3/3과 OS 업데이트 재게이트 뒤 별도 결정 |
+| Mission Control UI 자동화 | **Release의 기본 꺼짐 실험실에서 regular relocation preflight로 채택.** 화면에 보이고 UI 변경에 취약하므로 strict AX/snapshot gate 뒤 한 번만 수행 | OS 업데이트 때 실기기 재게이트 |
 | SkyLight private write | OS 버전·보안 설정 의존, 잘못된 Space 이동 위험 | 배포 기능이 아닌 별도 연구 브랜치에서만 |
 | raw CGWindow bounds로 비활성 창 직접 복원 | 자동 수집의 보수적 fullscreen 판정에만 채택. 이동할 AX 표준 창은 여전히 없어 직접 복원·검증 불가 | 안정적인 CG→AX 역방향 join이 검증될 때 |
 | Split View 자동 생성 | pairing·side·divider를 보장하는 수단 없음 | Apple 공개 capability가 생길 때 |
@@ -610,7 +637,7 @@ xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback \
 
 - 실험실이 꺼진 기본 동작에 회귀가 없다.
 - 같은 프로세스 안에서 외장 화면 분리·재연결 후, 식별 가능한 regular Space 자체를 목표 외장 화면으로 되돌리고 방문한 Space의 대상 앱만 복원한다.
-- 저장된 비활성 regular Space가 다른 화면에 unique하게 남은 경우에만 Debug visible drag로 목표 외장 화면에 되돌리고, 그 밖의 내장 배치는 자동 조작하지 않는다.
+- 저장된 비활성 regular Space가 다른 화면에 unique하게 남은 경우에만 실험실 visible drag로 목표 외장 화면에 되돌리고, 그 밖의 내장 배치는 자동 조작하지 않는다.
 - 확인된 single fullscreen만 목표 외장 화면에서 best-effort로 재생성한다. Split View·다중 창·순서는 건드리지 않는다.
 - private read 실패는 crash나 잘못된 이동이 아니라 bundle 단위 건너뜀 또는 기존 동작으로 끝난다.
 - 코드, 기능명세, architecture, 복원 흐름, 비공식 API 목록이 같은 경계를 설명한다.
