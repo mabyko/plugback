@@ -13,5 +13,6 @@
 | [RESTORE_FLOW.md](./RESTORE_FLOW.md) | 케이블 하나가 창 하나에 닿기까지 — 네 층의 흐름도. 조건은 정의하지 않고 F-번호로 가리킨다 |
 | [BUILD_RUNBOOK.md](./BUILD_RUNBOOK.md) | 빌드해서 실기기에 올리는 절차 |
 | [UNDOCUMENTED_APIS.md](./UNDOCUMENTED_APIS.md) | SDK에 선언되지 않은 이름을 쓰는 곳 전부와, 깨졌을 때의 동작 |
+| [ACTIVE_SPACE_RESTORE_PLAN.md](./ACTIVE_SPACE_RESTORE_PLAN.md) | 활성 Space 기반 복원의 실측 근거·단계별 게이트·구현 계획. 아직 현재 제품 동작은 아니다 |
 
 문서 변경 이력은 git이 담당한다. 결정의 근거는 이력이 아니라 해당 문서 안에 남긴다.

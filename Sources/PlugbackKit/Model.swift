@@ -72,21 +72,46 @@ public enum ScreenPresence: Equatable, Sendable {
     case none
 }
 
-/// 표준 창 하나. id는 게이트웨이 세션 한정이다 — 앱 재시작을 넘는 창 식별자는 없다 (FUNCTIONAL_SPEC 부록 3).
+/// Space 경로에서만 쓰는 전체화면 판정. 공개되지 않은 AX attribute를 읽지 못하면
+/// 일반 창으로 낮추지 않고 unknown으로 남긴다.
+public enum WindowFullscreenState: Equatable, Sendable {
+    case windowed
+    case fullscreen
+    case unknown
+}
+
+/// 표준 창 하나. id와 windowServerID는 마지막 게이트웨이 열거에만 유효하다.
+/// 앱 재시작을 넘는 창 식별자는 없다 (FUNCTIONAL_SPEC 부록 3).
 public struct WindowInfo: Equatable, Sendable {
     public let id: Int
     public let appBundleID: String
     public let appName: String
     public let frame: CGRect
-    public let isFullscreen: Bool
+    public let fullscreenState: WindowFullscreenState
     public let isMinimized: Bool
+    public let windowServerID: CGWindowID?
 
     public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
-                isFullscreen: Bool = false, isMinimized: Bool = false) {
+                isFullscreen: Bool = false, isMinimized: Bool = false,
+                windowServerID: CGWindowID? = nil) {
         self.id = id; self.appBundleID = appBundleID; self.appName = appName
-        self.frame = frame; self.isFullscreen = isFullscreen; self.isMinimized = isMinimized
+        self.frame = frame
+        fullscreenState = isFullscreen ? .fullscreen : .windowed
+        self.isMinimized = isMinimized
+        self.windowServerID = windowServerID
     }
 
+    public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
+                fullscreenState: WindowFullscreenState, isMinimized: Bool = false,
+                windowServerID: CGWindowID? = nil) {
+        self.id = id; self.appBundleID = appBundleID; self.appName = appName
+        self.frame = frame; self.fullscreenState = fullscreenState
+        self.isMinimized = isMinimized; self.windowServerID = windowServerID
+    }
+
+    /// 기존 flat 복원 경로의 source compatibility. unknown은 종전처럼 false지만,
+    /// Space-aware 경로는 fullscreenState를 직접 보고 unknown을 움직이지 않는다.
+    public var isFullscreen: Bool { fullscreenState == .fullscreen }
     public var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
 }
 

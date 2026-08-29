@@ -1,5 +1,10 @@
 import AppKit
 import ApplicationServices
+import Darwin
+
+private typealias AXUIElementGetWindowFunction = @convention(c) (
+    AXUIElement, UnsafeMutablePointer<CGWindowID>
+) -> AXError
 
 /// 실물 어댑터 — 접근성 API 전체를 여기 가둔다 (docs/ARCHITECTURE.md의 유일한 AX 접점).
 /// AX 좌표계는 이미 좌상단 원점 전역이므로 창 프레임은 무변환으로 흐른다.
@@ -14,10 +19,24 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
     /// 창 목록 조회가 한도를 넘겼을 때 한 번만 쓰는 재시도 한도 (F-02.4의 250ms는 평시 한도다).
     /// 화면 재구성 순간의 앱은 느리다 — 실기기 측정 후 조정하는 보정 노브다.
     private let retryTimeout: TimeInterval
+    private let axWindowID: AXUIElementGetWindowFunction?
 
     public init(windowWaitDeadline: TimeInterval = 3.0, retryTimeout: TimeInterval = 1.0) {
         self.windowWaitDeadline = windowWaitDeadline
         self.retryTimeout = retryTimeout
+        let applicationServices = dlopen(
+            "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+            RTLD_LAZY | RTLD_LOCAL
+        )
+        let hiServices = dlopen(
+            "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/Versions/A/HIServices",
+            RTLD_LAZY | RTLD_LOCAL
+        )
+        axWindowID = loadUndocumentedSymbol(
+            from: [applicationServices, hiServices],
+            named: "_AXUIElementGetWindow",
+            as: AXUIElementGetWindowFunction.self
+        )
     }
 
     public func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
@@ -54,14 +73,18 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
                       subrole == kAXStandardWindowSubrole as String,
                       let frame = frame(of: element) else { continue }
                 let minimized: Bool = copy(element, kAXMinimizedAttribute) ?? false
-                let fullscreen: Bool = copy(element, "AXFullScreen") ?? false
+                let fullscreen = fullscreenState(of: element)
+                var rawWindowID: CGWindowID = 0
+                let windowServerID = axWindowID?(element, &rawWindowID) == .success
+                    ? rawWindowID : nil
 
                 let id = nextID
                 nextID += 1
                 refs[id] = element
                 result.append(WindowInfo(id: id, appBundleID: app.bundleID,
                                          appName: app.name,
-                                         frame: frame, isFullscreen: fullscreen, isMinimized: minimized))
+                                         frame: frame, fullscreenState: fullscreen,
+                                         isMinimized: minimized, windowServerID: windowServerID))
             }
         }
         return result
@@ -157,5 +180,13 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
         guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return nil }
         return CGRect(origin: origin, size: size)
+    }
+
+    private func fullscreenState(of element: AXUIElement) -> WindowFullscreenState {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, "AXFullScreen" as CFString, &value
+        ) == .success, let fullscreen = value as? Bool else { return .unknown }
+        return fullscreen ? .fullscreen : .windowed
     }
 }

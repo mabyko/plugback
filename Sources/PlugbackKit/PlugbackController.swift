@@ -106,6 +106,7 @@ public final class PlugbackController: ObservableObject {
             defaults.set(labAutoSlot, forKey: Keys.labAutoSlot)
             slots.isLabEnabled = labAutoSlot // 씨앗 복사·후보 폐기는 슬롯 모듈의 일이다
             syncCollectTrigger()
+            syncSpaceWatcher()
             refreshPredictionsAfterOptionChange() // 복원 소스가 바뀌면 점도 바뀐다
         }
     }
@@ -206,17 +207,32 @@ public final class PlugbackController: ObservableObject {
     private var collectTrigger: CollectTrigger?
     /// 창 이동 관찰의 어댑터. 게이트웨이와 같은 seam이지만 다른 인터페이스다 (WindowMoveSource).
     private let moveSource: WindowMoveSource?
+    /// Debug/실험실에서만 주입되는 read-only Space adapter. nil이면 기존 제품 경로 그대로다.
+    private let spaceReader: SpaceReading?
+    private let activeSpaceDebounceInterval: TimeInterval
+    private var activeSpaceWatcher: ActiveSpaceWatcher?
+    /// 연결 직후 아직 방문하지 않은 Space binding. 완료·제자리·fullscreen만 여기서 빠진다.
+    private var pendingSpaceBundles: [String: Set<String>] = [:]
+    private var pendingSpaceRefresh = false
+
+    /// AX window ID는 마지막 열거에만 유효하다. 복원 전에는 먼저 시작한 read가 모두 끝나길 기다린다.
+    private var windowReadsInFlight = 0
+    private var windowReadWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// 수집 최소 간격 — 실기기 측정 후 조정하는 보정 노브 (테스트는 0을 준다).
     private let collectInterval: TimeInterval
     public init(gateway: WindowGateway, screenProvider: ScreenProvider, store: ProfileStore,
                 defaults: UserDefaults = .standard, collectInterval: TimeInterval = 10,
-                moveSource: WindowMoveSource? = nil) {
+                moveSource: WindowMoveSource? = nil,
+                spaceReader: SpaceReading? = nil,
+                activeSpaceDebounceInterval: TimeInterval = 1.5) {
         self.gateway = gateway
         self.screenProvider = screenProvider
         self.defaults = defaults
         self.collectInterval = collectInterval
         self.moveSource = moveSource
+        self.spaceReader = spaceReader
+        self.activeSpaceDebounceInterval = activeSpaceDebounceInterval
         restoreMode = defaults.string(forKey: Keys.restoreMode).flatMap(RestoreMode.init) ?? .automatic
         restoreMinimized = defaults.bool(forKey: Keys.restoreMinimized)
         reopenWindowless = defaults.bool(forKey: Keys.reopenWindowless)
@@ -245,13 +261,16 @@ public final class PlugbackController: ObservableObject {
         }
         w.start()
         watcher = w
+        syncSpaceWatcher()
         syncCollectTrigger() // 실행 시점에 실험실이 켜져 있으면 수집도 같이 시작한다
     }
 
     /// 실험실 상태와 수집 트리거를 맞춘다. 꺼진 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
     /// 신호원이 둘이라는 사실은 트리거 뒤에 있다 — 여기는 켜고 끄고 대상을 맞출 뿐이다.
     private func syncCollectTrigger() {
-        guard labAutoSlot else {
+        // P4는 수동 vertical slice다. Space overlay를 profile과 다른 legacy 후보로 덮지 않도록
+        // 실물 Space 경로가 켜진 동안 자동 수집은 P5까지 잠시 멈춘다.
+        guard labAutoSlot, !spaceModeEnabled else {
             let stopping = collectTrigger
             collectTrigger = nil
             Task { await stopping?.stop() }
@@ -270,6 +289,28 @@ public final class PlugbackController: ObservableObject {
             collectTrigger = trigger
         }
         Task { await refreshCollectTargets() }
+    }
+
+    private var spaceModeEnabled: Bool { labAutoSlot && spaceReader != nil }
+
+    /// 실험실이 꺼져 있으면 private read뿐 아니라 공개 Space 알림 구독도 존재하지 않는다.
+    private func syncSpaceWatcher() {
+        guard spaceModeEnabled else {
+            activeSpaceWatcher?.stop()
+            activeSpaceWatcher = nil
+            pendingSpaceBundles.removeAll()
+            pendingSpaceRefresh = false
+            return
+        }
+        guard activeSpaceWatcher == nil else { return }
+        let watcher = ActiveSpaceWatcher(
+            debounceInterval: activeSpaceDebounceInterval
+        ) { [weak self] in
+            guard let self else { return }
+            Task { await self.activeSpaceChanged() }
+        }
+        watcher.start()
+        activeSpaceWatcher = watcher
     }
 
     // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
@@ -311,6 +352,34 @@ public final class PlugbackController: ObservableObject {
         }
     }
 
+    /// 컨트롤러에서 시작하는 모든 AX 창 열거의 단일 입구. 복원은 이 카운터를 drain한 뒤
+    /// authoritative 열거를 시작하므로, 더 오래된 열거가 그 ID를 뒤늦게 무효화하지 못한다.
+    private func readWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
+        windowReadsInFlight += 1
+        defer {
+            windowReadsInFlight -= 1
+            if windowReadsInFlight == 0 {
+                let waiters = windowReadWaiters
+                windowReadWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+        }
+        return await gateway.standardWindows(of: bundleIDs)
+    }
+
+    private func drainWindowReads() async {
+        guard windowReadsInFlight > 0 else { return }
+        await withCheckedContinuation { windowReadWaiters.append($0) }
+    }
+
+    private func stableSpaceSnapshot(for windows: [WindowInfo]) async -> SpaceSnapshot? {
+        guard spaceModeEnabled, let spaceReader else { return nil }
+        let ids = Array(Set(windows.compactMap(\.windowServerID))).sorted()
+        let availability = await spaceReader.stableSnapshot(windowServerIDs: ids)
+        guard spaceModeEnabled, case .available(let snapshot) = availability else { return nil }
+        return snapshot
+    }
+
     /// [💾 지금 레이아웃 저장] (F-03). 연결된 모든 외장 화면의 프로필을 각각 갱신한다.
     /// async — 창 열거가 이 동작의 본체라서다. 반환값 = 실행/거부 사유 — 확인 표시는 진짜 저장됐을 때만 뜬다.
     @discardableResult
@@ -322,8 +391,11 @@ public final class PlugbackController: ObservableObject {
         guard !slots.isSaveBlocked else { return .saveBlocked }
         syncScreens()
         guard isConnected else { return .notConnected }
-        let windows = await gateway.standardWindows(of: nil)
-        slots.capture(windows: windows, on: externalScreens)
+        let windows = await readWindows(of: nil)
+        let snapshot = await stableSpaceSnapshot(for: windows)
+        slots.capture(windows: windows, on: externalScreens, snapshot: snapshot)
+        // 사람이 지금 배치를 다시 선언했으므로 이전 재연결 회차의 pending은 더 이상 유효하지 않다.
+        for screen in externalScreens { pendingSpaceBundles.removeValue(forKey: screen.id) }
         // 연결된 모든 화면의 합이다 — 저장이 모든 화면에 썼는데 첫 화면만 세면 「저장됨 · n개」가 거짓이다.
         // 체크된 앱만 센다 — 해제한 앱은 저장 대상이 아니므로 세면 역시 거짓이다.
         let count = externalScreens
@@ -342,13 +414,13 @@ public final class PlugbackController: ObservableObject {
     /// 대상 앱만 열거한다. 새 앱을 프로필에 등록하는 것은 수동 저장의 몫이고,
     /// 자동 슬롯은 이미 아는 앱의 위치만 따라간다 — 그래서 열거가 싸고, 수동 저장이 의미를 유지한다.
     func collectCandidate() async {
-        guard labAutoSlot, !isRestoring else { return }
+        guard labAutoSlot, !spaceModeEnabled, !isRestoring else { return }
         syncScreens()
         guard isConnected else { return }
         let targets = slots.targets(for: externalScreens)
         guard !targets.isEmpty else { return } // 아는 앱이 없으면 따라갈 것도 없다
 
-        slots.collect(windows: await gateway.standardWindows(of: targets), on: externalScreens)
+        slots.collect(windows: await readWindows(of: targets), on: externalScreens)
         await refreshCollectTargets() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
     }
 
@@ -358,7 +430,7 @@ public final class PlugbackController: ObservableObject {
         syncScreens() // 명령은 화면 상태를 스스로 동기화한다 — 호출자에게 순서 의식이 없다.
         // 이게 없으면 앱을 켤 때 화면이 이미 꽂혀 있는 경우 등록이 통째로 빠진다:
         // 시작 직후 화면 상태는 '기억만'이고, 연결 이벤트는 이미 지나갔기 때문이다.
-        guard labAutoSlot, isConnected else {
+        guard labAutoSlot, !spaceModeEnabled, isConnected else {
             await collectTrigger?.retarget([])
             return
         }
@@ -368,6 +440,7 @@ public final class PlugbackController: ObservableObject {
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.
     /// 이 시점에 창을 읽지 않는다는 것이 이 경로의 핵심이며, 그 이유는 슬롯 모듈에 적혀 있다.
     func confirmCandidates(for screenIDs: Set<String>) {
+        for id in screenIDs { pendingSpaceBundles.removeValue(forKey: id) }
         guard slots.confirm(screenIDs) else { return }
         Task { await updatePredictions() }
     }
@@ -386,9 +459,41 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return .notConnected }
         guard !isRestoring else { return .alreadyRestoring }
-        isRestoring = true
-        defer { isRestoring = false }
+        let results = await performRestore(seedSpacePending: spaceModeEnabled)
+        return .restored(results)
+    }
 
+    /// ActiveSpaceWatcher의 무페이로드 이벤트가 들어오는 단일 지점. 복원 중이면 새 열거를
+    /// 시작하지 않고, 현재 pass가 끝난 뒤 최신 Space를 한 번만 다시 읽는다.
+    func activeSpaceChanged() async {
+        guard spaceModeEnabled, restoreMode == .automatic else { return }
+        if isRestoring {
+            pendingSpaceRefresh = true
+            return
+        }
+        syncScreens()
+        guard isConnected, pendingSpaceBundles.values.contains(where: { !$0.isEmpty }),
+              checkAuthorization() else { return }
+        _ = await performRestore(seedSpacePending: false)
+    }
+
+    private func performRestore(seedSpacePending: Bool) async -> [RestoreResult] {
+        isRestoring = true
+        // capture·collect·prediction이 먼저 시작한 열거가 있다면 authoritative read보다 앞에서 끝낸다.
+        await drainWindowReads()
+
+        let latest: [RestoreResult]
+        if spaceModeEnabled {
+            latest = await restoreWithSpaces(seedPending: seedSpacePending)
+        } else {
+            latest = await restoreLegacy()
+        }
+        isRestoring = false // 예측 갱신 전에 해제 — updatePredictions는 복원 중엔 양보한다
+        await updatePredictions()
+        return latest
+    }
+
+    private func restoreLegacy() async -> [RestoreResult] {
         var latest: [RestoreResult] = []
         repeat {
             pendingRestore = false
@@ -404,9 +509,120 @@ public final class PlugbackController: ObservableObject {
             latest = results
             if pendingRestore { syncScreens() } // 보류된 새 화면을 반영해 한 바퀴 더 (멱등이라 수렴)
         } while pendingRestore && isConnected
-        isRestoring = false // 예측 갱신 전에 해제 — updatePredictions는 복원 중엔 양보한다
-        await updatePredictions()
-        return .restored(latest)
+        return latest
+    }
+
+    private func restoreWithSpaces(seedPending: Bool) async -> [RestoreResult] {
+        if seedPending { pendingSpaceBundles.removeAll() }
+        var shouldSeed = seedPending
+        var latest: [RestoreResult] = []
+
+        repeat {
+            pendingRestore = false
+            pendingSpaceRefresh = false
+            let resolved = slots.resolvedWithSpaces(for: externalScreens)
+            if shouldSeed { addSpacePending(from: resolved) }
+
+            let onlyBundles: [String: Set<String>]? = shouldSeed ? nil : pendingSpaceBundles
+            let bundleIDs = selectedBundleIDs(in: resolved, only: onlyBundles)
+            guard !bundleIDs.isEmpty else { break }
+
+            // 새 창 polling은 AX ID를 확보하기 전에 끝낸다. Space-bound 앱은 잘못된 Space에
+            // 새 창을 만들 수 있으므로 legacy 앱만 이 옵션을 적용한다.
+            await reopenLegacyWindowless(in: resolved, only: onlyBundles)
+            let windows = await readWindows(of: bundleIDs)
+            let snapshot = await stableSpaceSnapshot(for: windows)
+            let pass = await RestoreEngine.restore(
+                resolved: resolved,
+                screens: externalScreens,
+                windows: windows,
+                snapshot: snapshot,
+                onlyBundles: onlyBundles,
+                using: gateway,
+                options: RestoreOptions(
+                    restoreMinimized: restoreMinimized,
+                    reopenWindowless: reopenWindowless
+                )
+            )
+            removeCompletedSpaceBindings(pass.completedByScreen)
+            record(pass.results)
+            latest = pass.results
+
+            if pendingRestore {
+                syncScreens()
+                shouldSeed = true
+            } else {
+                shouldSeed = false
+            }
+        } while isConnected && (pendingRestore || pendingSpaceRefresh)
+        return latest
+    }
+
+    private func addSpacePending(from resolved: [String: ResolvedProfile]) {
+        var claimed = Set<String>()
+        for screen in externalScreens.sorted(by: { $0.id < $1.id }) {
+            guard let pair = resolved[screen.id] else { continue }
+            for app in pair.profile.apps where app.isEnabled
+                && claimed.insert(app.bundleID).inserted
+                && pair.overlay?.byBundle[app.bundleID] != nil {
+                pendingSpaceBundles[screen.id, default: []].insert(app.bundleID)
+            }
+        }
+    }
+
+    private func selectedBundleIDs(
+        in resolved: [String: ResolvedProfile], only: [String: Set<String>]?
+    ) -> [String] {
+        var claimed = Set<String>()
+        var selected: [String] = []
+        for screen in externalScreens.sorted(by: { $0.id < $1.id }) {
+            guard let profile = resolved[screen.id]?.profile else { continue }
+            for app in profile.apps where app.isEnabled && claimed.insert(app.bundleID).inserted {
+                if only == nil || only?[screen.id]?.contains(app.bundleID) == true {
+                    selected.append(app.bundleID)
+                }
+            }
+        }
+        return selected
+    }
+
+    private func reopenLegacyWindowless(
+        in resolved: [String: ResolvedProfile], only: [String: Set<String>]?
+    ) async {
+        guard reopenWindowless else { return }
+        var claimed = Set<String>()
+        var windowless: [String] = []
+        for screen in externalScreens.sorted(by: { $0.id < $1.id }) {
+            guard let pair = resolved[screen.id] else { continue }
+            for app in pair.profile.apps where app.isEnabled && claimed.insert(app.bundleID).inserted {
+                guard only == nil || only?[screen.id]?.contains(app.bundleID) == true,
+                      pair.overlay?.byBundle[app.bundleID] == nil,
+                      await gateway.isRunning(bundleID: app.bundleID),
+                      await readWindows(of: [app.bundleID]).isEmpty else { continue }
+                windowless.append(app.bundleID)
+            }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for bundleID in windowless {
+                group.addTask { _ = await self.gateway.openWindow(bundleID: bundleID) }
+            }
+        }
+    }
+
+    private func removeCompletedSpaceBindings(_ completed: [String: Set<String>]) {
+        for (screenID, bundleIDs) in completed {
+            pendingSpaceBundles[screenID]?.subtract(bundleIDs)
+            if pendingSpaceBundles[screenID]?.isEmpty == true {
+                pendingSpaceBundles.removeValue(forKey: screenID)
+            }
+        }
+    }
+
+    private func record(_ results: [RestoreResult]) {
+        // 결과 수명 = 프로필 수명 — 복원 중 삭제된 프로필의 결과를 부활시키지 않는다.
+        for result in results where slots.source(for: result.screenID) != nil {
+            resultsByScreen[result.screenID] = result
+        }
     }
 
     /// 체크 해제는 복원 제외일 뿐, 프로필에서 지우지 않는다 (US-006 AC-2).
@@ -429,12 +645,17 @@ public final class PlugbackController: ObservableObject {
     /// 프로필 통째 삭제 (F-05.6). 그 화면을 다시 연결하면 프로필 없는 화면이다 (US-012 AC-3).
     public func removeProfile(_ screenID: String) {
         slots.remove(screenID: screenID)
+        pendingSpaceBundles.removeValue(forKey: screenID)
         resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
     }
 
     private func mutateProfile(on screenID: String?, _ change: (inout Profile) -> Void) {
         guard let id = screenID ?? currentScreenID else { return }
         slots.edit(screenID: id, change)
+        let enabled = Set((slots.source(for: id)?.profile.apps ?? [])
+            .filter(\.isEnabled).map(\.bundleID))
+        pendingSpaceBundles[id]?.formIntersection(enabled)
+        if pendingSpaceBundles[id]?.isEmpty == true { pendingSpaceBundles.removeValue(forKey: id) }
     }
 
     private func updatePredictions() async {
@@ -443,7 +664,7 @@ public final class PlugbackController: ObservableObject {
         guard !isRestoring else { return }
         // 화면별로 계산하되 열거는 한 번이다 — 카드가 「그 화면에 뭐가 있나」도 답하기 때문이다(대상 아님 행).
         // 게이트웨이가 actor라 메인은 막히지 않고, 점은 원래 비동기로 채워진다.
-        let windows = await gateway.standardWindows(of: nil)
+        let windows = await readWindows(of: nil)
         // (화면, 실제 ScreenInfo?) 쌍 — 기억만 상태에서는 화면이 없어 제자리 판정이 생략된다.
         let targets: [(screenID: String, screen: ScreenInfo?)] = if isConnected {
             externalScreens.map { ($0.id, $0) }
@@ -516,7 +737,9 @@ public final class PlugbackController: ObservableObject {
         guard !slots.isSaveBlocked else { return .saveBlocked }
         syncScreens()
         guard isConnected else { return .notConnected }
-        slots.addTarget(windows: await gateway.standardWindows(of: [bundleID]), on: externalScreens)
+        let windows = await readWindows(of: [bundleID])
+        let snapshot = await stableSpaceSnapshot(for: windows)
+        slots.addTarget(windows: windows, on: externalScreens, snapshot: snapshot)
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
         await updatePredictions()
         return .captured(appCount: profile?.apps.filter(\.isEnabled).count ?? 0)

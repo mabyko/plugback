@@ -28,6 +28,21 @@ public enum RestorePrediction: Equatable, Sendable {
     case willSkip(SkipReason)
 }
 
+/// Space-aware 경로의 순수 선택 결과. 이동과 pending 수명은 P4 controller의 일이다.
+enum SpaceWindowSelection: Equatable, Sendable {
+    case legacy
+    case window(WindowInfo)
+    case inactive
+    case unavailable
+    case fullscreen
+}
+
+/// 한 Space-aware pass의 결과와, 더는 다음 Space 방문을 기다릴 필요가 없는 binding들.
+struct SpaceRestorePass: Equatable, Sendable {
+    var results: [RestoreResult]
+    var completedByScreen: [String: Set<String>]
+}
+
 /// 선택 복원 엔진 (F-02). 프로필에 없는 앱과 내장 화면의 창은 존재 자체를 모른다.
 /// 격리 자유 — 어느 액터에도 묶이지 않는다. AX의 실행 흐름은 게이트웨이 어댑터의 것이다 (F-02.4).
 /// 복원 정책 전부가 여기 산다: 창 선택, 건너뜀 판정, 지문 검증(F-01.4),
@@ -35,6 +50,68 @@ public enum RestorePrediction: Equatable, Sendable {
 public enum RestoreEngine {
     /// 이동 후 검증 허용 오차. 실기기 측정 후 조정할 수 있는 초기값이다 (F-02.3).
     public static let tolerance: CGFloat = 5
+
+    /// binding이 있는 bundle은 이 결과 하나만 따른다. 실패해도 legacy 선택으로 내려가지 않는다.
+    static func selectSpaceWindow(
+        bundleID: String,
+        in resolved: ResolvedProfile,
+        on screen: ScreenInfo,
+        windows: [WindowInfo],
+        snapshot: SpaceSnapshot?
+    ) -> SpaceWindowSelection {
+        guard let binding = resolved.overlay?.byBundle[bundleID] else { return .legacy }
+        let hint: SpaceHint
+        switch binding {
+        case .regular(let value): hint = value
+        case .unresolved(.fullscreen): return .fullscreen
+        case .unresolved: return .unavailable
+        }
+        guard let snapshot else { return .unavailable }
+
+        let displays = snapshot.displays.filter { $0.screenID == screen.id }
+        guard displays.count == 1, let display = displays.first else { return .unavailable }
+        let spaces = display.spaces.filter { $0.opaqueName == hint.opaqueName }
+        guard spaces.count == 1, let boundSpace = spaces.first else { return .unavailable }
+        switch boundSpace.kind {
+        case .fullscreen: return .fullscreen
+        case .unknown: return .unavailable
+        case .regular: break
+        }
+
+        let candidates = windows.filter { $0.appBundleID == bundleID }
+        // 저장 뒤 native fullscreen이 된 앱은 원래 regular Space가 비활성이어도 현재 type 4에서
+        // AXFullScreen으로 보인다. 이 강한 신호를 먼저 소비해야 "대기"로 영원히 남지 않는다.
+        if candidates.contains(where: { $0.fullscreenState == .fullscreen }) {
+            return .fullscreen
+        }
+        guard !candidates.contains(where: { $0.fullscreenState == .unknown }) else {
+            return .unavailable
+        }
+        guard boundSpace.isCurrent else { return .inactive }
+        guard !candidates.isEmpty else { return .unavailable }
+
+        var memberships: [SpaceRuntimeID] = []
+        for window in candidates {
+            guard let windowID = window.windowServerID,
+                  let ids = snapshot.membershipsByWindowServerID[windowID],
+                  ids.count == 1,
+                  let runtimeID = ids.first else { return .unavailable }
+            let joinedSpaces = snapshot.displays.flatMap(\.spaces).filter {
+                $0.runtimeID == runtimeID
+            }
+            guard joinedSpaces.count == 1, let joinedSpace = joinedSpaces.first else {
+                return .unavailable
+            }
+            switch joinedSpace.kind {
+            case .fullscreen: return .fullscreen
+            case .unknown: return .unavailable
+            case .regular: memberships.append(runtimeID)
+            }
+        }
+        guard Set(memberships) == [boundSpace.runtimeID], candidates.count == 1,
+              let window = candidates.first else { return .unavailable }
+        return .window(window)
+    }
 
     /// 연결된 외장 화면들에 각 프로필을 적용한다. 반환 시점 = 완료 시점 — 최종 결과다.
     /// 프로필 없는 화면은 결과를 만들지 않는다 (US-007 AC-5).
@@ -84,6 +161,94 @@ public enum RestoreEngine {
         return results
     }
 
+    /// 이미 한 번 열거한 창과 같은 회차의 Space snapshot만 쓴다. 이 함수 안에서는 창을
+    /// 다시 열거하지 않으므로 선택에 쓴 gateway window ID가 move가 끝날 때까지 유효하다.
+    static func restore(
+        resolved: [String: ResolvedProfile],
+        screens: [ScreenInfo],
+        windows: [WindowInfo],
+        snapshot: SpaceSnapshot?,
+        onlyBundles: [String: Set<String>]? = nil,
+        using gateway: WindowGateway,
+        options: RestoreOptions = RestoreOptions()
+    ) async -> SpaceRestorePass {
+        var results: [RestoreResult] = []
+        var completed: [String: Set<String>] = [:]
+        var claimed = Set<String>()
+
+        for screen in screens.sorted(by: { $0.id < $1.id }) {
+            guard let pair = resolved[screen.id] else { continue }
+            let profile = pair.profile
+            if let saved = profile.fingerprint, let live = screen.fingerprint, saved != live {
+                results.append(RestoreResult(
+                    screenID: screen.id, screenSkipReason: .fingerprintMismatch
+                ))
+                continue
+            }
+
+            let uniqueApps = profile.apps.filter { app in
+                app.isEnabled && claimed.insert(app.bundleID).inserted
+            }
+            let selectedApps = if let onlyBundles {
+                uniqueApps.filter { onlyBundles[screen.id]?.contains($0.bundleID) == true }
+            } else {
+                uniqueApps
+            }
+            guard !selectedApps.isEmpty else { continue }
+
+            var result = RestoreResult(screenID: screen.id)
+            for app in selectedApps {
+                guard await gateway.isRunning(bundleID: app.bundleID) else {
+                    result.entries.append(.init(
+                        bundleID: app.bundleID, displayName: app.displayName,
+                        outcome: .skipped(.appNotRunning)
+                    ))
+                    continue
+                }
+
+                let outcome: RestoreResult.Outcome
+                switch selectSpaceWindow(
+                    bundleID: app.bundleID, in: pair, on: screen,
+                    windows: windows, snapshot: snapshot
+                ) {
+                case .legacy:
+                    let candidates = windows.filter { $0.appBundleID == app.bundleID }
+                    guard !candidates.isEmpty else {
+                        result.entries.append(.init(
+                            bundleID: app.bundleID, displayName: app.displayName,
+                            outcome: .skipped(.noWindow)
+                        ))
+                        continue
+                    }
+                    switch pickWindow(from: candidates, on: screen, options: options) {
+                    case .skip(let reason): outcome = .skipped(reason)
+                    case .window(let window):
+                        outcome = await restore(app, window: window, on: screen,
+                                                using: gateway, options: options)
+                    }
+                case .window(let window):
+                    outcome = await restore(
+                        app, window: window, on: screen, using: gateway, options: options
+                    )
+                case .fullscreen:
+                    outcome = .skipped(.fullscreen)
+                case .inactive, .unavailable:
+                    continue
+                }
+
+                result.entries.append(.init(
+                    bundleID: app.bundleID, displayName: app.displayName, outcome: outcome
+                ))
+                if outcome == .moved || outcome == .skipped(.alreadyInPlace)
+                    || outcome == .skipped(.fullscreen) {
+                    completed[screen.id, default: []].insert(app.bundleID)
+                }
+            }
+            results.append(result)
+        }
+        return SpaceRestorePass(results: results, completedByScreen: completed)
+    }
+
     private static func restoreOne(
         _ app: TargetApp, on screen: ScreenInfo, using gateway: WindowGateway, options: RestoreOptions
     ) async -> RestoreResult.Outcome {
@@ -98,10 +263,18 @@ public enum RestoreEngine {
         case .skip(let reason): return .skipped(reason)
         case .window(let picked): window = picked
         }
+        return await restore(app, window: window, on: screen, using: gateway, options: options)
+    }
+
+    private static func restore(
+        _ app: TargetApp, window: WindowInfo, on screen: ScreenInfo,
+        using gateway: WindowGateway, options: RestoreOptions
+    ) async -> RestoreResult.Outcome {
         // Dock에서 먼저 꺼낸다 — 최소화 상태로는 이동 결과가 보이지 않는다 (F-02.2).
         // 꺼낸 뒤의 재판독 프레임으로 판정한다 — 열거 시점 스냅샷은 이미 스테일이다.
         var currentFrame = window.frame
         if window.isMinimized {
+            guard options.restoreMinimized else { return .skipped(.minimized) }
             guard let fresh = await gateway.unminimize(windowID: window.id) else { return .skipped(.minimized) }
             currentFrame = fresh
         }

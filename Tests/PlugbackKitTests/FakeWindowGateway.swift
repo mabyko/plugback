@@ -17,12 +17,22 @@ final class FakeWindowGateway: WindowGateway, WindowMoveSource {
     var runningBundleIDs: Set<String> = []
     /// 열거 횟수 — "복원 중엔 재열거하지 않는다" 계약의 관측 지점.
     private(set) var standardWindowsCalls = 0
+    var standardWindowsDelay: TimeInterval = 0
+    private(set) var standardWindowsHighWater = 0
+    private var standardWindowsInFlight = 0
     var moveBehavior: MoveBehavior = .honest
     var perWindowBehavior: [Int: MoveBehavior] = [:]
     private(set) var moveCalls: [(windowID: Int, target: CGRect)] = []
+    private(set) var standardWindowsCallsAtMove: [Int] = []
 
     func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
         standardWindowsCalls += 1
+        standardWindowsInFlight += 1
+        standardWindowsHighWater = max(standardWindowsHighWater, standardWindowsInFlight)
+        defer { standardWindowsInFlight -= 1 }
+        if standardWindowsDelay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(standardWindowsDelay * 1_000_000_000))
+        }
         return windowsList.filter { window in
             runningBundleIDs.contains(window.appBundleID)
                 && (bundleIDs == nil || bundleIDs!.contains(window.appBundleID))
@@ -31,12 +41,15 @@ final class FakeWindowGateway: WindowGateway, WindowMoveSource {
 
     func move(windowID: Int, to frame: CGRect) async -> CGRect? {
         moveCalls.append((windowID, frame))
+        standardWindowsCallsAtMove.append(standardWindowsCalls)
         switch perWindowBehavior[windowID] ?? moveBehavior {
         case .honest:
             if let i = windowsList.firstIndex(where: { $0.id == windowID }) {
                 let old = windowsList[i]
                 windowsList[i] = WindowInfo(id: old.id, appBundleID: old.appBundleID, appName: old.appName,
-                                            frame: frame, isFullscreen: old.isFullscreen, isMinimized: old.isMinimized)
+                                            frame: frame, fullscreenState: old.fullscreenState,
+                                            isMinimized: old.isMinimized,
+                                            windowServerID: old.windowServerID)
             }
             return frame
         case .clampWidth(let minWidth):
@@ -100,7 +113,8 @@ final class FakeWindowGateway: WindowGateway, WindowMoveSource {
         let old = windowsList[i]
         let frame = frameOnUnminimize[windowID] ?? old.frame
         windowsList[i] = WindowInfo(id: old.id, appBundleID: old.appBundleID, appName: old.appName,
-                                    frame: frame, isFullscreen: old.isFullscreen, isMinimized: false)
+                                    frame: frame, fullscreenState: old.fullscreenState,
+                                    isMinimized: false, windowServerID: old.windowServerID)
         return frame
     }
 }
