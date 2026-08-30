@@ -156,11 +156,13 @@ SpaceRelocation                 // 저장하지 않는 한 회차 명령
 ```text
 ActiveSpaceWatcher ──무페이로드 이벤트──▶ PlugbackController
 MissionControlWatcher ─▶ CollectTrigger ──수집 이벤트──┘
-                                              ├─ WindowGateway — AX 창 + 임시 ID
-                                              ├─ SpaceReader — stable snapshot
-                                              ├─ SpaceRelocator — Mission Control visible drag
                                               ├─ ProfileSlots — profile + overlay
-                                              └─ RestoreEngine — 창 복원
+                                              ├─ RestoreSession — 방문 대기 + 복원 회차
+                                              │    ├─ RestoreEngine — 창 복원
+                                              │    └─ SpaceRelocator — Mission Control visible drag
+                                              └─ DesktopObservation
+                                                   ├─ WindowGateway — AX 창 + 임시 ID
+                                                   └─ SpaceReader — stable snapshot
 ```
 
 ### SpaceReader
@@ -184,9 +186,17 @@ implementation 안에 다음 복잡성을 숨긴다.
 
 ### SpaceRelocator
 
-Debug 앱에서만 `MissionControlSpaceRelocator`를 주입한다. `SpaceRelocationPlanner`는 저장된 regular hint가 목표 외장 화면이 아닌 곳에 정확히 하나 있고, 비활성이며, source에 다른 regular Space가 남을 때만 한 건을 만든다. 실물 adapter는 `mc.display`의 `AXDisplayID`, 화면별 `mc.spaces.list` child 순서와 stable snapshot의 local order가 정확히 맞을 때만 destination tail로 pointer drag를 합성한다.
+앱은 Release에도 `MissionControlSpaceRelocator`를 주입하되, 일반 Space 복원 실험실 토글이 켜졌을 때만 호출한다. `SpaceRelocationPlanner`는 저장된 regular hint가 목표 외장 화면이 아닌 곳에 정확히 하나 있고, 비활성이며, source에 다른 regular Space가 남을 때만 한 건을 만든다. 실물 adapter는 `mc.display`의 `AXDisplayID`, 화면별 `mc.spaces.list` child 순서와 stable snapshot의 local order가 정확히 맞을 때만 destination tail로 pointer drag를 합성한다.
 
-호출 성공값을 믿지 않는다. controller가 같은 runtime SID·kind·opaque name의 목표 화면 이동, 전체 Space 집합, current 상태, 다른 regular Space 소속·상대 순서, 읽은 window membership 불변을 새 stable snapshot으로 확인한 뒤에만 다음 Space를 처리한다. type `4`의 화면 소속 변화는 macOS가 regular Space와 함께 옮긴 경우에만 허용한다. 실패하면 기존 방문 기반 창 복원으로 내려가며 자동 retry·rollback·Space 삭제는 하지 않는다.
+호출 성공값을 믿지 않는다. RestoreSession이 같은 runtime SID·kind·opaque name의 목표 화면 이동, 전체 Space 집합, current 상태, 다른 regular Space 소속·상대 순서, 읽은 window membership 불변을 새 stable snapshot으로 확인한 뒤에만 다음 Space를 처리한다. type `4`의 화면 소속 변화는 macOS가 regular Space와 함께 옮긴 경우에만 허용한다. 실패하면 기존 방문 기반 창 복원으로 내려가며 자동 retry·rollback·Space 삭제는 하지 않는다.
+
+### DesktopObservation
+
+컨트롤러와 RestoreSession이 창을 따로 열거해 임시 window ID의 수명을 깨지 않도록 `windows(of:)`, `drain()`, `stableSnapshot(for:)` 세 동작을 한곳에 둔다. 별도 protocol은 만들지 않는다. 복원 시작 전에는 먼저 진행 중이던 저장·수집·예측 열거를 끝내고, Space 범위와 무관하게 같은 authoritative 열거를 RestoreEngine에 넘긴다. stable snapshot은 Space 범위가 하나라도 켜졌을 때만 같은 window ID로 만든다.
+
+### RestoreSession
+
+연결 직후와 수동 복원은 `restoreAll`, Space 활성화는 `restoreVisited`로 들어간다. 선택된 profile+overlay 값만 받아 새 창 열기, authoritative 창 열거, 일반 Space 사전 재배치, 방문 대기 생성·가지치기, 현재 Space 복원, 완료 제거를 실행한다. Space 범위가 모두 꺼져도 별도 legacy 진입점으로 갈라지지 않고 같은 RestoreEngine 복원 회차를 쓴다. `restoreVisited`도 이전 snapshot 불안정이나 차단 뒤 안전해진 regular Space를 놓치지 않도록 사전 재배치를 다시 시도한다. ProfileSlots와 카드 상태는 소유하지 않으며, 화면 저장·확정·삭제가 배치를 다시 선언하면 `invalidate(screens:)`로 그 화면의 방문 대기만 버린다.
 
 ### WindowGateway
 
@@ -206,17 +216,17 @@ Debug 앱에서만 `MissionControlSpaceRelocator`를 주입한다. `SpaceRelocat
 
 ### ProfileSlots
 
-overlay는 복원 소스를 고르는 `ProfileSlots`가 소유한다. profile과 overlay가 다른 슬롯에서 섞이지 않도록 manual/auto/candidate의 수명을 함께 움직인다.
+overlay는 복원 소스를 고르는 `ProfileSlots`가 소유한다. 저장된 슬롯과 후보는 각각 profile+overlay를 `ResolvedProfile` 한 값으로 들고 있어 서로 다른 소스에서 섞일 상태가 없다. JSON에는 profile만 기록한다.
 
 | 동작 | profile과 overlay |
 |---|---|
-| 수동 저장 | 같은 창 선택 결과로 manual 둘을 갱신하고 candidate 둘을 폐기 |
-| 수집 | 같은 base에서 candidate 둘을 갱신하고, 외장 화면의 unique non-empty regular Space 목록을 교체 |
-| 확정 | candidate 둘을 auto로 함께 이동 |
-| seed | manual 둘을 auto로 함께 복사 |
+| 수동 저장 | 같은 창 선택 결과로 manual pair를 갱신하고 candidate pair를 폐기 |
+| 수집 | CaptureEngine이 같은 base에서 candidate pair를 만들고, 외장 화면의 unique non-empty regular Space 목록과 비활성 single fullscreen을 함께 반영 |
+| 확정 | candidate pair를 auto로 이동 |
+| seed | manual pair를 auto로 복사 |
 | 대상 앱 추가·편집·삭제 | 두 슬롯과 candidate 모두 같은 bundle을 처리 |
-| 프로필 삭제 | 해당 화면의 overlay도 전부 삭제 |
-| 실험실 끄기 | candidate overlay 폐기, private watcher 중지 |
+| 프로필 삭제 | 해당 화면의 슬롯 pair와 candidate를 삭제 |
+| 실험실 끄기 | candidate pair 폐기, private watcher 중지 |
 
 ### RestoreEngine
 
@@ -226,7 +236,7 @@ overlay는 복원 소스를 고르는 `ProfileSlots`가 소유한다. profile과
 |---|---|
 | overlay 없음 | 기존 legacy 경로 |
 | regular binding이 현재 외장 Space와 unique하게 일치 | 정확히 join된 창만 복원 |
-| binding이 다른 비활성 Space에 있음 | 이번 회차는 대기, Space 활성화 때 재시도 |
+| binding이 다른 비활성 Space에 있음 | 방문 대기로 남기고, Space 활성화 때 재시도 |
 | name 소실·중복, stranded, join 0/2+, reader unavailable | 해당 bundle만 `spaceUnavailable` |
 | unresolved | 해당 bundle만 `spaceUnavailable` |
 | regular binding의 창이 fullscreen이 됨 | 사용자 상태를 보호하고 해당 bundle만 `fullscreen` |
@@ -246,7 +256,7 @@ Space binding이 있는 bundle은 같은 실행에서 legacy 경로로 내려가
 1. DisplayWatcher 안정화와 기존 위상 게이트 통과
 2. 연결된 외장 화면과 선택된 profile+overlay 확정
 3. 다른 화면의 비활성 regular binding을 한 건씩 visible drag하고 매번 stable snapshot 검증
-4. overlay가 가리키는 regular Space들을 pending으로 표시
+4. overlay가 가리키는 regular Space들을 방문 대기로 표시
 5. 현재 활성 Space에 해당하는 binding만 복원
 6. 나머지는 사용자가 해당 Space를 활성화할 때까지 유지
 ```
@@ -257,12 +267,12 @@ Space binding이 있는 bundle은 같은 실행에서 legacy 경로로 내려가
 1. ActiveSpaceWatcher 이벤트 압축
 2. 화면 목록 동기화
 3. 현재 활성 Space가 연속 두 snapshot에서 같은지 확인
-4. pending binding이 있으면 복원부터 실행
-5. 일반 창 성공·제자리 또는 목표 화면의 single fullscreen 확인이면 pending 종료
-6. 앱이 꺼져 있거나 reader가 일시 unavailable이면 다음 방문까지 pending 유지
+4. 방문 대기 binding이 있으면 복원부터 실행
+5. 일반 창 성공·제자리 또는 목표 화면의 single fullscreen 확인이면 방문 대기 종료
+6. 앱이 꺼져 있거나 reader가 일시 unavailable이면 다음 방문까지 방문 대기 유지
 7. 복원 회차가 끝난 뒤에만 자동 슬롯 수집 허용
 
-fullscreen 진입의 AX 상태 변화만으로는 pending을 끝내지 않는다. 다음 stable snapshot에서 목표 화면의 단일 type `4` membership을 확인해야 완료한다. current Space를 바꾸는 전환은 stable snapshot 한 회차에 하나만 시도한다.
+fullscreen 진입의 AX 상태 변화만으로는 방문 대기를 끝내지 않는다. 다음 stable snapshot에서 목표 화면의 단일 type `4` membership을 확인해야 완료한다. current Space를 바꾸는 전환은 stable snapshot 한 회차에 하나만 시도한다.
 ```
 
 ### 창 열거와 ID 수명
@@ -278,7 +288,7 @@ fullscreen 진입의 AX 상태 변화만으로는 pending을 끝내지 않는다
 6. 모든 move가 끝날 때까지 다른 standardWindows 열거 금지
 ```
 
-capture·collect·prediction에서 이미 시작된 창 열거가 있으면 restore의 authoritative 열거 전에 끝까지 기다린다. 새 actor 계층 대신 MainActor controller 안의 작은 in-flight counter와 drain만 둔다.
+capture·collect·prediction에서 이미 시작된 창 열거가 있으면 restore의 authoritative 열거 전에 끝까지 기다린다. 새 actor 계층 대신 MainActor의 작은 `DesktopObservation`이 in-flight counter와 drain을 소유하고 컨트롤러와 RestoreSession이 함께 쓴다.
 
 ## 8. 단계별 작업
 
@@ -389,7 +399,7 @@ STOP:
 완료 기록(2026-08-27):
 
 - `CaptureEngine`의 Space-aware interface가 profile+overlay를 한 결과로 반환한다. 같은 bundle이 둘 이상의 Space에 있거나 join·name·type·fullscreen 판정이 불확실하면 binding만 unresolved로 만들고 저장 좌표는 유지한다.
-- `ProfileSlots`는 manual/auto/candidate profile과 메모리 overlay를 같은 source에서 선택하고 capture·collect·confirm·seed·add·edit·remove 수명에서 함께 이동한다. 기존 JSON schema에는 필드를 추가하지 않았다.
+- `ProfileSlots`는 manual/auto/candidate를 각각 profile+메모리 overlay pair 한 값으로 들고 capture·collect·confirm·seed·add·edit·remove 수명에서 함께 이동한다. 기존 JSON schema에는 필드를 추가하지 않았다.
 - `RestoreEngine.selectSpaceWindow`는 `legacy | window | inactive | unavailable | fullscreen`만 반환한다. binding이 있으면 name으로 대상 Space를 찾고, 실패해도 기존 좌표 기반 창 선택으로 내려가지 않는다. local order hint는 판정에 쓰지 않는다.
 - `SpaceAwareRestoreTests` 3개와 기존 회귀를 합친 130개 테스트, macOS 앱 빌드가 통과했다. duplicate/missing/stranded/type `4`, membership 0/2+, fullscreen true/unknown, 다중 Space bundle, slot pair 수명을 포함한다.
 
@@ -424,12 +434,12 @@ GO:
 진행 기록(2026-08-27):
 
 - `ActiveSpaceWatcher`가 공개 Space 변경 알림을 1.5초 후행 debounce로 압축하며, Debug reader와 실험실이 함께 켜진 동안만 구독한다. 실기기에서 0.15초에는 Mission Control 전환 중의 AX frame이 저장 좌표로 남아 `alreadyInPlace`로 오판했지만, 전환이 끝난 뒤 같은 수동 복원은 실제 frame 차이를 읽고 정상 이동했다.
-- 수동 저장은 같은 AX 열거에서 frame과 Space binding을 함께 잡는다. 재연결 시 binding을 pending으로 만들고 현재 Space만 복원한 뒤, 나머지는 해당 Space 방문 이벤트까지 유지한다.
-- Space-aware pass는 앞서 시작한 controller 창 read를 drain하고, 새 창 polling 뒤 authoritative AX 열거 1회 → stable snapshot → planner → 같은 gateway ID로 move 순서를 지킨다. 완료·제자리·fullscreen만 pending에서 제거한다.
+- 수동 저장은 같은 AX 열거에서 frame과 Space binding을 함께 잡는다. 재연결 시 binding을 방문 대기로 만들고 현재 Space만 복원한 뒤, 나머지는 해당 Space 방문 이벤트까지 유지한다.
+- Space-aware pass는 앞서 시작한 창 read를 drain하고, 새 창 polling 뒤 authoritative AX 열거 1회 → stable snapshot → planner → 같은 gateway ID로 move 순서를 지킨다. 완료·제자리·fullscreen만 방문 대기에서 제거한다.
 - P4 동안에는 profile과 Space overlay가 다른 legacy 후보로 갈리는 것을 막기 위해 Space 실험 경로의 자동 수집을 멈춘다. 현재 Space binding을 함께 수집하는 일은 P5 범위다.
 - controller vertical slice, fullscreen, reader unavailable legacy fallback, 창 read drain, 이벤트 압축을 검증했다. 후속 리뷰에서 Space 경로의 최소화 옵션과 수동 복원 모드의 현재 Space 한정 동작을 보강했으며, 두 회귀를 포함한 전체 137개 테스트와 서명된 Debug 앱 빌드가 통과했다.
 - 2026-08-29 실기기 게이트에서 다른 외장 화면 B를 연결했을 때 AX 창 열거만 2회 발생하고 이동은 0회여서 저장된 A 화면 배치가 B에 적용되지 않았다.
-- A 재연결 뒤 저장된 다른 regular Space를 교란하고 방문하자 1.5초 후 Finder와 Zed가 각각 한 번씩 복원됐다. 같은 Space를 다시 교란해 재방문했을 때는 AX 재열거와 이동이 모두 늘지 않아 pending의 방문별 1회 수명이 확인됐다.
+- A 재연결 뒤 저장된 다른 regular Space를 교란하고 방문하자 1.5초 후 Finder와 Zed가 각각 한 번씩 복원됐다. 같은 Space를 다시 교란해 재방문했을 때는 AX 재열거와 이동이 모두 늘지 않아 방문 대기의 Space별 1회 수명이 확인됐다.
 - 활성 Buzz native fullscreen에서 reader는 type `4` 1개, `AXFullScreen=true` 1개, 표준 창 `5/5`의 단일 Space join을 보고했다. 메인 프로세스의 누적 이동은 2회로 유지돼 연결된 상태의 fullscreen 방문에서는 창을 움직이지 않았다.
 
 P4 당시 남은 게이트였던 “fullscreen 감지만 하고 이동 0회”는 2026-08-29의 제품 결정으로 대체됐다. P5부터는 확인된 single fullscreen을 수집·재생성하고, Split View와 불명확한 type `4`만 그대로 둔다. 위 P4 기록은 당시 빌드의 실기기 결과로 보존한다.
@@ -439,15 +449,15 @@ P4 당시 남은 게이트였던 “fullscreen 감지만 하고 이동 0회”�
 기존 `CollectTrigger`와 `ProfileSlots`에 현재 활성 Space binding을 함께 전달한다.
 
 - 자동 슬롯이 켜진 동안에만 이동 정착, Space 방문, Mission Control 닫힘을 수집 신호로 사용한다. 끄면 observer를 멈추고 미확정 후보를 폐기한다.
-- Space 활성화 직후 pending 복원이 있으면 복원 후에만 수집한다.
-- 평상시 방문이면 현재 Space에서 확인된 모든 표준 창을 후보에 등록·갱신한다. 체크 해제 앱과 복원 pending 앱은 제외한다.
-- 실행 중인 non-minimized 창이 다른 화면에만 있고 대상 외장 화면에는 하나도 없으면 해당 앱과 binding을 자동 후보에서 제거한다. 수동 슬롯과 이동 observer 명부는 남겨 다시 외장 화면으로 돌아오면 재등록할 수 있게 한다. 종료·최소화·pending 상태만으로는 제거하지 않는다.
+- Space 활성화 직후 방문 대기 복원이 있으면 복원 후에만 수집한다.
+- 평상시 방문이면 현재 Space에서 확인된 모든 표준 창을 후보에 등록·갱신한다. 체크 해제 앱과 방문 대기 앱은 제외한다.
+- 실행 중인 non-minimized 창이 다른 화면에만 있고 대상 외장 화면에는 하나도 없으면 해당 앱과 binding을 자동 후보에서 제거한다. 수동 슬롯과 이동 observer 명부는 남겨 다시 외장 화면으로 돌아오면 재등록할 수 있게 한다. 종료·최소화·방문 대기 상태만으로는 제거하지 않는다.
 - single native fullscreen도 처음 본 앱이면 등록한다. 기존 일반 frame은 유지하고, 처음 본 앱은 화면 bounds를 staging frame으로 쓰며 fullscreen 의도는 overlay에 기록한다.
 - 비활성 type `4`는 AX 표준 창이 없어도, 공개 CG window metadata에서 `layer=0`, `alpha>0`, 화면 전체 bounds인 regular 앱 창이 그 Space에 정확히 하나 join될 때만 수집한다. 같은 앱의 후보가 한 화면에 둘이거나 Split View처럼 화면 전체가 아니면 기록하지 않는다.
 - 화면 분리와 앱 종료 확정은 창을 다시 읽지 않고 profile+overlay 후보를 함께 기록한다.
 - manual/auto 중 더 최근 슬롯이 이길 때 overlay도 같은 슬롯에서 온다.
 - fullscreen 복원은 실행 중인 표준 창 하나에만 적용한다. 다른 화면에서 이미 fullscreen이면 해제하고, 저장된 일반 frame으로 목표 외장 화면에 옮긴 뒤 다시 진입한다.
-- fullscreen 전환 뒤에는 다음 stable snapshot에서 목표 화면의 single type `4`를 확인해야 pending을 제거한다.
+- fullscreen 전환 뒤에는 다음 stable snapshot에서 목표 화면의 single type `4`를 확인해야 방문 대기를 제거한다.
 
 GO:
 
@@ -457,7 +467,7 @@ GO:
 
 구현 기록(2026-08-29):
 
-- `ActiveSpaceWatcher` 방문과 기존 `CollectTrigger` 이동 정착이 같은 Space-aware 후보 수집 경로를 쓴다. pending bundle은 수집에서 제외해 실패한 복원 위치가 저장값을 덮지 않는다.
+- `ActiveSpaceWatcher` 방문과 기존 `CollectTrigger` 이동 정착이 같은 Space-aware 후보 수집 경로를 쓴다. 방문 대기 bundle은 수집에서 제외해 실패한 복원 위치가 저장값을 덮지 않는다.
 - Space-aware 수집·복원은 현재 type `4`의 비대상 표준 창까지 한 번 열거해 single fullscreen과 Split View를 구분한다. 수집은 방문한 현재 Space의 처음 본 bundle도 후보에 넣고, 복원은 선택된 profile bundle만 움직인다.
 - 시작·자동 저장 ON 전환·기존 수집 신호마다 모든 type `4`를 함께 읽는다. 비활성 fullscreen은 불투명 layer `0` 창 하나가 해당 화면 bounds와 일치할 때만 보충하므로 Space 방문이 필요 없다. 자동 저장 OFF에서는 이 경로 자체가 실행되지 않는다.
 - `SpaceBinding.fullscreen`은 메모리 overlay에만 존재한다. raw Space ID·CGWindowID·Mission Control 순서는 저장하지 않는다.
@@ -466,7 +476,7 @@ GO:
 - 외장 fullscreen으로 저장했던 Buzz를 windowed 상태로 내장 화면에 옮긴 뒤에도 예전 `.fullscreen` binding이 후보에 남는 회귀를 확인했다. 대상 외장 화면에서 명확히 떠난 앱을 자동 후보에서 제거하는 테스트를 추가했고, A 자동 프로필에는 Zed가 남고 Buzz가 빠진 것을 실제 저장 파일에서 확인했다.
 - A에서 수집한 Zed fullscreen은 B 연결 때 자동으로 B로 이동하지 않았다. 사용자가 B에서도 Zed fullscreen을 방문한 뒤 B를 분리하고 A를 연결하자 Zed type `4`는 내장 화면에 비활성으로 남았다. 이를 방문하자 Plugback이 fullscreen 해제 → A 이동 → fullscreen 재진입을 수행했고, 기존 내장 type `4`가 사라진 뒤 A에 새 type `4`가 생겼다. Buzz는 `fullscreen=false`인 채 내장 화면에 남았다.
 - A의 Zed type `4`를 비활성으로 둔 채 raw 후보 probe를 실행했다. 화면 전체인 불투명 본창 하나만 A 후보로 잡혔고, 같은 Space의 높이 44px·alpha `0` 보조창과 내장 regular Zed 창은 제외됐다. 이 후보가 내장 regular 관찰보다 우선해 `.fullscreen` overlay로 수집되는 회귀 테스트도 통과했다.
-- Zed fullscreen을 방문하지 않은 채 A를 분리하자 카드의 pending 후보가 21:26:31 자동 슬롯에 확정됐다. B 연결 중에는 Zed 본 fullscreen이 내장 화면에 남아 A 프로필이 B에 적용되지 않았다. A 재연결 때 macOS가 type `4`를 스스로 A에 다시 붙인 회차는 Plugback 성공 횟수에서 제외했다. 이후 Mission Control로 같은 비활성 type `4`를 내장 화면에 옮기고 방문만 하자, 기존 내장 SID `606`이 사라지고 A에 새 SID `628`이 생겼으며 같은 Zed 창이 A 전체 bounds로 이동했다. 이를 한 번 더 반복해 내장 SID `628`이 사라지고 A에 새 SID `640`과 같은 전체 bounds 창이 생긴 것도 확인했다. 방문 없는 수집에서 시작한 fullscreen 복원 실기기 게이트는 3/3이다.
+- Zed fullscreen을 방문하지 않은 채 A를 분리하자 카드의 미확정 후보가 21:26:31 자동 슬롯에 확정됐다. B 연결 중에는 Zed 본 fullscreen이 내장 화면에 남아 A 프로필이 B에 적용되지 않았다. A 재연결 때 macOS가 type `4`를 스스로 A에 다시 붙인 회차는 Plugback 성공 횟수에서 제외했다. 이후 Mission Control로 같은 비활성 type `4`를 내장 화면에 옮기고 방문만 하자, 기존 내장 SID `606`이 사라지고 A에 새 SID `628`이 생겼으며 같은 Zed 창이 A 전체 bounds로 이동했다. 이를 한 번 더 반복해 내장 SID `628`이 사라지고 A에 새 SID `640`과 같은 전체 bounds 창이 생긴 것도 확인했다. 방문 없는 수집에서 시작한 fullscreen 복원 실기기 게이트는 3/3이다.
 - 이 fullscreen 회차 직전 Debug 앱 재시작으로 regular overlay가 사라졌으므로, 같은 회차의 비활성 regular Space 미복원은 P5.5 성공 횟수에 포함하지 않는다.
 
 남은 실기기 게이트:
@@ -485,7 +495,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - 사용자가 Mission Control에서 내장 화면의 저장된 regular thumbnail 하나를 A로 drag하자 같은 runtime SID와 opaque name이 유지됐고, Buzz/Zed type `4` 두 개도 A로 돌아왔다. Finder frame과 두 fullscreen 상태가 유지됐으며 Plugback의 AX window move/fullscreen write는 0회였다.
 - Dock AX tree는 화면별 `mc.display`/`AXDisplayID`, `mc.spaces.list`, 각 thumbnail frame을 노출했다. 내장 화면에 만든 빈 비활성 regular Space를 합성 drag로 A 끝에 보냈다가 되돌리는 왕복을 3/3 수행했다.
 - 매 편도에서 같은 SID·name·kind가 유지되고 다른 regular Space의 소속·상대 순서, current Space, 관찰한 window membership이 불변이었다. source/destination AX child count도 snapshot과 일치했다.
-- `SpaceRelocationPlanner`는 저장된 regular name이 다른 화면에 unique하게 남고 비활성이며 source의 마지막 regular가 아닐 때만 이동을 만든다. `MissionControlSpaceRelocator`는 Debug에서만 주입하고, pointer 입력 뒤 새 stable snapshot을 검증한다.
+- `SpaceRelocationPlanner`는 저장된 regular name이 다른 화면에 unique하게 남고 비활성이며 source의 마지막 regular가 아닐 때만 이동을 만든다. 이 단계에서는 `MissionControlSpaceRelocator`를 Debug에서만 주입했고, P5.8부터 Release에도 주입한다. pointer 입력 뒤에는 새 stable snapshot을 검증한다.
 - 합성 실패·AX tree 불일치·snapshot 불안정·예기치 않은 regular 이동은 즉시 중단한다. SkyLight write, raw create/destroy, 자동 rollback은 없다. 실패해도 기존 현재 Space/방문 기반 창 복원은 계속된다.
 - fullscreen Space는 직접 선택하지 않는다. regular 이동에 따라 macOS가 함께 옮긴 경우 동일 runtime Space 집합과 membership을 검증하고 받아들인다. 따라오지 않으면 기존 single fullscreen 재생성 경로가 담당한다.
 - 첫 A 재연결 실패는 source/destination child count까지 통과한 뒤 thumbnail action guard에서 끝났다. 이동 대상 외의 현재·마지막 Space에는 `AXRemoveDesktop`이 없을 수 있는데 양쪽 모든 child에 이 action을 요구한 것이 원인이었다. 대상 child 하나만 확인하도록 줄였다.
@@ -552,12 +562,14 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 
 ### P6 — 결과 표시와 현재 문서 동기화
 
-실기기 vertical slice가 통과한 뒤에만 사용자 surface를 늘린다.
+실기기 vertical slice가 통과한 뒤에도 예측 어휘는 늘리지 않는다. 방문 대기·Space 판정 불가는 이번 복원 회차의 결과가 아니므로 점을 만들지 않고 Space 그룹 상태가 이유를 설명한다.
 
-- `SkipReason.spaceUnavailable`과 필요하면 “Space를 열면 복원됨” 상태 추가
-- 카드 표현과 `CardPresentationTests` 갱신
+- legacy와 Space-aware 복원 예측이 같은 선택 결과를 쓰게 한다
+- 카드의 Space별 예측 보정을 삭제한다
 - `CONTEXT.md`, `FUNCTIONAL_SPEC.md`, `ARCHITECTURE.md`, `RESTORE_FLOW.md`, `UNDOCUMENTED_APIS.md` 갱신
 - 필요하면 `US-014-active-space-restore.md` 추가
+
+진행 기록(2026-08-30): 같은 선택 결과를 쓰도록 통합하고 카드 보정을 삭제했다. 후속 아키텍처 검토에서 별도 legacy 복원 진입점과 앱별 재열거를 삭제해 RestoreSession의 한 복원 회차로 합쳤고, ProfileSlots의 저장값·후보를 profile+overlay pair로 바꿨으며, 수집의 화면 이탈·비활성 fullscreen 정책을 CaptureEngine에 모았다. 카드의 네 병렬 파생 사전은 화면별 projection 한 값으로 줄였다. 관련 기존 문서와 US-006을 갱신했으며, 새 사용자 스토리는 기존 F-08·US-006으로 계약이 충분해 만들지 않았다.
 
 이 기능은 Release에도 기본 꺼짐인 실험실로 노출한다. 정식 동작으로 승격하기 전에는 아래 호환성·실기기 게이트를 계속 적용한다.
 
@@ -565,7 +577,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 
 - 카드의 평면 앱 목록을 저장된 일반 Space별로 묶고, 한 외장 화면 안의 저장 순서대로 `Space N`을 붙인다. macOS의 전역 `데스크탑 N`을 흉내 내지 않으며 overlay identity나 저장값으로 쓰지 않는다.
 - 카드 행은 live inventory가 아니라 저장된 복원 계획이다. snapshot이 없거나 name 대응이 유일하지 않아도 저장된 로컬 순번을 유지하고 상태만 숨긴다. unique 대응이면 `현재`, `방문 시 복원`, `다른 화면 · 복원 대기`, `현재 없음`을 구분하며 live-but-unsaved Space는 행으로 섞지 않는다.
-- 앱이 없는 저장 regular Space도 `저장된 앱 없음`으로 보인다. 비활성 Space 때문에 legacy 예측이 만든 `창 없음`은 숨긴다. 목표 화면의 현재 regular Space 구성과 저장본이 다르면 자동 슬롯은 분리 시 확정될 변경으로, 수동 슬롯은 저장 버튼으로 갱신할 변경으로 알린다. single fullscreen은 `전체 화면`, 불명 binding은 `Space 확인 필요`로 분리한다.
+- 앱이 없는 저장 regular Space도 `저장된 앱 없음`으로 보인다. 비활성·판정 불가 Space에는 복원 결과와 예측 점을 만들지 않고 그룹 상태로 이유를 설명한다. 목표 화면의 현재 regular Space 구성과 저장본이 다르면 자동 슬롯은 분리 시 확정될 변경으로, 수동 슬롯은 저장 버튼으로 갱신할 변경으로 알린다. single fullscreen은 `전체 화면`, 불명 binding은 `Space 확인 필요`로 분리한다.
 - core의 로컬 순번 테스트와 앱 표현 테스트를 추가했다. 최종 제품 surface 확정과 P6 전체 문서 승격은 남은 relocation 실기기 게이트 뒤에 한다.
 
 ### P7 — 영속화 여부: 별도 결정
@@ -594,7 +606,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - Mission Control open→closed 이벤트 폭주는 수집 1회로 압축하고 OFF에서는 observer 제거
 - Split View·다중 창 type `4`는 fullscreen 의도로 낮추지 않음
 - 다른 화면의 single fullscreen은 해제 → 목표 frame 이동 → 재진입
-- AX fullscreen 전환 뒤 stable target type `4` 확인 전에는 pending 유지
+- AX fullscreen 전환 뒤 stable target type `4` 확인 전에는 방문 대기 유지
 - 자동 슬롯 OFF에서는 Space 방문과 이동 정착이 후보를 만들지 않음
 - 같은 화면의 확실한 다른 bundle은 계속 복원
 - Space-bound bundle은 legacy로 재선택되지 않음

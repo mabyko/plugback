@@ -97,15 +97,10 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.spaceGroupStatus(for: other), "다른 화면 · 복원 대기")
         XCTAssertEqual(CardPresentation.spaceGroupStatus(for: missing), "현재 없음")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: unknown), "Space 5")
-        XCTAssertNil(CardPresentation.spaceGroupStatus(for: unknown))
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: unknown), "현재 상태 확인 불가")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .fullscreen), "전체 화면")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .unresolved), "Space 확인 필요")
 
-        XCTAssertNil(CardPresentation.prediction(.willSkip(.noWindow), in: inactive))
-        XCTAssertEqual(
-            CardPresentation.prediction(.willSkip(.appNotRunning), in: inactive),
-            .willSkip(.appNotRunning)
-        )
     }
 
     func testHeaderTitleForThreePresences() {

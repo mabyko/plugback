@@ -80,6 +80,72 @@ public enum CaptureEngine {
         return result
     }
 
+    /// 자동 슬롯의 수집 정책. 현재 외장 화면에서 갱신할 앱, 다른 화면으로 명확히 떠난 앱,
+    /// 비활성 single fullscreen 보충을 한 pair 안에서 끝낸다.
+    static func collect(
+        windows: [WindowInfo],
+        on screen: ScreenInfo,
+        merging existing: ResolvedProfile,
+        snapshot: SpaceSnapshot?,
+        excluding excludedBundleIDs: Set<String>
+    ) -> ResolvedProfile {
+        let disabled = Set(
+            existing.profile.apps.filter { !$0.isEnabled }.map(\.bundleID)
+        )
+        let blocked = disabled.union(excludedBundleIDs)
+        let updating = Set(windows.map(\.appBundleID)).subtracting(blocked)
+        let presentElsewhere = Set(windows.lazy
+            .filter { !$0.isMinimized }
+            .map(\.appBundleID))
+            .subtracting(Set(windows.lazy
+                .filter { screen.contains($0) }
+                .map(\.appBundleID)))
+            .subtracting(blocked)
+
+        var result: ResolvedProfile
+        if let snapshot {
+            result = capture(
+                windows: windows, on: screen, merging: existing,
+                snapshot: snapshot, updating: updating
+            )
+        } else {
+            let selected = windows.filter { updating.contains($0.appBundleID) }
+            result = ResolvedProfile(
+                profile: capture(
+                    windows: selected, on: screen, merging: existing.profile
+                ),
+                overlay: nil
+            )
+        }
+
+        result.profile.apps.removeAll { presentElsewhere.contains($0.bundleID) }
+        var overlay = result.overlay ?? SlotSpaceOverlay()
+        overlay.keepOnly(Set(result.profile.apps.map(\.bundleID)))
+
+        // 비활성 native fullscreen은 AX 표준 창 열거에 없으므로 WindowServer가 확실히
+        // 식별한 후보로 보충한다. 같은 앱의 fullscreen이 둘이면 앱 단위 프로필로는 모호하다.
+        let fullscreen = snapshot?.fullscreenCandidates.filter {
+            $0.screenID == screen.id && !blocked.contains($0.bundleID)
+        } ?? []
+        let counts = Dictionary(grouping: fullscreen, by: \.bundleID)
+        for candidate in fullscreen where counts[candidate.bundleID]?.count == 1 {
+            if let index = result.profile.apps.firstIndex(where: {
+                $0.bundleID == candidate.bundleID
+            }) {
+                result.profile.apps[index].displayName = candidate.displayName
+            } else {
+                result.profile.apps.append(TargetApp(
+                    bundleID: candidate.bundleID,
+                    displayName: candidate.displayName,
+                    unitRect: UnitRect(screen.frame, in: screen.frame)
+                ))
+            }
+            overlay.byBundle[candidate.bundleID] = .fullscreen
+        }
+        result.overlay = overlay.isEmpty ? nil : overlay
+        return result
+    }
+
     /// 앱 membership과 무관하게 화면 소속을 기억한다. 이름이 없거나 snapshot 전체에서
     /// 중복인 Space는 되찾을 안전한 identity가 없으므로 기록하지 않는다.
     private static func regularSpaces(

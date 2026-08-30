@@ -416,6 +416,71 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(selection(bound, [target, secondWindow], twoWindows), .unavailable)
     }
 
+    func testSpacePredictionMatchesRestoreTruthAndOmitsNoResult() async {
+        let runtimeID = SpaceRuntimeID(1)
+        let target = TargetApp(
+            bundleID: "com.app", displayName: "App",
+            unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 1)
+        )
+        let resolved = ResolvedProfile(
+            profile: Profile(
+                screenID: external.id, screenName: external.name, apps: [target]
+            ),
+            overlay: SlotSpaceOverlay(byBundle: [
+                target.bundleID: .regular(SpaceHint(
+                    opaqueName: "stable-name", localOrderHint: 1
+                )),
+            ])
+        )
+        let displaced = window(
+            1, bundleID: target.bundleID,
+            frame: CGRect(x: 100, y: 100, width: 300, height: 300),
+            windowServerID: 11
+        )
+        let current = makeSnapshot(
+            externalSpaces: [space(runtimeID, "stable-name", order: 1, current: true)],
+            memberships: [11: [runtimeID]]
+        )
+        let gateway = FakeWindowGateway()
+        gateway.runningBundleIDs = [target.bundleID]
+        gateway.windowsList = [displaced]
+
+        let predictions = RestoreEngine.predict(
+            resolved: resolved, on: external, windows: [displaced], snapshot: current,
+            running: gateway.runningBundleIDs, scope: .all
+        )
+        let pass = await RestoreEngine.restore(
+            resolved: [external.id: resolved], screens: [external], windows: [displaced],
+            snapshot: current, scope: .all, using: gateway
+        )
+        XCTAssertEqual(predictions[target.bundleID], .willMove)
+        XCTAssertEqual(pass.results.first?.entries.first?.outcome, .moved)
+
+        let inactive = makeSnapshot(
+            externalSpaces: [
+                space(runtimeID, "stable-name", order: 1),
+                space(SpaceRuntimeID(2), "other", order: 2, current: true),
+            ],
+            memberships: [11: [runtimeID]]
+        )
+        let waiting = RestoreEngine.predict(
+            resolved: resolved, on: external, windows: [displaced], snapshot: inactive,
+            running: gateway.runningBundleIDs, scope: .all
+        )
+        let waitingPass = await RestoreEngine.restore(
+            resolved: [external.id: resolved], screens: [external], windows: [displaced],
+            snapshot: inactive, scope: .all, using: gateway
+        )
+        XCTAssertNil(waiting[target.bundleID])
+        XCTAssertTrue(waitingPass.results.first?.entries.isEmpty == true)
+
+        let stopped = RestoreEngine.predict(
+            resolved: resolved, on: external, windows: [displaced], snapshot: inactive,
+            running: [], scope: .all
+        )
+        XCTAssertEqual(stopped[target.bundleID], .willSkip(.appNotRunning))
+    }
+
     func testSpaceRestoreHonorsMinimizedOption() async {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -624,6 +689,30 @@ final class SpaceAwareRestoreTests: XCTestCase {
         let resolved = try XCTUnwrap(slots.resolvedWithSpaces(for: [external])[external.id])
         XCTAssertEqual(resolved.profile.apps.map(\.bundleID), ["dev.zed.Zed"])
         XCTAssertEqual(resolved.overlay?.byBundle["dev.zed.Zed"], .fullscreen)
+    }
+
+    func testManualCaptureDoesNotDiscoverAnInactiveFullscreenCandidate() {
+        let fullscreenID = SpaceRuntimeID(2)
+        let snapshot = makeSnapshot(
+            externalSpaces: [
+                space(SpaceRuntimeID(1), "regular", order: 1, current: true),
+                space(fullscreenID, "zed-fullscreen", order: 2, kind: .fullscreen),
+            ],
+            memberships: [:],
+            fullscreenCandidates: [
+                FullscreenSpaceCandidate(
+                    bundleID: "dev.zed.Zed", displayName: "Zed",
+                    screenID: external.id, runtimeID: fullscreenID
+                ),
+            ]
+        )
+
+        let captured = CaptureEngine.capture(
+            windows: [], on: external, merging: nil, snapshot: snapshot
+        )
+
+        XCTAssertFalse(captured.profile.apps.contains { $0.bundleID == "dev.zed.Zed" })
+        XCTAssertNil(captured.overlay?.byBundle["dev.zed.Zed"])
     }
 
     func testControllerRestoresEachExternalSpaceOnlyWhenVisitedAndOnlyOnce() async {

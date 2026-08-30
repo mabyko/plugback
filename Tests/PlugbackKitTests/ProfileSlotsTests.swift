@@ -329,11 +329,11 @@ final class ProfileSlotsTests: XCTestCase {
 
     // MARK: - 엔진에 넘기는 모양
 
-    func testResolvedNarrowsToOneProfilePerScreen() {
+    func testResolvedPairNarrowsToOneValuePerScreen() {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen, other])
 
-        let resolved = slots.resolved(for: [screen, other])
+        let resolved = slots.resolvedWithSpaces(for: [screen, other])
         XCTAssertEqual(Set(resolved.keys), ["ext-1", "ext-2"], "엔진은 슬롯을 모른다")
     }
 }

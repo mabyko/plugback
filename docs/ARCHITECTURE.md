@@ -12,29 +12,31 @@
 
 ## 1. 설계 원칙
 
-스펙의 복잡성은 세 군데에 몰려 있다. 각각을 깊은 모듈 하나에 가두고, 나머지는 얇게 유지한다.
+스펙의 복잡성은 네 군데에 몰려 있다. 각각을 깊은 모듈 하나에 가두고, 나머지는 얇게 유지한다.
 
 1. **연결 이벤트의 노이즈** — 디바운스, 위상 게이트, 잠자기 억제 → DisplayWatcher
 2. **접근성 API의 함정** — 좌표계 2개, 조용한 실패, 응답 없는 앱 → WindowGateway
 3. **저장·복원 정책** — 병합, 건너뜀, 검증·재시도 → CaptureEngine / RestoreEngine
+4. **Space 복원의 시간축** — 연결 직후 복원, 방문 대기, Space별 1회 완료 → RestoreSession
 
 ## 2. 모듈 맵
 
 ```
 DisplayWatcher ──이벤트──▶ PlugbackController ◀──조작── MenuBarUI
 CollectTrigger ──이벤트──▶      │
-                 ┌──────────────┼──────────────┐
-                 ▼              ▼              ▼
-           RestoreEngine   ProfileSlots   ScreenProvider
-                 │              │          (ScreenID 내장)
-                 │              └─▶ CaptureEngine · ProfileStore
-                 ├─▶ WindowGateway (다른 앱의 창·프로세스를 만지는 유일한 접점)
-                 ▲
-   PlugbackController도 직접 사용 (창 열거·예측 계산)
+ActiveSpaceWatcher ──────▶      ├─▶ ProfileSlots ─▶ CaptureEngine · ProfileStore
+                               ├─▶ RestoreSession ─▶ RestoreEngine
+                               │         │
+                               └─────────┴─▶ DesktopObservation
+                                                ├─▶ WindowGateway
+                                                └─▶ SpaceReader
+RestoreSession ─▶ SpaceRelocator
+PlugbackController ─▶ ScreenProvider (ScreenID 내장)
 ```
 
 CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷을 받는 거의 순수 함수다.
-창 열거는 컨트롤러가 게이트웨이로 하고(저장·예측), RestoreEngine도 게이트웨이를 주입받는다.
+저장·수집·예측과 모든 복원 회차의 창 열거는 같은 DesktopObservation을 통한다. RestoreEngine은
+WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션이 한 번 열거한 값을 받는다.
 
 ### DisplayWatcher
 
@@ -54,10 +56,23 @@ CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷
 
 ### ProfileSlots
 
-- **인터페이스**: `source(for:)` / `resolved(for:)` / `targets(for:)` / `all` / `capture` / `collect` / `confirm` / `edit` / `remove` + 실험실 토글·자동 슬롯 반영 방식.
-- **숨기는 것**: 화면 하나가 슬롯 둘을 갖는다는 사실 전부 — 키 규약, 복원 소스 판정(더 최근 것·동점은 수동, 선택한 방식에서는 현재 후보 우선), 씨앗 복사, 화면별 수집 후보의 수명, 즉시/분리 확정, 병합, 실험실 on/off가 후보 판정에 미치는 영향, 읽지 못한 파일에 쓰지 않는 금지(F-04.2).
-- **복원 엔진은 슬롯을 모른다** — `resolved(for:)`가 화면당 프로필 하나로 좁혀서 넘긴다.
+- **인터페이스**: `source(for:)` / `resolvedWithSpaces(for:)` / `targets(for:)` / `all` / `capture` / `collect` / `confirm` / `edit` / `remove` + 실험실 토글·자동 슬롯 반영 방식.
+- **숨기는 것**: 화면 하나가 슬롯 둘을 갖는다는 사실 전부 — 키 규약, 복원 소스 판정(더 최근 것·동점은 수동, 선택한 방식에서는 현재 후보 우선), 씨앗 복사, 화면별 수집 후보의 수명, 즉시/분리 확정, 병합, 실험실 on/off가 후보 판정에 미치는 영향, 읽지 못한 파일에 쓰지 않는 금지(F-04.2). 프로필과 Space overlay는 저장된 슬롯·후보마다 `ResolvedProfile` 한 값으로 움직이며, JSON에는 프로필만 기록한다.
+- **복원 엔진은 슬롯을 모른다** — `resolvedWithSpaces(for:)`가 화면당 같은 슬롯의 프로필·overlay 한 쌍으로 좁혀서 넘긴다.
 - ObservableObject다. 컨트롤러가 변경을 자기 것으로 전달하므로 바인딩은 여전히 컨트롤러 하나만 본다.
+
+### DesktopObservation
+
+- **인터페이스**: `windows(of:)` / `drain()` / `stableSnapshot(for:)`.
+- **숨기는 것**: 마지막 AX 창 열거의 window ID만 유효하다는 계약과, 복원 전에 먼저 시작한 저장·수집·예측 열거를 모두 끝내는 순서. Space snapshot은 반드시 같은 열거가 돌려준 window ID들로 만든다.
+- MainActor 내부 타입이며 별도 프로토콜을 만들지 않는다. 컨트롤러와 RestoreSession이 같은 객체를 쓴다.
+
+### RestoreSession
+
+- **인터페이스**: `restoreAll`(연결·수동 복원) / `restoreVisited`(Space 방문) / `invalidate(screens:)` + 읽기 전용 방문 대기 조회.
+- **숨기는 것**: 일반 Space·전체 화면 복원 범위, 일반 Space 사전 재배치와 검증, 연결 직후 방문 대기 생성, 현재 Space만 복원, 완료된 대상 제거, 새 창 열기 뒤 authoritative 창 열거 → 필요할 때만 stable snapshot → RestoreEngine 순서. Space 복원 범위가 모두 꺼져도 같은 복원 회차를 쓰되 private snapshot은 읽지 않는다.
+- ProfileSlots를 소유하지 않는다. 컨트롤러가 고른 최신 `ResolvedProfile` 값만 받아 프로필과 Space overlay의 복원 소스를 섞지 않는다.
+- 카드 상태를 소유하지 않는 MainActor 내부 타입이다. 결과는 컨트롤러에 돌려주고, 결과 수명·복원 중 게이트·새 화면 재요청·복원 뒤 수집과 예측은 컨트롤러가 맡는다.
 
 ### WindowMoveSource
 
@@ -93,15 +108,15 @@ CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷
 
 ### RestoreEngine
 
-- **인터페이스**: `restore(프로필들, 화면들, 옵션) async -> [복원 결과]` (반환 시점 = 완료 시점 — 최종 결과다) + `predict(프로필, 화면?, 창들, 실행 집합, 옵션) -> [앱별 복원 예측]` (부수효과 없는 사전 판정 — 카드의 점이 이것을 그린다. 일치 보증은 식별자 정렬상 첫 화면 기준 — 뒷 화면은 중복 제거로 앱이 빠질 수 있다).
-- **숨기는 것**: 복원 정책 전부. 창 선택과 건너뜀 판정(F-02.2 — 예측과 진실이 이 규칙 하나를 공유한다), 예외 옵션(최소화 꺼내기·새 창 열기), 이동·검증·재시도(F-02.3), 다중 화면 중복 제거(F-01.6), 지문 검증(F-01.4 — 불일치는 화면 단위 건너뜀 사유로 결과에 실린다), 이동·건너뜀·실패 사유 기록.
+- **인터페이스**: 내부 `restore(선택된 프로필+Space overlay들, 화면들, 한 번 열거한 창들, Space snapshot?, 복원 범위, 옵션) -> 복원 회차 결과` + 내부 `predict(선택된 프로필+Space overlay, 화면?, 창들, Space snapshot?, 실행 집합, 복원 범위, 옵션) -> [앱별 복원 예측]`. 복원의 외부 진입점은 RestoreSession 하나다. 예측은 부수효과 없는 사전 판정이며 카드의 점이 그린다. 일치 보증은 식별자 정렬상 첫 화면 기준 — 뒷 화면은 중복 제거로 앱이 빠질 수 있다.
+- **숨기는 것**: 복원 정책 전부. legacy와 Space-aware 창 선택, 건너뜀·방문 대기·판정 불가 판정(F-02.2 — 예측과 진실이 같은 선택 결과를 공유한다), 예외 옵션(최소화 꺼내기·새 창 열기), 이동·검증·재시도(F-02.3), 다중 화면 중복 제거(F-01.6), 지문 검증(F-01.4 — 불일치는 화면 단위 건너뜀 사유로 결과에 실린다), 이동·건너뜀·실패 사유 기록. 방문 대기·판정 불가처럼 이번 복원 회차에 결과가 없는 앱은 예측에도 넣지 않는다.
 - WindowGateway를 주입받는다. 페이크 어댑터로 실기기 없이 정책 전부를 테스트한다 — 대기·타이밍은 심 뒤라 정책 테스트에 벽시계 대기가 없다(인터리빙 검증용 서스펜션 노브 제외).
 - **격리 자유** — 어느 액터에도 묶이지 않는 순수 정책 모듈. 외부 소비자가 MainActor 홉 없이 쓸 수 있다 (§5 헤드리스 코어 약속).
 
 ### CaptureEngine
 
-- **인터페이스**: `(현재 창들, 기존 프로필) -> 병합된 새 프로필`
-- **숨기는 것**: 중심점 판정(F-03.2), 병합 규칙(F-03.3), 비율 좌표 변환(F-03.4), 드리프트 방지(F-08.4).
+- **인터페이스**: 저장은 `(현재 창들, 기존 프로필) -> 병합된 새 프로필`, 수집은 `(현재 창들, 기존 프로필+Space overlay, Space snapshot?, 제외 앱들) -> 다음 후보 pair`.
+- **숨기는 것**: 중심점 판정(F-03.2), 병합 규칙(F-03.3), 비율 좌표 변환(F-03.4), 드리프트 방지(F-08.4), 다른 화면으로 명확히 떠난 앱 제거와 비활성 single fullscreen 보충(F-08.3).
 - 거의 순수 함수다. 비율 좌표 변환은 값 타입으로 분리해 RestoreEngine과 공유한다.
 - **허용 오차 판정도 RestoreEngine과 공유한다.** 복원이 "제자리"로 본 차이를 저장이 "옮겨졌다"고 보면 두 엔진이 어긋나고, 그 틈으로 창이 회차마다 밀린다.
 
@@ -115,8 +130,9 @@ CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷
 ### PlugbackController
 
 - **인터페이스**: 관찰 가능한 상태(화면 상태 — 연결됨(화면)·기억만(이름)·없음의 3상태 enum, 프로필 유무, 앱별 복원 예측, Space별 카드 표시 그룹, 마지막 복원 결과(결과 수명 = 프로필 수명), 복원 진행 중, 권한 상태, 복원 모드, 복원 옵션 2종(최소화 복원·새 창 열기), 실험실 토글 3종(자동 슬롯·일반 Space 복원·전체 화면 복원)과 자동 슬롯 반영 방식, 일회성 저장 확인, 저장소 문제 알림) + 명령(저장(async — 창 열거가 본체, 반환값 = 실행/거부 사유 — 확인 표시는 진짜 저장됐을 때만), 복원(async — 반환 시점 = 완료 시점, 반환값 = 실행/거부 사유), 대상 앱 토글·삭제, 모드 변경, 프로필 통째 삭제, 저장소 알림 확인). **복원 진행 중은 계약이다**: 저장·재복원은 명시적으로 거부되고, 진행 중 연결 이벤트는 종료 직후 1회 재복원으로 보류되며(소실 없음), 진행 중 삭제된 프로필의 결과는 기록되지 않는다 + 카드 열림 통지(`cardOpened` — 상태 동기화와 일회성 저장 확인 만료). **명령은 화면 상태를 스스로 동기화한다** — 호출 순서 의식이 없다.
-- **숨기는 것**: 배선 전부 — 정책은 없다. DisplayWatcher 이벤트 → (자동 모드면) RestoreEngine, 명령 → Capture/RestoreEngine, 설정 → 복원 옵션, 마지막 복원 결과 보관. 자동 슬롯은 collect/confirm과 복원 소스 pool만 제어하고, 일반 Space·전체 화면 토글은 RestoreEngine에 허용할 binding 종류만 제어한다. 수동 저장은 자동 슬롯과 무관하게 관련 실험실 토글이 켜져 있으면 Space overlay를 함께 잡는다. 세 실험실 토글이 모두 OFF이면 private Space snapshot을 읽지 않는다. **권한 게이트는 창을 만지는 명령(저장·복원)과 카드 열림 내부에 있다** (US-010 AC-2 — 프로필 편집·모드 변경은 AX를 쓰지 않으므로 게이트가 없다). 판정 어댑터는 앱이 주입하고, UI는 published 권한 상태에 바인딩한다(시스템 API를 직접 읽지 않는다).
+- **숨기는 것**: 배선 전부 — 복원 세션의 정책은 없다. DisplayWatcher 이벤트 → (자동 모드면) RestoreSession, Space 방문 → 방문 대기가 있으면 RestoreSession, 명령 → CaptureEngine/RestoreSession, 설정 → 복원 범위·옵션, 마지막 복원 결과 보관. 자동 슬롯은 collect/confirm과 복원 소스 pool만 제어하고, 일반 Space·전체 화면 토글은 RestoreSession이 허용할 binding 종류만 제어한다. 수동 저장은 자동 슬롯과 무관하게 관련 실험실 토글이 켜져 있으면 Space overlay를 함께 잡는다. 세 실험실 토글이 모두 OFF이면 private Space snapshot을 읽지 않는다. **권한 게이트는 창을 만지는 명령(저장·복원)과 카드 열림 내부에 있다** (US-010 AC-2 — 프로필 편집·모드 변경은 AX를 쓰지 않으므로 게이트가 없다). 판정 어댑터는 앱이 주입하고, UI는 published 권한 상태에 바인딩한다(시스템 API를 직접 읽지 않는다).
 - **슬롯은 여기서 다루지 않는다** (F-08). 규칙 전부가 ProfileSlots에 있고, 컨트롤러는 「이 화면의 프로필」만 묻는다. **RestoreEngine과 CaptureEngine도 슬롯의 존재를 모른다.**
+- 한 번의 창·Space 관찰에서 나온 복원 예측·Space 그룹·Space 구성 차이·저장하지 않는 앱은 화면별 projection 한 값으로 교체한다. 프로필·복원 소스·마지막 결과는 각자의 수명에서 파생해 `ScreenSection`을 만들 때 붙이며 projection에 복사하지 않는다.
 - UI 없이 완결되는 헤드리스 파사드다. UI는 이 상태의 표현일 뿐이며, 어떤 UI든 여기에 바인딩만 하면 된다.
 
 ### MenuBarUI
@@ -130,7 +146,7 @@ CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷
 
 ## 3. 심 (Seam)
 
-교체 지점은 **WindowGateway·WindowMoveSource·ScreenProvider 세 프로토콜과 권한 판정 클로저(`authorizationCheck`)**다. (생성자 파라미터 심 — ProfileStore 디렉터리, UserDefaults, DisplayWatcher 간격 — 은 테스트 격리용이지 교체 지점이 아니다.) WindowGateway 페이크로 두 엔진의 정책 전부를, ScreenProvider 페이크로 컨트롤러의 화면 상태 정책을, 권한 클로저로 게이트 정책을 실기기 없이 검증한다. 어댑터가 하나뿐인 곳(ProfileStore 등)에는 여전히 가상의 심을 만들지 않는다.
+교체 지점은 **WindowGateway·WindowMoveSource·ScreenProvider·SpaceReading·SpaceRelocating 다섯 프로토콜과 권한 판정 클로저(`authorizationCheck`)**다. (생성자 파라미터 심 — ProfileStore 디렉터리, UserDefaults, DisplayWatcher 간격 — 은 테스트 격리용이지 교체 지점이 아니다.) WindowGateway 페이크로 두 엔진의 정책 전부를, ScreenProvider 페이크로 컨트롤러의 화면 상태 정책을, SpaceReading·SpaceRelocating 페이크로 private Space 판독과 visible drag 정책을, 권한 클로저로 게이트 정책을 실기기 없이 검증한다. RestoreSession과 DesktopObservation은 교체 대상이 아닌 MainActor 내부 타입이다. 어댑터가 하나뿐인 곳(ProfileStore 등)에는 여전히 가상의 심을 만들지 않는다.
 
 ## 4. 스택
 

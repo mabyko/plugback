@@ -54,15 +54,13 @@ struct ResolvedProfile: Equatable, Sendable {
 @MainActor
 final class ProfileSlots: ObservableObject {
     private let store: ProfileStore
-    @Published private var profiles: [String: Profile]
+    /// 저장된 슬롯 값. JSON에는 profile만 기록하고 Space overlay는 프로세스 안에서만 산다.
+    /// 둘을 한 값으로 들고 있어 같은 복원 소스라는 불변식을 쓰기 경로가 다시 맞추지 않는다.
+    @Published private var stored: [String: ResolvedProfile]
 
     /// 화면별 수집 후보. **메모리에만 산다** — 확정 전까지 파일에 닿지 않는다.
     /// 앱이 죽으면 그 세션의 수집만 사라지고 두 슬롯은 온전하다.
-    @Published private var candidates: [String: Profile] = [:]
-
-    /// 프로필 슬롯과 같은 키를 쓰는 메모리 전용 Space overlay. 앱 재시작을 넘지 않는다.
-    private var overlays: [String: SlotSpaceOverlay] = [:]
-    private var candidateOverlays: [String: SlotSpaceOverlay] = [:]
+    @Published private var candidates: [String: ResolvedProfile] = [:]
 
     /// 마지막으로 수집이 실제로 돈 시각. 수집은 눈에 보이는 일을 하지 않아서,
     /// 이게 없으면 "돌고 있는지"를 물어볼 곳이 없다 (2026-08-18 실기기에서 실제로 그랬다).
@@ -83,7 +81,6 @@ final class ProfileSlots: ObservableObject {
                 seed()
             } else {
                 candidates.removeAll()
-                candidateOverlays.removeAll()
             }
         }
     }
@@ -104,7 +101,9 @@ final class ProfileSlots: ObservableObject {
         self.isLabEnabled = isLabEnabled
         self.updateMode = updateMode
         let outcome = store.load()
-        profiles = outcome.profiles
+        stored = outcome.profiles.mapValues {
+            ResolvedProfile(profile: $0, overlay: nil)
+        }
         trouble = outcome.trouble
         isSaveBlocked = outcome.trouble == .unreadable
     }
@@ -118,11 +117,15 @@ final class ProfileSlots: ObservableObject {
     /// 동점이면 수동이 이긴다 — 후보 배열에서 앞에 두면 `max(by:)`가 그렇게 고른다.
     func source(for screenID: String) -> (slot: Slot, profile: Profile)? {
         if usesCandidate(for: screenID), let candidate = candidates[screenID] {
-            return (.auto, candidate)
+            return (.auto, candidate.profile)
         }
         var pool: [(Slot, Profile)] = []
-        if let manual = profiles[Slot.manual.key(screenID)] { pool.append((.manual, manual)) }
-        if isLabEnabled, let auto = profiles[Slot.auto.key(screenID)] { pool.append((.auto, auto)) }
+        if let manual = stored[Slot.manual.key(screenID)]?.profile {
+            pool.append((.manual, manual))
+        }
+        if isLabEnabled, let auto = stored[Slot.auto.key(screenID)]?.profile {
+            pool.append((.auto, auto))
+        }
         return pool
             .max { ($0.1.savedAt ?? .distantPast) < ($1.1.savedAt ?? .distantPast) }
             .map { (slot: $0.0, profile: $0.1) }
@@ -135,7 +138,9 @@ final class ProfileSlots: ObservableObject {
     /// 저장된 모든 프로필 — 연결되지 않은 화면 포함 (F-05.6, US-012 AC-1).
     /// 자동 슬롯은 넣지 않는다 — 화면 하나가 두 줄로 보이면 어느 것을 지워야 할지 알 수 없다.
     var all: [Profile] {
-        profiles.filter { !Slot.isAutoKey($0.key) }.values.sorted { $0.screenName < $1.screenName }
+        stored.filter { !Slot.isAutoKey($0.key) }.values
+            .map(\.profile)
+            .sorted { $0.screenName < $1.screenName }
     }
 
     /// 이름순 첫 프로필 — 시작 직후의 빈 상태에서 마지막 화면 이름을 보여주는 데 쓴다.
@@ -145,8 +150,8 @@ final class ProfileSlots: ObservableObject {
     /// 카드가 "지금 복원되는 값"과 "뽑을 때 저장될 값"을 구별해 보여주기 위한 것이다.
     var hasPendingCollect: Bool {
         candidates.contains { id, candidate in
-            candidate.apps != profiles[Slot.auto.key(id)]?.apps
-                || candidateOverlays[id] != overlays[Slot.auto.key(id)]
+            candidate.profile.apps != stored[Slot.auto.key(id)]?.profile.apps
+                || candidate.overlay != stored[Slot.auto.key(id)]?.overlay
         }
     }
 
@@ -156,20 +161,13 @@ final class ProfileSlots: ObservableObject {
     func targets(for screens: [ScreenInfo]) -> [String] {
         var out = Set<String>()
         for screen in screens {
-            for profile in [candidates[screen.id],
-                            profiles[Slot.auto.key(screen.id)],
-                            profiles[Slot.manual.key(screen.id)]].compactMap({ $0 }) {
-                out.formUnion(profile.apps.filter(\.isEnabled).map(\.bundleID))
+            for pair in [candidates[screen.id],
+                         stored[Slot.auto.key(screen.id)],
+                         stored[Slot.manual.key(screen.id)]].compactMap({ $0 }) {
+                out.formUnion(pair.profile.apps.filter(\.isEnabled).map(\.bundleID))
             }
         }
         return Array(out)
-    }
-
-    /// 복원 엔진에 넘길 화면당 프로필 하나 — 슬롯은 여기서 끝난다.
-    func resolved(for screens: [ScreenInfo]) -> [String: Profile] {
-        screens.reduce(into: [String: Profile]()) { out, screen in
-            if let found = source(for: screen.id) { out[screen.id] = found.profile }
-        }
     }
 
     /// Space-aware 경로용 pair. profile과 overlay는 반드시 같은 슬롯에서 나온다.
@@ -182,13 +180,10 @@ final class ProfileSlots: ObservableObject {
     /// 카드처럼 ScreenInfo가 없어도 저장 화면 하나의 같은-slot pair를 읽는 경로.
     func resolvedWithSpaces(for screenID: String) -> ResolvedProfile? {
         if usesCandidate(for: screenID), let candidate = candidates[screenID] {
-            return ResolvedProfile(profile: candidate, overlay: candidateOverlays[screenID])
+            return candidate
         }
         guard let found = source(for: screenID) else { return nil }
-        return ResolvedProfile(
-            profile: found.profile,
-            overlay: overlays[found.slot.key(screenID)]
-        )
+        return stored[found.slot.key(screenID)]
     }
 
     // MARK: - 쓰기
@@ -204,30 +199,28 @@ final class ProfileSlots: ObservableObject {
             // 체크 해제한 앱의 창은 넘기지 않는다 — 「저장하지 않고 감지하지 않는다」가 해제의 뜻이다.
             // 프로필 항목과 좌표는 그대로 남는다(병합) — 다시 켜면 그 자리로 돌아온다 (US-006 AC-2).
             let selected = kept(windows, for: key)
-            var merged: Profile
+            var merged: ResolvedProfile
             if let snapshot {
-                let captured = CaptureEngine.capture(
+                merged = CaptureEngine.capture(
                     windows: selected,
                     on: screen,
-                    merging: profiles[key].map {
-                        ResolvedProfile(profile: $0, overlay: overlays[key])
-                    },
+                    merging: stored[key],
                     snapshot: snapshot
                 )
-                merged = captured.profile
-                setOverlay(captured.overlay, for: key)
             } else {
-                merged = CaptureEngine.capture(windows: selected, on: screen,
-                                               merging: profiles[key])
-                overlays.removeValue(forKey: key)
+                merged = ResolvedProfile(
+                    profile: CaptureEngine.capture(
+                        windows: selected, on: screen, merging: stored[key]?.profile
+                    ),
+                    overlay: nil
+                )
             }
-            merged.fingerprint = screen.fingerprint
-            merged.savedAt = now
-            profiles[key] = merged
+            merged.profile.fingerprint = screen.fingerprint
+            merged.profile.savedAt = now
+            stored[key] = merged
             // 사람이 방금 이 배치를 선언했다 — 그 전에 모아둔 후보는 낡았다.
             // 버리지 않으면 종료·분리 시 확정이 낡은 배치를 더 새 시각으로 써서 방금 저장한 것을 이긴다.
             candidates.removeValue(forKey: screen.id)
-            candidateOverlays.removeValue(forKey: screen.id)
         }
         persist()
     }
@@ -244,25 +237,24 @@ final class ProfileSlots: ObservableObject {
         for screen in screens {
             let manualKey = Slot.manual.key(screen.id)
             var manual = capturePair(
-                windows: windows, on: screen, key: manualKey, snapshot: snapshot
+                windows: windows, on: screen, existing: stored[manualKey], snapshot: snapshot
             )
-            manual.fingerprint = screen.fingerprint
+            manual.profile.fingerprint = screen.fingerprint
             // 이 화면의 첫 앱이면 프로필이 방금 생긴 것이라 시각이 없다 — 그때만 채운다.
-            if manual.savedAt == nil { manual.savedAt = Date() }
-            profiles[manualKey] = manual
+            if manual.profile.savedAt == nil { manual.profile.savedAt = Date() }
+            stored[manualKey] = manual
 
             let autoKey = Slot.auto.key(screen.id)
-            if let auto = profiles[autoKey] {
-                profiles[autoKey] = capturePair(
-                    windows: windows, on: screen, key: autoKey, existing: auto,
+            if let auto = stored[autoKey] {
+                stored[autoKey] = capturePair(
+                    windows: windows, on: screen, existing: auto,
                     snapshot: snapshot
                 )
             }
             if let candidate = candidates[screen.id] {
-                let captured = captureCandidatePair(
+                candidates[screen.id] = capturePair(
                     windows: windows, on: screen, existing: candidate, snapshot: snapshot
                 )
-                candidates[screen.id] = captured
             }
         }
         persist()
@@ -270,7 +262,8 @@ final class ProfileSlots: ObservableObject {
 
     /// 수집 — 지금 배치를 메모리 후보에 담는다. **파일에는 닿지 않는다.**
     /// 자동 슬롯이 켜진 동안 방문한 외장 Space의 새 앱도 candidate에 등록한다.
-    /// 체크 해제된 앱과 복원 pending 앱은 갱신하지 않는다.
+    /// 체크 해제된 앱과 방문 대기 앱은 갱신하지 않는다. 방문 대기는 현재 복원 세션의
+    /// 저장값을 지키므로, 대상 화면 밖에서 보이더라도 제거 대상으로도 낮추지 않는다.
     func collect(
         windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil,
         excluding excludedBundleIDs: Set<String> = []
@@ -282,57 +275,11 @@ final class ProfileSlots: ObservableObject {
                 profile: Profile(screenID: screen.id, screenName: screen.name),
                 overlay: SlotSpaceOverlay()
             )
-            let disabled = Set(base.profile.apps.filter { !$0.isEnabled }.map(\.bundleID))
-            let updating = Set(windows.map(\.appBundleID))
-                .subtracting(disabled)
-                .subtracting(excludedBundleIDs)
-            let presentElsewhere = Set(windows.lazy
-                .filter { !$0.isMinimized }
-                .map(\.appBundleID))
-                .subtracting(Set(windows.lazy
-                    .filter { screen.contains($0) }
-                    .map(\.appBundleID)))
-                .subtracting(disabled)
-                .subtracting(excludedBundleIDs)
-            let selected = windows.filter { updating.contains($0.appBundleID) }
-            var next: Profile
-            if let snapshot {
-                let captured = CaptureEngine.capture(
-                    windows: windows, on: screen, merging: base, snapshot: snapshot,
-                    updating: updating
-                )
-                next = captured.profile
-                setCandidateOverlay(captured.overlay, for: screen.id)
-            } else {
-                next = CaptureEngine.capture(windows: selected, on: screen,
-                                             merging: base.profile)
-                candidateOverlays.removeValue(forKey: screen.id)
-            }
-            next.apps.removeAll { presentElsewhere.contains($0.bundleID) }
-            var overlay = candidateOverlays[screen.id] ?? SlotSpaceOverlay()
-            overlay.keepOnly(Set(next.apps.map(\.bundleID)))
-
-            // 비활성 native fullscreen은 AX 표준 창 열거에 없으므로 WindowServer가 확실히
-            // 식별한 후보로 보충한다. 같은 앱의 fullscreen이 둘이면 앱 단위 프로필로는 모호하다.
-            let fullscreen = snapshot?.fullscreenCandidates.filter {
-                $0.screenID == screen.id
-                    && !disabled.contains($0.bundleID)
-                    && !excludedBundleIDs.contains($0.bundleID)
-            } ?? []
-            let counts = Dictionary(grouping: fullscreen, by: \.bundleID)
-            for candidate in fullscreen where counts[candidate.bundleID]?.count == 1 {
-                if let index = next.apps.firstIndex(where: { $0.bundleID == candidate.bundleID }) {
-                    next.apps[index].displayName = candidate.displayName
-                } else {
-                    next.apps.append(TargetApp(
-                        bundleID: candidate.bundleID, displayName: candidate.displayName,
-                        unitRect: UnitRect(screen.frame, in: screen.frame)
-                    ))
-                }
-                overlay.byBundle[candidate.bundleID] = .fullscreen
-            }
-            setCandidateOverlay(overlay.isEmpty ? nil : overlay, for: screen.id)
-            next.fingerprint = screen.fingerprint
+            var next = CaptureEngine.collect(
+                windows: windows, on: screen, merging: base, snapshot: snapshot,
+                excluding: excludedBundleIDs
+            )
+            next.profile.fingerprint = screen.fingerprint
             candidates[screen.id] = next
             collected = true
         }
@@ -352,10 +299,8 @@ final class ProfileSlots: ObservableObject {
         var wrote = false
         for id in screenIDs {
             guard var candidate = candidates.removeValue(forKey: id) else { continue }
-            candidate.savedAt = now
-            let autoKey = Slot.auto.key(id)
-            profiles[autoKey] = candidate
-            setOverlay(candidateOverlays.removeValue(forKey: id), for: autoKey)
+            candidate.profile.savedAt = now
+            stored[Slot.auto.key(id)] = candidate
             wrote = true
         }
         guard wrote else { return false }
@@ -376,18 +321,15 @@ final class ProfileSlots: ObservableObject {
     /// 창 위치는 건드리지 않으므로 「자동은 자동 슬롯만, 사람은 수동 슬롯만 쓴다」는 유지된다.
     func edit(screenID: String, _ change: (inout Profile) -> Void) {
         for key in [Slot.manual.key(screenID), Slot.auto.key(screenID)] {
-            guard var profile = profiles[key] else { continue }
-            change(&profile)
-            profiles[key] = profile
-            pruneOverlay(at: key, to: profile)
+            guard var pair = stored[key] else { continue }
+            change(&pair.profile)
+            pruneOverlay(in: &pair)
+            stored[key] = pair
         }
         if var candidate = candidates[screenID] {
-            change(&candidate)
+            change(&candidate.profile)
+            pruneOverlay(in: &candidate)
             candidates[screenID] = candidate
-            if var overlay = candidateOverlays[screenID] {
-                overlay.keepOnly(Set(candidate.apps.map(\.bundleID)))
-                candidateOverlays[screenID] = overlay
-            }
         }
         persist()
     }
@@ -395,12 +337,9 @@ final class ProfileSlots: ObservableObject {
     /// 프로필 통째 삭제 (F-05.6). 슬롯 둘과 모으던 후보를 함께 버린다 —
     /// 한쪽만 남으면 목록에 안 보이면서 복원에는 쓰이는 유령이 된다.
     func remove(screenID: String) {
-        profiles.removeValue(forKey: Slot.manual.key(screenID))
-        profiles.removeValue(forKey: Slot.auto.key(screenID))
+        stored.removeValue(forKey: Slot.manual.key(screenID))
+        stored.removeValue(forKey: Slot.auto.key(screenID))
         candidates.removeValue(forKey: screenID)
-        overlays.removeValue(forKey: Slot.manual.key(screenID))
-        overlays.removeValue(forKey: Slot.auto.key(screenID))
-        candidateOverlays.removeValue(forKey: screenID)
         persist()
     }
 
@@ -410,7 +349,9 @@ final class ProfileSlots: ObservableObject {
 
     /// 그 슬롯에서 체크 해제된 앱의 창을 걸러낸다.
     private func kept(_ windows: [WindowInfo], for key: String) -> [WindowInfo] {
-        let disabled = Set((profiles[key]?.apps.filter { !$0.isEnabled } ?? []).map(\.bundleID))
+        let disabled = Set(
+            (stored[key]?.profile.apps.filter { !$0.isEnabled } ?? []).map(\.bundleID)
+        )
         guard !disabled.isEmpty else { return windows }
         return windows.filter { !disabled.contains($0.appBundleID) }
     }
@@ -419,13 +360,9 @@ final class ProfileSlots: ObservableObject {
     private func spaceBases(for screens: [ScreenInfo]) -> [String: ResolvedProfile] {
         screens.reduce(into: [String: ResolvedProfile]()) { out, screen in
             if let candidate = candidates[screen.id] {
-                out[screen.id] = ResolvedProfile(
-                    profile: candidate, overlay: candidateOverlays[screen.id]
-                )
+                out[screen.id] = candidate
             } else if let source = source(for: screen.id) {
-                out[screen.id] = ResolvedProfile(
-                    profile: source.profile, overlay: overlays[source.slot.key(screen.id)]
-                )
+                out[screen.id] = stored[source.slot.key(screen.id)]
             }
         }
     }
@@ -435,11 +372,10 @@ final class ProfileSlots: ObservableObject {
     /// savedAt은 그대로 옮긴다 — 내용이 같으니 동점이 되고, 동점은 수동이 이긴다.
     private func seed() {
         var seeded = false
-        for (key, manual) in profiles where !Slot.isAutoKey(key) {
+        for (key, manual) in stored where !Slot.isAutoKey(key) {
             let autoKey = Slot.auto.key(key)
-            guard profiles[autoKey] == nil else { continue } // 다시 켤 때 기존 자동 슬롯을 덮지 않는다
-            profiles[autoKey] = manual
-            setOverlay(overlays[key], for: autoKey)
+            guard stored[autoKey] == nil else { continue } // 다시 켤 때 기존 자동 슬롯을 덮지 않는다
+            stored[autoKey] = manual
             seeded = true
         }
         if seeded { persist() }
@@ -447,78 +383,36 @@ final class ProfileSlots: ObservableObject {
 
     private func persist() {
         guard !isSaveBlocked else { return } // 읽기 실패를 첫 실행처럼 덮어쓰면 손상보다 나쁜 손실이다
-        store.save(profiles)
+        store.save(stored.mapValues(\.profile))
     }
 
     private func capturePair(
-        windows: [WindowInfo], on screen: ScreenInfo, key: String,
-        existing: Profile? = nil, snapshot: SpaceSnapshot?
-    ) -> Profile {
-        let profile = existing ?? profiles[key]
-        guard let snapshot else {
-            removeBindings(for: windows, at: key)
-            return CaptureEngine.capture(windows: windows, on: screen, merging: profile)
+        windows: [WindowInfo], on screen: ScreenInfo,
+        existing: ResolvedProfile?, snapshot: SpaceSnapshot?
+    ) -> ResolvedProfile {
+        if let snapshot {
+            return CaptureEngine.capture(
+                windows: windows, on: screen, merging: existing, snapshot: snapshot
+            )
         }
-        let captured = CaptureEngine.capture(
-            windows: windows,
-            on: screen,
-            merging: profile.map { ResolvedProfile(profile: $0, overlay: overlays[key]) },
-            snapshot: snapshot
+        var pair = ResolvedProfile(
+            profile: CaptureEngine.capture(
+                windows: windows, on: screen, merging: existing?.profile
+            ),
+            overlay: existing?.overlay
         )
-        setOverlay(captured.overlay, for: key)
-        return captured.profile
-    }
-
-    private func captureCandidatePair(
-        windows: [WindowInfo], on screen: ScreenInfo, existing: Profile,
-        snapshot: SpaceSnapshot?
-    ) -> Profile {
-        guard let snapshot else {
-            if var overlay = candidateOverlays[screen.id] {
-                for bundleID in Set(windows.map(\.appBundleID)) {
-                    overlay.byBundle.removeValue(forKey: bundleID)
-                }
-                setCandidateOverlay(overlay, for: screen.id)
+        if var overlay = pair.overlay {
+            for bundleID in Set(windows.map(\.appBundleID)) {
+                overlay.byBundle.removeValue(forKey: bundleID)
             }
-            return CaptureEngine.capture(windows: windows, on: screen, merging: existing)
+            pair.overlay = overlay.isEmpty ? nil : overlay
         }
-        let captured = CaptureEngine.capture(
-            windows: windows,
-            on: screen,
-            merging: ResolvedProfile(profile: existing, overlay: candidateOverlays[screen.id]),
-            snapshot: snapshot
-        )
-        setCandidateOverlay(captured.overlay, for: screen.id)
-        return captured.profile
+        return pair
     }
 
-    private func setOverlay(_ overlay: SlotSpaceOverlay?, for key: String) {
-        if let overlay, !overlay.isEmpty {
-            overlays[key] = overlay
-        } else {
-            overlays.removeValue(forKey: key)
-        }
-    }
-
-    private func setCandidateOverlay(_ overlay: SlotSpaceOverlay?, for screenID: String) {
-        if let overlay, !overlay.isEmpty {
-            candidateOverlays[screenID] = overlay
-        } else {
-            candidateOverlays.removeValue(forKey: screenID)
-        }
-    }
-
-    private func removeBindings(for windows: [WindowInfo], at key: String) {
-        guard var overlay = overlays[key] else { return }
-        for bundleID in Set(windows.map(\.appBundleID)) {
-            overlay.byBundle.removeValue(forKey: bundleID)
-        }
-        setOverlay(overlay, for: key)
-    }
-
-    private func pruneOverlay(at key: String, to profile: Profile) {
-        guard var overlay = overlays[key] else { return }
-        overlay.keepOnly(Set(profile.apps.map(\.bundleID)))
-        setOverlay(overlay, for: key)
+    private func pruneOverlay(in pair: inout ResolvedProfile) {
+        guard var overlay = pair.overlay else { return }
+        overlay.keepOnly(Set(pair.profile.apps.map(\.bundleID)))
+        pair.overlay = overlay.isEmpty ? nil : overlay
     }
 }

@@ -66,19 +66,7 @@ enum CardPresentation {
         case .inactive: return "방문 시 복원"
         case .otherDisplay: return "다른 화면 · 복원 대기"
         case .missing: return "현재 없음"
-        case .unknown: return nil
-        }
-    }
-
-    /// 비활성 Space가 AX에서 숨긴 창을 「창 없음」으로 오해해 표시하지 않는다.
-    static func prediction(
-        _ prediction: RestorePrediction?, in kind: PlugbackController.SpaceGroup.Kind
-    ) -> RestorePrediction? {
-        switch kind {
-        case .regular(_, .current), .unresolved:
-            return prediction
-        case .regular, .fullscreen:
-            return prediction == .willSkip(.appNotRunning) ? prediction : nil
+        case .unknown: return "현재 상태 확인 불가"
         }
     }
 

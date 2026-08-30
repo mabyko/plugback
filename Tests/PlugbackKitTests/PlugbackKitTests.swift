@@ -105,10 +105,27 @@ final class RestoreEngineTests: XCTestCase {
 
     private let leftHalf = UnitRect(x: 0, y: 0, width: 0.5, height: 1)
 
-    /// 단일 화면 복원 — 엔진 인터페이스의 테스트용 축약.
+    /// 단일 화면 복원 — 제품과 같은 RestoreSession 인터페이스의 테스트용 축약.
     private func restore(_ profile: Profile, options: RestoreOptions = RestoreOptions()) async -> RestoreResult {
-        await RestoreEngine.restore(profiles: [external.id: profile], screens: [external],
-                                    using: gateway, options: options)[0]
+        await restoreAll([external.id: profile], screens: [external], options: options)[0]
+    }
+
+    private func restoreAll(
+        _ profiles: [String: Profile], screens: [ScreenInfo],
+        options: RestoreOptions = RestoreOptions()
+    ) async -> [RestoreResult] {
+        let observation = DesktopObservation(gateway: gateway, spaceReader: nil)
+        let session = RestoreSession(
+            scope: .none, observation: observation, gateway: gateway,
+            spaceRelocator: nil
+        )
+        return await session.restoreAll(
+            resolved: profiles.mapValues {
+                ResolvedProfile(profile: $0, overlay: nil)
+            },
+            screens: screens,
+            options: options
+        )
     }
 
     func testClosedAppIsSkippedAndNotLaunched() async {
@@ -330,9 +347,11 @@ final class RestoreEngineTests: XCTestCase {
         let profile = profileWith(("com.closed", leftHalf), ("com.full", leftHalf), ("com.min", leftHalf),
                                   ("com.ok", leftHalf), ("com.place", leftHalf))
 
-        let predictions = RestoreEngine.predict(profile: profile, on: external,
-                                                windows: gateway.windowsList,
-                                                running: gateway.runningBundleIDs)
+        let predictions = RestoreEngine.predict(
+            resolved: ResolvedProfile(profile: profile, overlay: nil), on: external,
+            windows: gateway.windowsList, snapshot: nil,
+            running: gateway.runningBundleIDs, scope: .all
+        )
         let result = await restore(profile)
 
         XCTAssertEqual(result.entries.count, 5)
@@ -373,8 +392,7 @@ final class RestoreEngineTests: XCTestCase {
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [window(1, "com.chrome", x: 2000, y: 300, w: 800, h: 600)]
 
-        let results = await RestoreEngine.restore(profiles: [mismatched.id: profile], screens: [mismatched],
-                                                  using: gateway)
+        let results = await restoreAll([mismatched.id: profile], screens: [mismatched])
         XCTAssertEqual(results[0].screenSkipReason, .fingerprintMismatch)
         XCTAssertTrue(results[0].entries.isEmpty)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
@@ -395,8 +413,7 @@ final class RestoreEngineTests: XCTestCase {
             window(1, "com.chrome", x: 2500, y: 500, w: 800, h: 600),  // ext-1 소속(중심점) — 어질러짐
             window(2, "com.chrome", x: 4500, y: 300, w: 800, h: 600),  // ext-2 소속 — 어질러짐
         ]
-        let results = await RestoreEngine.restore(profiles: profiles, screens: [external2, external],
-                                                  using: gateway)
+        let results = await restoreAll(profiles, screens: [external2, external])
         // ext-1(정렬상 첫 화면)만 적용, ext-2는 이미 처리된 앱이라 항목 자체가 빠진다
         XCTAssertEqual(results.map(\.screenID), [external.id, external2.id])
         XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1])

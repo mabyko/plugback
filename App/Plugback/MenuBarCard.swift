@@ -248,7 +248,7 @@ private struct Card: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             } else {
-                appRows(group.apps, in: section, groupKind: group.kind)
+                appRows(group.apps, in: section)
             }
         }
     }
@@ -256,17 +256,12 @@ private struct Card: View {
     @ViewBuilder
     private func appRows(
         _ apps: [TargetApp],
-        in section: PlugbackController.ScreenSection,
-        groupKind: PlugbackController.SpaceGroup.Kind? = nil
+        in section: PlugbackController.ScreenSection
     ) -> some View {
         // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
         ForEach(apps, id: \.bundleID) { app in
-            let rawPrediction = section.predictions[app.bundleID]
-            let prediction = groupKind.map {
-                CardPresentation.prediction(rawPrediction, in: $0)
-            } ?? rawPrediction
             AppRow(app: app,
-                   prediction: prediction,
+                   prediction: section.predictions[app.bundleID],
                    setTracked: { tracked in
                        Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
                    },
@@ -372,7 +367,7 @@ private struct Card: View {
 
 private struct AppRow: View {
     let app: TargetApp
-    /// nil = 아직 계산 안 됨 — "모름"을 "꺼짐"으로 지어내지 않고 점을 그리지 않는다
+    /// nil = 아직 계산 안 됐거나 이번 회차 결과 없음 — "모름"을 지어내지 않고 점을 그리지 않는다
     let prediction: RestorePrediction?
     let setTracked: (Bool) -> Void
     let remove: () -> Void

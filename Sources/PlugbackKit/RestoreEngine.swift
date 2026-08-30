@@ -16,7 +16,9 @@ public struct RestoreOptions: Sendable {
 
 /// 복원 예측 — 카드의 점이 쓰는 어휘. 진실(restore)과 같은 선택 규칙에서 계산된다.
 /// 일치 범위: 식별자 정렬상 첫 화면(카드가 보여주는 화면)에서 **판정 규칙**이 진실과 일치한다.
-/// 실행 시점 사건 — 이동 실패, 새 창 미등장, 지문 불일치의 화면 통째 건너뜀, 체크 해제 — 은 예측이 담지 않는다.
+/// 실행 시점 사건 — 이동 실패, 새 창 미등장, 지문 불일치의 화면 통째 건너뜀,
+/// 체크 해제, 한 pass의 두 번째 이후 fullscreen 전환 — 은 예측이 담지 않는다.
+/// 방문 대기·판정 불가처럼 이번 회차에 결과가 없는 앱은 사전에도 들어가지 않는다.
 /// 뒷 화면에서는 앞 화면과 겹치는 앱이 다중 화면 중복 제거(F-01.6)로 빠질 수 있다 —
 /// 예측은 화면 목록 맥락을 받지 않으므로 그 제거를 모른다.
 public enum RestorePrediction: Equatable, Sendable {
@@ -28,7 +30,7 @@ public enum RestorePrediction: Equatable, Sendable {
     case willSkip(SkipReason)
 }
 
-/// Space-aware 경로의 순수 선택 결과. 이동과 pending 수명은 controller의 일이다.
+/// Space-aware 경로의 순수 선택 결과. 이동과 방문 대기 수명은 RestoreSession의 일이다.
 enum SpaceWindowSelection: Equatable, Sendable {
     case legacy
     case window(WindowInfo)
@@ -59,26 +61,24 @@ public enum RestoreEngine {
         on screen: ScreenInfo,
         windows: [WindowInfo],
         snapshot: SpaceSnapshot?,
-        regularSpacesEnabled: Bool = true,
-        fullscreenEnabled: Bool = true
+        scope: SpaceRestoreScope = .all
     ) -> SpaceWindowSelection {
         guard let binding = resolved.overlay?.byBundle[bundleID] else { return .legacy }
+        guard scope.restores(binding) else { return .legacy }
         let hint: SpaceHint
         switch binding {
         case .regular(let value):
-            guard regularSpacesEnabled else { return .legacy }
             hint = value
         case .fullscreen:
-            guard fullscreenEnabled else { return .legacy }
             return selectFullscreenWindow(
                 bundleID: bundleID, on: screen, windows: windows, snapshot: snapshot
             )
         case .unresolved(.fullscreen):
-            return fullscreenEnabled ? .fullscreen : .legacy
+            return .fullscreen
         case .unresolved(.fullscreenUnknown):
-            return fullscreenEnabled ? .unavailable : .legacy
+            return .unavailable
         case .unresolved:
-            return regularSpacesEnabled || fullscreenEnabled ? .unavailable : .legacy
+            return .unavailable
         }
         guard let snapshot else { return .unavailable }
 
@@ -167,54 +167,6 @@ public enum RestoreEngine {
         }
     }
 
-    /// 연결된 외장 화면들에 각 프로필을 적용한다. 반환 시점 = 완료 시점 — 최종 결과다.
-    /// 프로필 없는 화면은 결과를 만들지 않는다 (US-007 AC-5).
-    /// 같은 앱이 여러 프로필에 있으면 식별자 정렬 순서상 첫 화면만 적용한다 — 한 창을 두 번 옮기지 않는다 (F-01.6).
-    public static func restore(
-        profiles: [String: Profile],
-        screens: [ScreenInfo],
-        using gateway: WindowGateway,
-        options: RestoreOptions = RestoreOptions()
-    ) async -> [RestoreResult] {
-        var results: [RestoreResult] = []
-        var claimed = Set<String>()
-        for screen in screens.sorted(by: { $0.id < $1.id }) {
-            guard var profile = profiles[screen.id] else { continue }
-            // UUID 일치 + 지문 불일치 = OS가 배정을 바꿨다는 신호. 오작동 대신 무작동 (F-01.4).
-            if let saved = profile.fingerprint, let live = screen.fingerprint, saved != live {
-                results.append(RestoreResult(screenID: screen.id, screenSkipReason: .fingerprintMismatch))
-                continue
-            }
-            profile.apps.removeAll { claimed.contains($0.bundleID) }
-
-            // 사전 단계 (F-02.2 예외 옵션): 창 없는 실행 중 앱 전부에 동시 새 창 열기.
-            // 대기가 병렬이라 총 지연은 앱 수와 무관하게 화면당 게이트웨이 한도(≤3초)다 (F-07).
-            if options.reopenWindowless {
-                var windowless: [String] = []
-                for app in profile.apps where app.isEnabled {
-                    if await gateway.isRunning(bundleID: app.bundleID),
-                       await gateway.standardWindows(of: [app.bundleID]).isEmpty {
-                        windowless.append(app.bundleID)
-                    }
-                }
-                await withTaskGroup(of: Void.self) { group in
-                    for bundleID in windowless {
-                        group.addTask { _ = await gateway.openWindow(bundleID: bundleID) }
-                    }
-                }
-            }
-
-            var result = RestoreResult(screenID: screen.id)
-            for app in profile.apps where app.isEnabled {
-                let outcome = await restoreOne(app, on: screen, using: gateway, options: options)
-                result.entries.append(.init(bundleID: app.bundleID, displayName: app.displayName, outcome: outcome))
-            }
-            results.append(result)
-            claimed.formUnion(profile.apps.filter(\.isEnabled).map(\.bundleID))
-        }
-        return results
-    }
-
     /// 이미 한 번 열거한 창과 같은 회차의 Space snapshot만 쓴다. 이 함수 안에서는 창을
     /// 다시 열거하지 않으므로 선택에 쓴 gateway window ID가 move가 끝날 때까지 유효하다.
     static func restore(
@@ -223,8 +175,7 @@ public enum RestoreEngine {
         windows: [WindowInfo],
         snapshot: SpaceSnapshot?,
         onlyBundles: [String: Set<String>]? = nil,
-        regularSpacesEnabled: Bool = true,
-        fullscreenEnabled: Bool = true,
+        scope: SpaceRestoreScope = .all,
         using gateway: WindowGateway,
         options: RestoreOptions = RestoreOptions()
     ) async -> SpaceRestorePass {
@@ -253,8 +204,7 @@ public enum RestoreEngine {
             } else {
                 uniqueApps
             }
-            guard !selectedApps.isEmpty else { continue }
-
+            if onlyBundles != nil, selectedApps.isEmpty { continue }
             var result = RestoreResult(screenID: screen.id)
             for app in selectedApps {
                 guard await gateway.isRunning(bundleID: app.bundleID) else {
@@ -269,9 +219,7 @@ public enum RestoreEngine {
                 var completesBinding = false
                 switch selectSpaceWindow(
                     bundleID: app.bundleID, in: pair, on: screen,
-                    windows: windows, snapshot: snapshot,
-                    regularSpacesEnabled: regularSpacesEnabled,
-                    fullscreenEnabled: fullscreenEnabled
+                    windows: windows, snapshot: snapshot, scope: scope
                 ) {
                 case .legacy:
                     let candidates = windows.filter { $0.appBundleID == app.bundleID }
@@ -316,23 +264,6 @@ public enum RestoreEngine {
             results.append(result)
         }
         return SpaceRestorePass(results: results, completedByScreen: completed)
-    }
-
-    private static func restoreOne(
-        _ app: TargetApp, on screen: ScreenInfo, using gateway: WindowGateway, options: RestoreOptions
-    ) async -> RestoreResult.Outcome {
-        guard await gateway.isRunning(bundleID: app.bundleID) else { return .skipped(.appNotRunning) }
-
-        // 새 창 열기는 사전 단계에서 병렬로 끝났다 — 여기서는 그 결과(창 유무)만 본다.
-        let all = await gateway.standardWindows(of: [app.bundleID])
-        guard !all.isEmpty else { return .skipped(.noWindow) }
-
-        let window: WindowInfo
-        switch pickWindow(from: all, on: screen, options: options) {
-        case .skip(let reason): return .skipped(reason)
-        case .window(let picked): window = picked
-        }
-        return await restore(app, window: window, on: screen, using: gateway, options: options)
     }
 
     private static func restore(
@@ -385,26 +316,65 @@ public enum RestoreEngine {
 
     // MARK: - 예측 (점의 어휘) — 진실과 같은 선택 규칙
 
-    /// 복원을 실행하면 각 대상 앱이 어떻게 될지의 사전 판정. 부수효과 없음 — 이미 열거된
-    /// 스냅샷을 받는 거의 순수 함수다 (CaptureEngine과 같은 관계).
-    /// screen이 nil이면(연결 해제 상태) 제자리 판정은 생략된다 — 연결되면 다시 계산된다.
-    public static func predict(
-        profile: Profile, on screen: ScreenInfo?, windows: [WindowInfo],
-        running: Set<String>, options: RestoreOptions = RestoreOptions()
+    /// 복원을 실행하면 각 대상 앱이 어떻게 될지의 사전 판정. 부수효과 없음 — 복원과 같은
+    /// profile+Space overlay, 창, snapshot, 범위를 받아 같은 창 선택 결과에서 계산한다.
+    /// 방문 대기·판정 불가처럼 이번 회차에 결과가 없는 앱은 사전에 넣지 않는다.
+    static func predict(
+        resolved: ResolvedProfile, on screen: ScreenInfo?, windows: [WindowInfo],
+        snapshot: SpaceSnapshot?, running: Set<String>, scope: SpaceRestoreScope,
+        options: RestoreOptions = RestoreOptions()
     ) -> [String: RestorePrediction] {
         var result: [String: RestorePrediction] = [:]
-        for app in profile.apps {
-            result[app.bundleID] = predictOne(app, on: screen, windows: windows,
-                                              running: running, options: options)
+        for app in resolved.profile.apps {
+            result[app.bundleID] = predictOne(
+                app, in: resolved, on: screen, windows: windows, snapshot: snapshot,
+                running: running, scope: scope, options: options
+            )
         }
         return result
     }
 
     private static func predictOne(
-        _ app: TargetApp, on screen: ScreenInfo?, windows: [WindowInfo],
-        running: Set<String>, options: RestoreOptions
-    ) -> RestorePrediction {
+        _ app: TargetApp, in resolved: ResolvedProfile, on screen: ScreenInfo?,
+        windows: [WindowInfo], snapshot: SpaceSnapshot?, running: Set<String>,
+        scope: SpaceRestoreScope, options: RestoreOptions
+    ) -> RestorePrediction? {
         guard running.contains(app.bundleID) else { return .willSkip(.appNotRunning) }
+
+        let selection: SpaceWindowSelection
+        if let screen {
+            selection = selectSpaceWindow(
+                bundleID: app.bundleID, in: resolved, on: screen,
+                windows: windows, snapshot: snapshot, scope: scope
+            )
+        } else if let binding = resolved.overlay?.byBundle[app.bundleID],
+                  scope.restores(binding) {
+            selection = .unavailable
+        } else {
+            selection = .legacy
+        }
+
+        switch selection {
+        case .legacy:
+            return predictLegacy(app, on: screen, windows: windows, options: options)
+        case .window(let window):
+            return predict(app, from: window, on: screen, options: options)
+        case .enterFullscreen(let window):
+            guard !window.isMinimized || options.restoreMinimized else {
+                return .willSkip(.minimized)
+            }
+            return .willMove
+        case .fullscreen:
+            return .willSkip(.fullscreen)
+        case .inactive, .unavailable:
+            return nil
+        }
+    }
+
+    private static func predictLegacy(
+        _ app: TargetApp, on screen: ScreenInfo?, windows: [WindowInfo],
+        options: RestoreOptions
+    ) -> RestorePrediction {
         let all = windows.filter { $0.appBundleID == app.bundleID }
         if all.isEmpty {
             // 새 창 열기 옵션이 켜졌으면 복원이 창을 열어서 옮길 것이다
@@ -412,11 +382,20 @@ public enum RestoreEngine {
         }
         switch pickWindow(from: all, on: screen, options: options) {
         case .skip(let reason): return .willSkip(reason)
-        case .window(let window):
-            guard let screen else { return .willMove }
-            let target = app.unitRect.frame(in: screen.frame)
-            return approximatelyEqual(window.frame, target) ? .alreadyInPlace : .willMove
+        case .window(let window): return predict(app, from: window, on: screen, options: options)
         }
+    }
+
+    private static func predict(
+        _ app: TargetApp, from window: WindowInfo, on screen: ScreenInfo?,
+        options: RestoreOptions
+    ) -> RestorePrediction {
+        guard !window.isMinimized || options.restoreMinimized else {
+            return .willSkip(.minimized)
+        }
+        guard let screen else { return .willMove }
+        let target = app.unitRect.frame(in: screen.frame)
+        return approximatelyEqual(window.frame, target) ? .alreadyInPlace : .willMove
     }
 
     // MARK: - 공유 코어

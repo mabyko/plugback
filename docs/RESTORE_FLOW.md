@@ -49,9 +49,9 @@
 
 ---
 
-## B · 정책 층 — PlugbackController
+## B · 정책·세션 층 — PlugbackController → RestoreSession
 
-실행할지 정한다. 이 층은 창을 모른다.
+컨트롤러는 실행할지 정하고, 복원 세션은 이번 복원 회차의 범위와 방문 대기를 관리한다. 둘 다 창 API 자체는 모른다.
 
 ```
         ◇ 복원 모드가 자동?         (F-05.4)
@@ -66,7 +66,15 @@
         ◇ 복원이 진행 중이 아님?
           └ 진행 중 ──▶ pendingRestore = true — 끝난 직후 1바퀴 더 돈다
                     ▼
-              화면 루프 — 화면 식별자 정렬 순 (F-01.6)
+              RestoreSession.restoreAll
+                    │
+              새 창 열기 → 창 1회 열거
+                    │
+        ◇ Space 복원 범위가 켜졌나?
+          ├ 꺼짐 ──▶ private snapshot 없이 RestoreEngine
+          └ 켜짐 ──▶ 일반 Space 사전 재배치 → stable snapshot → RestoreEngine
+                       나머지는 방문 대기로 남긴다. Space 방문 때 restoreVisited가
+                       안전한 사전 재배치를 다시 시도한 뒤 각 대상을 1회 처리한다.
 ```
 
 ---
@@ -107,7 +115,7 @@
 | 층 | 모듈 | 정하는 것 | 조건의 출처 |
 |---|---|---|---|
 | A | DisplayWatcher | 발화할지 | F-01.2 · F-01.3 |
-| B | PlugbackController | 실행할지 | F-05.4 · US-007 · US-010 |
+| B | PlugbackController · RestoreSession | 실행할지 · 이번 회차와 방문 대기 | F-05.4 · US-007 · US-010 |
 | C | RestoreEngine | 이 화면을 다룰지 | F-01.4 · F-01.6 |
 | D | RestoreEngine | 이 창을 옮길지 | F-02.1 · F-02.2 · F-02.3 |
 
