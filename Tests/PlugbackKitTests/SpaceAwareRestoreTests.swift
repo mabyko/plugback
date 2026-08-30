@@ -53,6 +53,80 @@ final class SpaceAwareRestoreTests: XCTestCase {
         )
     }
 
+    func testCaptureRejectsABindingWhoseNameIsDuplicatedAcrossScreens() {
+        let externalSpace = SpaceRuntimeID(1)
+        let builtinSpace = SpaceRuntimeID(2)
+        let target = window(1, bundleID: "com.app", windowServerID: 11)
+        let existing = ResolvedProfile(
+            profile: Profile(
+                screenID: external.id,
+                screenName: external.name,
+                apps: [TargetApp(
+                    bundleID: "com.app",
+                    displayName: "App",
+                    unitRect: UnitRect(x: 0, y: 0, width: 1, height: 1)
+                )]
+            ),
+            overlay: nil
+        )
+        let snapshot = SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(builtinSpace, "duplicated", order: 1, current: true),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(externalSpace, "duplicated", order: 1, current: true),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [externalSpace]]
+        )
+
+        let captured = CaptureEngine.capture(
+            windows: [target], on: external, merging: existing, snapshot: snapshot
+        )
+
+        XCTAssertEqual(captured.overlay?.byBundle["com.app"], .unresolved(.nameUnavailable))
+        XCTAssertEqual(captured.overlay?.regularSpaces, [])
+    }
+
+    func testCaptureTreatsAWindowJoinedToAnotherScreensFullscreenAsStranded() {
+        let externalSpace = SpaceRuntimeID(1)
+        let builtinFullscreen = SpaceRuntimeID(2)
+        let target = window(1, bundleID: "com.app", windowServerID: 11)
+        let existing = ResolvedProfile(
+            profile: Profile(
+                screenID: external.id,
+                screenName: external.name,
+                apps: [TargetApp(
+                    bundleID: "com.app",
+                    displayName: "App",
+                    unitRect: UnitRect(x: 0, y: 0, width: 1, height: 1)
+                )]
+            ),
+            overlay: nil
+        )
+        let snapshot = SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(
+                        builtinFullscreen, "builtin-fullscreen", order: 1,
+                        kind: .fullscreen, current: true
+                    ),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(externalSpace, "external", order: 1, current: true),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [builtinFullscreen]]
+        )
+
+        let captured = CaptureEngine.capture(
+            windows: [target], on: external, merging: existing, snapshot: snapshot
+        )
+
+        XCTAssertEqual(captured.overlay?.byBundle["com.app"], .unresolved(.stranded))
+    }
+
     func testCaptureRemembersRegularSpacesWithoutWindows() {
         let first = SpaceRuntimeID(1)
         let fullscreen = SpaceRuntimeID(2)
@@ -172,6 +246,20 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(
             PlugbackController.spaceGroups(in: resolved, snapshot: missing)[1].kind,
             .regular(number: 2, state: .missing)
+        )
+        let changedKind = SpaceSnapshot(
+            displays: [.init(screenID: external.id, spaces: [
+                space(SpaceRuntimeID(1), "external-first", order: 1, current: true),
+                space(
+                    SpaceRuntimeID(2), "external-empty", order: 2,
+                    kind: .fullscreen
+                ),
+            ])],
+            membershipsByWindowServerID: [:]
+        )
+        XCTAssertEqual(
+            PlugbackController.spaceGroups(in: resolved, snapshot: changedKind)[1].kind,
+            .regular(number: 2, state: .unknown)
         )
         XCTAssertFalse(PlugbackController.spaceConfigurationDiffers(
             in: resolved, snapshot: nil, targetConnected: false
@@ -414,6 +502,41 @@ final class SpaceAwareRestoreTests: XCTestCase {
             memberships: [11: [e1], 12: [e1]]
         )
         XCTAssertEqual(selection(bound, [target, secondWindow], twoWindows), .unavailable)
+    }
+
+    func testRestoreRejectsABoundNameDuplicatedAcrossScreens() {
+        let externalSpace = SpaceRuntimeID(1)
+        let builtinSpace = SpaceRuntimeID(2)
+        let target = window(1, bundleID: "com.app", windowServerID: 11)
+        let bound = ResolvedProfile(
+            profile: Profile(
+                screenID: external.id,
+                screenName: external.name,
+                apps: [TargetApp(
+                    bundleID: "com.app",
+                    displayName: "App",
+                    unitRect: UnitRect(x: 0, y: 0, width: 1, height: 1)
+                )]
+            ),
+            overlay: SlotSpaceOverlay(byBundle: [
+                "com.app": .regular(SpaceHint(
+                    opaqueName: "duplicated", localOrderHint: 1
+                )),
+            ])
+        )
+        let snapshot = SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(builtinSpace, "duplicated", order: 1, current: true),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(externalSpace, "duplicated", order: 1, current: true),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [externalSpace]]
+        )
+
+        XCTAssertEqual(selection(bound, [target], snapshot), .unavailable)
     }
 
     func testSpacePredictionMatchesRestoreTruthAndOmitsNoResult() async {

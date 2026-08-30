@@ -107,7 +107,7 @@ Split View / 판정 불명 type 4
 
 ```text
 SpaceHint                       // Codable 아님
-  opaqueName: String            // 해당 화면에서 non-empty·unique일 때만
+  opaqueName: String            // stable snapshot 전체에서 non-empty·unique일 때만
   localOrderHint: Int           // identity가 아니라 진단 힌트
 
 SpaceBinding                    // bundle당 하나
@@ -146,7 +146,7 @@ SpaceRelocation                 // 저장하지 않는 한 회차 명령
 ```
 
 - `runtimeID`와 `windowServerID`는 메모리 밖으로 나가지 않는다.
-- `opaqueName`이 비거나 같은 화면에서 중복이면 binding을 만들지 않는다.
+- `opaqueName`이 비거나 stable snapshot의 어느 화면·type에서든 중복이면 binding을 만들지 않는다.
 - unique name이 같으면 local order가 바뀌어도 같은 Space로 본다. local order는 충돌 진단에만 쓴다.
 - 같은 이름이 다른 화면에만 나타나면 stranded로 보고 건너뛴다.
 - membership이 0개 또는 2개 이상이면 sticky/불명 상태이므로 unresolved다.
@@ -163,6 +163,7 @@ MissionControlWatcher ─▶ CollectTrigger ──수집 이벤트──┘
                                               └─ DesktopObservation
                                                    ├─ WindowGateway — AX 창 + 임시 ID
                                                    └─ SpaceReader — stable snapshot
+Space snapshot ─▶ SpacePlacement ─▶ CaptureEngine · RestoreEngine · 카드 · SpaceRelocator
 ```
 
 ### SpaceReader
@@ -183,6 +184,10 @@ implementation 안에 다음 복잡성을 숨긴다.
 - 심볼 부재, 반환 형식 변화, 불안정 상태의 fail-closed 처리
 
 실물 adapter, unavailable adapter, 테스트 fake가 같은 seam을 쓴다. private 형식은 controller나 engine에 새지 않는다.
+
+### SpacePlacement
+
+저장된 `SpaceHint`, 회차 한정 runtime ID, AX 열거에서 join한 window ID들을 한 stable snapshot 안의 위치 사실로 해석하는 순수 내부 module이다. 화면·runtime ID·membership이 유일하지 않거나 opaque name이 snapshot 전체에서 유일하지 않으면 판정 불가로 닫는다. 저장·복원·카드·재배치 정책은 각 소비자에 남기며 별도 protocol이나 adapter는 만들지 않는다.
 
 ### SpaceRelocator
 
@@ -518,7 +523,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - 새 비활성 Space를 내장 → A → 내장 → A로 방문 없이 왕복했다. 같은 runtime SID와 opaque name이 유지돼 Space 자체의 화면 소속을 앱 없이 대응할 수 있음을 확인했다.
 - 비활성 drag에는 `NSWorkspace.activeSpaceDidChangeNotification`, 앱 활성·비활성, 알려진 expose distributed/Darwin notify가 오지 않았다.
 - Dock application AX observer에서는 사용자가 연 Mission Control 두 회차 모두 `AXUIElementDestroyed`가 닫힐 때 정확히 한 번 왔다. `mc` tree를 실제로 본 회차만 closed로 인정해 다른 Dock 요소 삭제를 수집 신호로 낮추지 않는다.
-- `SlotSpaceOverlay.regularSpaces`는 unique non-empty opaque name과 당시 local order만 메모리에 둔다. raw SID는 저장하지 않고 앱 목록 편집에도 지워지지 않는다.
+- `SlotSpaceOverlay.regularSpaces`는 stable snapshot 전체에서 unique한 non-empty opaque name과 당시 local order만 메모리에 둔다. raw SID는 저장하지 않고 앱 목록 편집에도 지워지지 않는다.
 - 수동 저장과 자동 수집 모두 같은 stable snapshot의 전체 regular 목록을 담는다. 자동 수집은 자동 슬롯 ON에서 Mission Control 닫힘 뒤 한 번 더 실행되며, OFF이면 observer와 candidate가 모두 꺼진다.
 - `SpaceRelocationPlanner`는 앱 binding과 독립 목록의 합집합을 사용한다. 따라서 profile app이 0개인 regular Space도 기존 visible drag와 전후 snapshot 검증 경로를 그대로 탄다.
 - 한 desired Space가 현재·소실 등으로 막혀도 뒤의 안전한 비활성 Space 이동을 계속 고르도록 planner를 보강했다. 첫 blocked 항목 하나가 전체 복구를 가리는 회귀 테스트를 포함한다.

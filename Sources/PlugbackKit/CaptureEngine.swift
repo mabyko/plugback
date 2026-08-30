@@ -151,17 +151,10 @@ public enum CaptureEngine {
     private static func regularSpaces(
         on screen: ScreenInfo, in snapshot: SpaceSnapshot
     ) -> [SpaceHint]? {
-        let displays = snapshot.displays.filter { $0.screenID == screen.id }
-        guard displays.count == 1, let display = displays.first else { return nil }
-        let nameCounts = Dictionary(
-            grouping: snapshot.displays.flatMap(\.spaces).compactMap(\.opaqueName),
-            by: { $0 }
-        ).mapValues(\.count)
+        guard let display = snapshot.onlyDisplay(screen.id) else { return nil }
         return display.spaces.compactMap { space in
-            guard space.kind == .regular,
-                  let name = space.opaqueName,
-                  nameCounts[name] == 1 else { return nil }
-            return SpaceHint(opaqueName: name, localOrderHint: space.localOrder)
+            SpacePlacement.of(space.runtimeID, on: screen.id, in: snapshot)
+                .onTarget?.identity
         }
     }
 
@@ -185,44 +178,33 @@ public enum CaptureEngine {
             return .unresolved(.fullscreen)
         }
 
-        var runtimeIDs = Set<SpaceRuntimeID>()
-        for window in bundleWindows {
-            guard let windowID = window.windowServerID else {
-                return .unresolved(.windowUnjoined)
+        let placement = SpacePlacement.of(
+            windowServerIDs: bundleWindows.map(\.windowServerID),
+            on: screen.id,
+            in: snapshot
+        )
+        if let found = placement.found, found.screenID != screen.id {
+            return .unresolved(.stranded)
+        }
+        switch placement {
+        case .current(let found):
+            guard let identity = found.identity else {
+                return .unresolved(.nameUnavailable)
             }
-            guard let memberships = snapshot.membershipsByWindowServerID[windowID],
-                  memberships.count == 1,
-                  let runtimeID = memberships.first else {
-                return .unresolved(.membershipUnavailable)
-            }
-            runtimeIDs.insert(runtimeID)
-        }
-        guard runtimeIDs.count == 1, let runtimeID = runtimeIDs.first else {
-            return .unresolved(.multipleSpaces)
-        }
-
-        let locations = snapshot.displays.flatMap { display in
-            display.spaces.filter { $0.runtimeID == runtimeID }.map { (display, $0) }
-        }
-        guard locations.count == 1, let location = locations.first else {
+            return .regular(identity)
+        case .inactive:
+            return .unresolved(.inactive)
+        case .stranded:
+            return .unresolved(.stranded)
+        case .fullscreen:
+            return .unresolved(.fullscreen)
+        case .unsupported:
+            return .unresolved(.unsupportedSpace)
+        case .missing:
             return .unresolved(.spaceMissing)
+        case .unknown(let ambiguity):
+            return .unresolved(blockReason(for: ambiguity))
         }
-        guard location.0.screenID == screen.id else { return .unresolved(.stranded) }
-        switch location.1.kind {
-        case .fullscreen: return .unresolved(.fullscreen)
-        case .unknown: return .unresolved(.unsupportedSpace)
-        case .regular: break
-        }
-        guard location.1.isCurrent else { return .unresolved(.inactive) }
-        guard let name = location.1.opaqueName,
-              location.0.spaces.filter({ $0.opaqueName == name }).count == 1 else {
-            return .unresolved(.nameUnavailable)
-        }
-        guard let selectedID = selected.windowServerID,
-              snapshot.membershipsByWindowServerID[selectedID] == [runtimeID] else {
-            return .unresolved(.membershipUnavailable)
-        }
-        return .regular(SpaceHint(opaqueName: name, localOrderHint: location.1.localOrder))
     }
 
     private static func fullscreenBinding(
@@ -233,32 +215,45 @@ public enum CaptureEngine {
         snapshot: SpaceSnapshot
     ) -> SpaceBinding {
         guard bundleWindows.count == 1 else { return .unresolved(.multipleSpaces) }
-        guard let windowID = selected.windowServerID else {
-            return .unresolved(.windowUnjoined)
-        }
-        guard let memberships = snapshot.membershipsByWindowServerID[windowID],
-              memberships.count == 1, let runtimeID = memberships.first else {
-            return .unresolved(.membershipUnavailable)
-        }
-        let locations = snapshot.displays.flatMap { display in
-            display.spaces.filter { $0.runtimeID == runtimeID }.map { (display, $0) }
-        }
-        guard locations.count == 1, let location = locations.first else {
+        let placement = SpacePlacement.of(
+            windowServerIDs: [selected.windowServerID], on: screen.id, in: snapshot
+        )
+        guard let found = placement.found else {
+            if case .unknown(let ambiguity) = placement {
+                return .unresolved(blockReason(for: ambiguity))
+            }
             return .unresolved(.spaceMissing)
         }
-        guard location.0.screenID == screen.id else { return .unresolved(.stranded) }
-        guard location.1.kind == .fullscreen else { return .unresolved(.fullscreen) }
-        guard location.1.isCurrent else { return .unresolved(.inactive) }
+        guard found.screenID == screen.id else { return .unresolved(.stranded) }
+        switch placement {
+        case .fullscreen: break
+        case .unsupported: return .unresolved(.unsupportedSpace)
+        default: return .unresolved(.fullscreen)
+        }
+        guard found.space.isCurrent else { return .unresolved(.inactive) }
 
         // type 4 하나에 AX 표준 창이 둘이면 Split View다. 자동 수집은 single만 기록한다.
         let joined = allWindows.filter { window in
-            guard let id = window.windowServerID else { return false }
-            return snapshot.membershipsByWindowServerID[id] == [runtimeID]
+            SpacePlacement.of(
+                windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot
+            ).found?.space.runtimeID == found.space.runtimeID
         }
         guard joined.count == 1, joined[0].id == selected.id else {
             return .unresolved(.unsupportedSpace)
         }
         return .fullscreen
+    }
+
+    private static func blockReason(
+        for ambiguity: SpacePlacement.Ambiguity
+    ) -> SpaceBlockReason {
+        switch ambiguity {
+        case .windowUnjoined: return .windowUnjoined
+        case .membership: return .membershipUnavailable
+        case .multipleSpaces: return .multipleSpaces
+        case .name: return .nameUnavailable
+        case .noSnapshot, .display, .runtimeID: return .spaceMissing
+        }
     }
 
     private static func merge(

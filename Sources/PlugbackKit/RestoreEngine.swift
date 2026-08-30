@@ -80,16 +80,17 @@ public enum RestoreEngine {
         case .unresolved:
             return .unavailable
         }
-        guard let snapshot else { return .unavailable }
-
-        let displays = snapshot.displays.filter { $0.screenID == screen.id }
-        guard displays.count == 1, let display = displays.first else { return .unavailable }
-        let spaces = display.spaces.filter { $0.opaqueName == hint.opaqueName }
-        guard spaces.count == 1, let boundSpace = spaces.first else { return .unavailable }
-        switch boundSpace.kind {
-        case .fullscreen: return .fullscreen
-        case .unknown: return .unavailable
-        case .regular: break
+        let boundPlacement = SpacePlacement.of(hint, on: screen.id, in: snapshot)
+        let boundIsCurrent: Bool
+        switch boundPlacement {
+        case .current:
+            boundIsCurrent = true
+        case .inactive:
+            boundIsCurrent = false
+        case .fullscreen(let found) where found.screenID == screen.id:
+            return .fullscreen
+        default:
+            return .unavailable
         }
 
         let candidates = windows.filter { $0.appBundleID == bundleID }
@@ -101,28 +102,27 @@ public enum RestoreEngine {
         guard !candidates.contains(where: { $0.fullscreenState == .unknown }) else {
             return .unavailable
         }
-        guard boundSpace.isCurrent else { return .inactive }
+        guard boundIsCurrent else { return .inactive }
         guard !candidates.isEmpty else { return .unavailable }
 
-        guard candidates.count == 1, let window = candidates.first,
-              let windowID = window.windowServerID,
-              let memberships = snapshot.membershipsByWindowServerID[windowID],
-              memberships.count == 1, let runtimeID = memberships.first else {
+        guard candidates.count == 1, let window = candidates.first else {
             return .unavailable
         }
-        let joinedSpaces = snapshot.displays.flatMap(\.spaces).filter {
-            $0.runtimeID == runtimeID
-        }
-        guard joinedSpaces.count == 1, let joinedSpace = joinedSpaces.first else {
+        switch SpacePlacement.of(
+            windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot
+        ) {
+        case .fullscreen:
+            return .fullscreen
+        case .unsupported, .missing, .unknown:
             return .unavailable
-        }
-        switch joinedSpace.kind {
-        case .fullscreen: return .fullscreen
-        case .unknown: return .unavailable
-        case .regular:
+        case .inactive:
+            return .inactive
+        case .current:
+            break
+        case .stranded(let found):
             // 분리 후 창은 다른 화면의 현재 일반 Space로 밀려난다. 목표 Space가 현재라면
             // 그 창을 데려오는 것이 복원이고, 숨겨진 Space의 창만 건드리지 않으면 된다.
-            guard joinedSpace.isCurrent else { return .inactive }
+            guard found.space.isCurrent else { return .inactive }
         }
         return .window(window)
     }
@@ -136,34 +136,34 @@ public enum RestoreEngine {
         guard let snapshot else { return .unavailable }
         let candidates = windows.filter { $0.appBundleID == bundleID }
         guard candidates.count == 1, let window = candidates.first else { return .unavailable }
-        guard window.fullscreenState != .unknown,
-              let windowID = window.windowServerID,
-              let memberships = snapshot.membershipsByWindowServerID[windowID],
-              memberships.count == 1, let runtimeID = memberships.first else {
-            return .unavailable
-        }
-        let locations = snapshot.displays.flatMap { display in
-            display.spaces.filter { $0.runtimeID == runtimeID }.map { (display, $0) }
-        }
-        guard locations.count == 1, let location = locations.first,
-              location.1.isCurrent else { return .inactive }
+        guard window.fullscreenState != .unknown else { return .unavailable }
+        let placement = SpacePlacement.of(
+            windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot
+        )
+        guard let found = placement.found else { return .unavailable }
+        guard found.space.isCurrent else { return .inactive }
 
-        switch location.1.kind {
-        case .unknown:
+        switch placement {
+        case .unsupported:
             return .unavailable
         case .fullscreen:
             // 두 표준 창이 같은 type 4에 있으면 Split View다. 감지만 하고 건드리지 않는다.
             let joined = windows.filter { candidate in
-                guard let id = candidate.windowServerID else { return false }
-                return snapshot.membershipsByWindowServerID[id] == [runtimeID]
+                SpacePlacement.of(
+                    windowServerIDs: [candidate.windowServerID],
+                    on: screen.id,
+                    in: snapshot
+                ).found?.space.runtimeID == found.space.runtimeID
             }
             guard joined.count == 1, window.fullscreenState == .fullscreen else {
                 return .fullscreen
             }
-            return location.0.screenID == screen.id ? .fullscreen : .enterFullscreen(window)
-        case .regular:
+            return found.screenID == screen.id ? .fullscreen : .enterFullscreen(window)
+        case .current, .inactive, .stranded:
             guard window.fullscreenState == .windowed else { return .unavailable }
             return .enterFullscreen(window)
+        case .missing, .unknown:
+            return .unavailable
         }
     }
 

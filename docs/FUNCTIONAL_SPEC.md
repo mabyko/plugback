@@ -269,7 +269,7 @@
 * 앱에 private reader가 주입된 경우에만 Space별 창 복원이 동작하고, 다른 화면의 Space 자체를 옮기는 단계는 relocator도 있어야 한다. 세 실험실 토글이 모두 OFF이면 private Space snapshot을 읽지 않는다.
 * 기존 「일반 Space 자체 복원」 설정의 UserDefaults key를 그대로 쓴다. 값이 없던 기존 자동 슬롯 사용자는 업그레이드 때 한 번 자동 슬롯 값을 이어받고 이후에는 독립적으로 저장한다.
 * 저장된 unique opaque name의 비활성 regular Space가 다른 화면에 남고 source에 다른 regular Space가 있을 때만 Mission Control을 열어 목표 외장 화면 끝으로 옮긴다. 매 이동 뒤 같은 runtime SID·kind·name과 전체 membership을 stable snapshot으로 검증한다.
-* name 소실·중복, current/마지막 Space, AX tree 불일치, 입력 합성 또는 사후 검증 실패는 무동작으로 끝낸다. Space 생성·삭제, type `4` 직접 drag, 정확한 중간 순서 복원은 하지 않는다.
+* name 소실·stable snapshot 전체 중복, current/마지막 Space, AX tree 불일치, 입력 합성 또는 사후 검증 실패는 무동작으로 끝낸다. Space 생성·삭제, type `4` 직접 drag, 정확한 중간 순서 복원은 하지 않는다.
 * 카드의 `Space N`은 실시간 Space 목록이 아니라 **저장된 복원 계획**이다. 저장 당시 한 외장 화면 안의 순서를 구분할 뿐 macOS의 전역 `데스크탑 N`, 저장·복원 identity와 무관하다. live-but-unsaved Space는 행을 추가하지 않고, 저장된 행도 현재 보이지 않는다는 이유로 자동 삭제하지 않는다.
 * stable live snapshot으로 저장 행의 현재 상태만 붙인다. 목표 화면의 current regular Space는 `현재`, inactive는 `방문 시 복원`, 다른 화면에 있으면 `다른 화면 · 복원 대기`, 어디에도 없으면 `현재 없음`이다. 연결 해제·snapshot 불명은 상태를 표시하지 않는다. 현재 목표 화면의 regular Space 식별자·순서가 저장본과 다르면 자동 슬롯 ON은 뽑을 때 저장될 변경임을, OFF는 저장 버튼으로 갱신할 수 있음을 표시한다.
 * 비활성 regular Space와 Space 판정 불가 앱은 이번 복원 회차의 결과가 없으므로 예측 점도 없다. 저장된 앱이 없는 regular Space, fullscreen, 불명 binding은 각각 별도 그룹으로 보이고 그룹 상태가 이유를 설명한다.

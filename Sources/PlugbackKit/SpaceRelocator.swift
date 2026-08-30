@@ -53,35 +53,32 @@ enum SpaceRelocationPlanner {
         var hasBlockedSpace = false
 
         for (destinationID, hint) in desired {
-            guard let destination = onlyDisplay(destinationID, in: snapshot) else {
-                hasBlockedSpace = true
+            let placement = SpacePlacement.of(hint, on: destinationID, in: snapshot)
+            switch placement {
+            case .current, .inactive:
                 continue
-            }
-            let locations = snapshot.displays.flatMap { display in
-                display.spaces.filter { $0.opaqueName == hint.opaqueName }.map { (display, $0) }
-            }
-            guard locations.count == 1, let (source, space) = locations.first,
-                  space.kind == .regular else {
+            case .stranded(let found):
+                guard let source = snapshot.onlyDisplay(found.screenID),
+                      let destination = snapshot.onlyDisplay(destinationID),
+                      !found.space.isCurrent,
+                      source.spaces.filter({ $0.kind == .regular }).count > 1 else {
+                    hasBlockedSpace = true
+                    continue
+                }
+                moves.append(PlannedSpaceRelocation(
+                    runtimeID: found.space.runtimeID,
+                    opaqueName: hint.opaqueName,
+                    request: SpaceRelocation(
+                        sourceScreenID: source.screenID,
+                        sourceLocalOrder: found.space.localOrder,
+                        destinationScreenID: destination.screenID,
+                        expectedSourceCount: source.spaces.count,
+                        expectedDestinationCount: destination.spaces.count
+                    )
+                ))
+            case .fullscreen, .unsupported, .missing, .unknown:
                 hasBlockedSpace = true
-                continue
             }
-            if source.screenID == destinationID { continue }
-            guard !space.isCurrent,
-                  source.spaces.filter({ $0.kind == .regular }).count > 1 else {
-                hasBlockedSpace = true
-                continue
-            }
-            moves.append(PlannedSpaceRelocation(
-                runtimeID: space.runtimeID,
-                opaqueName: hint.opaqueName,
-                request: SpaceRelocation(
-                    sourceScreenID: source.screenID,
-                    sourceLocalOrder: space.localOrder,
-                    destinationScreenID: destination.screenID,
-                    expectedSourceCount: source.spaces.count,
-                    expectedDestinationCount: destination.spaces.count
-                )
-            ))
         }
         if let move = moves.first { return .move(move) }
         return hasBlockedSpace ? .blocked : .complete
@@ -90,22 +87,33 @@ enum SpaceRelocationPlanner {
     static func verifies(
         _ move: PlannedSpaceRelocation, before: SpaceSnapshot, after: SpaceSnapshot
     ) -> Bool {
-        guard let beforeLocations = locationsByID(before),
-              let afterLocations = locationsByID(after),
+        let beforeIDs = before.displays.flatMap(\.spaces).map(\.runtimeID)
+        let afterIDs = after.displays.flatMap(\.spaces).map(\.runtimeID)
+        guard Set(beforeIDs).count == beforeIDs.count,
+              Set(afterIDs).count == afterIDs.count,
+              Set(beforeIDs) == Set(afterIDs),
               before.membershipsByWindowServerID == after.membershipsByWindowServerID,
-              beforeLocations.keys == afterLocations.keys,
-              let old = beforeLocations[move.runtimeID],
-              let new = afterLocations[move.runtimeID],
+              let old = SpacePlacement.of(
+                  move.runtimeID, on: move.request.destinationScreenID, in: before
+              ).found,
+              let new = SpacePlacement.of(
+                  move.runtimeID, on: move.request.destinationScreenID, in: after
+              ).found,
               old.screenID == move.request.sourceScreenID,
               new.screenID == move.request.destinationScreenID,
               old.space.opaqueName == move.opaqueName,
               new.space.opaqueName == move.opaqueName else { return false }
 
-        for (runtimeID, oldLocation) in beforeLocations {
-            guard let newLocation = afterLocations[runtimeID],
-                  oldLocation.space.kind == newLocation.space.kind,
-                  oldLocation.space.opaqueName == newLocation.space.opaqueName,
-                  oldLocation.space.isCurrent == newLocation.space.isCurrent else { return false }
+        for runtimeID in beforeIDs {
+            guard let oldLocation = SpacePlacement.of(
+                runtimeID, on: move.request.destinationScreenID, in: before
+            ).found,
+            let newLocation = SpacePlacement.of(
+                runtimeID, on: move.request.destinationScreenID, in: after
+            ).found,
+            oldLocation.space.kind == newLocation.space.kind,
+            oldLocation.space.opaqueName == newLocation.space.opaqueName,
+            oldLocation.space.isCurrent == newLocation.space.isCurrent else { return false }
             if runtimeID != move.runtimeID, oldLocation.space.kind == .regular,
                oldLocation.screenID != newLocation.screenID { return false }
         }
@@ -146,30 +154,10 @@ enum SpaceRelocationPlanner {
         }
     }
 
-    private static func onlyDisplay(
-        _ screenID: String, in snapshot: SpaceSnapshot
-    ) -> SpaceSnapshot.Display? {
-        let matches = snapshot.displays.filter { $0.screenID == screenID }
-        return matches.count == 1 ? matches[0] : nil
-    }
-
-    private static func locationsByID(
-        _ snapshot: SpaceSnapshot
-    ) -> [SpaceRuntimeID: (screenID: String, space: SpaceSnapshot.Space)]? {
-        var result: [SpaceRuntimeID: (String, SpaceSnapshot.Space)] = [:]
-        for display in snapshot.displays {
-            for space in display.spaces {
-                guard result.updateValue((display.screenID, space), forKey: space.runtimeID) == nil
-                else { return nil }
-            }
-        }
-        return result
-    }
-
     private static func regularOrder(
         in snapshot: SpaceSnapshot, screenID: String, excluding: SpaceRuntimeID
     ) -> [SpaceRuntimeID] {
-        snapshot.displays.first { $0.screenID == screenID }?.spaces
+        snapshot.onlyDisplay(screenID)?.spaces
             .filter { $0.kind == .regular && $0.runtimeID != excluding }
             .sorted { $0.localOrder < $1.localOrder }
             .map(\.runtimeID) ?? []

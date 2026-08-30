@@ -85,7 +85,7 @@ _Avoid_: 복원 세션, 복원 시도
 _Avoid_: pending, 보류, 대기열
 
 **Space binding** (space binding):
-대상 앱을 저장된 일반 Space나 단일 native fullscreen 의도에 연결하는 정보. 어느 쪽인지 확정할 수 없는 상태도 명시하며, 실행 중에만 유효한 Space ID 자체를 뜻하지 않는다.
+대상 앱을 저장된 일반 Space나 단일 native fullscreen 의도에 연결하는 정보. 일반 Space는 stable snapshot 전체에서 opaque name이 유일할 때만 연결하며, 다른 화면에 하나만 남아 있으면 화면 소속이 바뀐 것으로 판정한다. 어느 쪽인지 확정할 수 없는 상태도 명시하며, 실행 중에만 유효한 Space ID 자체를 뜻하지 않는다.
 _Avoid_: Space 연결, Space ID, Space 위치
 
 **Space overlay** (space overlay):

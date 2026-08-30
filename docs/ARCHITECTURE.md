@@ -30,6 +30,7 @@ ActiveSpaceWatcher ──────▶      ├─▶ ProfileSlots ─▶ Capt
                                └─────────┴─▶ DesktopObservation
                                                 ├─▶ WindowGateway
                                                 └─▶ SpaceReader
+Space snapshot ─▶ SpacePlacement ─▶ CaptureEngine · RestoreEngine · PlugbackController · SpaceRelocator
 RestoreSession ─▶ SpaceRelocator
 PlugbackController ─▶ ScreenProvider (ScreenID 내장)
 ```
@@ -66,6 +67,12 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 - **인터페이스**: `windows(of:)` / `drain()` / `stableSnapshot(for:)`.
 - **숨기는 것**: 마지막 AX 창 열거의 window ID만 유효하다는 계약과, 복원 전에 먼저 시작한 저장·수집·예측 열거를 모두 끝내는 순서. Space snapshot은 반드시 같은 열거가 돌려준 window ID들로 만든다.
 - MainActor 내부 타입이며 별도 프로토콜을 만들지 않는다. 컨트롤러와 RestoreSession이 같은 객체를 쓴다.
+
+### SpacePlacement
+
+- **인터페이스**: 저장된 `SpaceHint`, 회차 한정 `runtimeID`, AX 열거에서 join한 window ID들을 각각 stable `SpaceSnapshot`의 위치 사실로 해석한다. 결과는 목표 화면의 current/inactive regular, 다른 화면의 stranded regular, fullscreen, unsupported, missing, 판정 불가 중 하나이며, 찾은 Space와 저장 가능한 identity를 함께 돌려준다.
+- **숨기는 것**: 화면·runtime ID·membership의 유일성 검증과 opaque name의 **snapshot 전체 유일성** 판정. 같은 이름이 다른 화면이나 다른 type에 하나라도 더 있으면 identity를 만들지 않는다.
+- 저장·복원·카드·재배치 정책은 넣지 않는 순수 내부 값 모듈이다. 네 소비자는 이 사실을 각자의 기존 결과로 매핑하며, 별도 프로토콜이나 어댑터는 만들지 않는다.
 
 ### RestoreSession
 

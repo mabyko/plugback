@@ -281,14 +281,6 @@ public final class PlugbackController: ObservableObject {
     ) -> [SpaceGroup] {
         guard let overlay = resolved.overlay else { return [] }
 
-        var liveByName: [String: [(screenID: String, isCurrent: Bool)]] = [:]
-        for display in snapshot?.displays ?? [] {
-            for space in display.spaces {
-                guard space.kind == .regular, let name = space.opaqueName else { continue }
-                liveByName[name, default: []].append((display.screenID, space.isCurrent))
-            }
-        }
-
         var hintsByName: [String: SpaceHint] = [:]
         for hint in overlay.regularSpaces where hintsByName[hint.opaqueName] == nil {
             hintsByName[hint.opaqueName] = hint
@@ -311,18 +303,19 @@ public final class PlugbackController: ObservableObject {
         var groups = hintsByName.values.sorted {
             ($0.localOrderHint, $0.opaqueName) < ($1.localOrderHint, $1.opaqueName)
         }.enumerated().map { index, hint in
-            let matches = liveByName[hint.opaqueName] ?? []
             let state: SpaceGroup.RegularState
-            if !targetConnected || snapshot == nil || matches.count > 1 {
+            if !targetConnected {
                 state = .unknown
-            } else if let match = matches.first {
-                if match.screenID != resolved.profile.screenID {
-                    state = .otherDisplay
-                } else {
-                    state = match.isCurrent ? .current : .inactive
-                }
             } else {
-                state = .missing
+                state = switch SpacePlacement.of(
+                    hint, on: resolved.profile.screenID, in: snapshot
+                ) {
+                case .current: .current
+                case .inactive: .inactive
+                case .stranded: .otherDisplay
+                case .missing: .missing
+                case .fullscreen, .unsupported, .unknown: .unknown
+                }
             }
             return SpaceGroup(
                 id: "regular:\(hint.opaqueName)",
@@ -346,9 +339,8 @@ public final class PlugbackController: ObservableObject {
     ) -> Bool {
         guard targetConnected,
               let saved = resolved.overlay?.regularSpaces, !saved.isEmpty,
-              let display = snapshot?.displays.first(where: {
-                  $0.screenID == resolved.profile.screenID
-              }) else { return false }
+              let snapshot,
+              let display = snapshot.onlyDisplay(resolved.profile.screenID) else { return false }
 
         let savedNames = saved.sorted {
             ($0.localOrderHint, $0.opaqueName) < ($1.localOrderHint, $1.opaqueName)
@@ -357,7 +349,10 @@ public final class PlugbackController: ObservableObject {
             $0.localOrder < $1.localOrder
         }
         guard live.count == savedNames.count else { return true }
-        let liveNames = live.compactMap(\.opaqueName)
+        let liveNames = live.compactMap {
+            SpacePlacement.of($0.runtimeID, on: display.screenID, in: snapshot)
+                .onTarget?.identity?.opaqueName
+        }
         guard liveNames.count == live.count else { return false }
         return liveNames != savedNames
     }
