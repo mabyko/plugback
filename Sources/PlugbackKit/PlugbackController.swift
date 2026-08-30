@@ -99,6 +99,8 @@ public final class PlugbackController: ObservableObject {
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
     /// **파생이다** — 슬롯 모듈이 유일한 출처다. 사본을 들면 손으로 맞춰야 하고, 그러면 어긋난다.
     public var storeNotice: ProfileStore.LoadOutcome.Trouble? { slots.trouble }
+    /// 알림을 닫아도 프로세스 수명 동안 유지되는 저장 금지 상태.
+    public var isSaveBlocked: Bool { slots.isSaveBlocked }
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
     @Published public var restoreMode: RestoreMode {
         didSet { defaults.set(restoreMode.rawValue, forKey: Keys.restoreMode) }
@@ -456,7 +458,7 @@ public final class PlugbackController: ObservableObject {
     /// 실험실 상태와 수집 트리거를 맞춘다. 꺼진 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
     /// 신호원들의 차이는 트리거 뒤에 있다 — 여기는 켜고 끄고 대상을 맞출 뿐이다.
     private func syncCollectTrigger() {
-        guard labAutoSlot else {
+        guard labAutoSlot, !isSaveBlocked else {
             let stopping = collectTrigger
             collectTrigger = nil
             Task { await stopping?.stop() }
@@ -480,7 +482,9 @@ public final class PlugbackController: ObservableObject {
 
     /// 공개 Space 알림이 필요한 경우. 자동 슬롯은 수집에, 두 복원 토글은 방문 복원에 쓴다.
     private var spaceObservationEnabled: Bool {
-        spaceReader != nil && (labAutoSlot || labRegularSpaceRestore || labFullscreenRestore)
+        spaceReader != nil && (
+            (labAutoSlot && !isSaveBlocked) || labRegularSpaceRestore || labFullscreenRestore
+        )
     }
 
     /// Space-aware 복원 범위가 하나라도 켜졌는가. 자동 슬롯은 복원 기능이 아니다.
@@ -599,14 +603,14 @@ public final class PlugbackController: ObservableObject {
     /// 자동 슬롯이 켜져 있으면 방문한 외장 Space의 새 앱도 candidate에 등록한다.
     /// Space 경로는 Split View 판별까지 같은 snapshot에서 끝내도록 전체 표준 창을 한 번 열거한다.
     func collectCandidate() async {
-        guard labAutoSlot, !isRestoring else { return }
+        guard labAutoSlot, !isSaveBlocked, !isRestoring else { return }
         syncScreens()
         guard isConnected else { return }
         let windows = await observation.windows(of: nil)
-        guard labAutoSlot, !isRestoring else { return }
+        guard labAutoSlot, !isSaveBlocked, !isRestoring else { return }
         if spaceReader != nil {
             guard let snapshot = await observation.stableSnapshot(for: windows) else { return }
-            guard labAutoSlot, !isRestoring else { return }
+            guard labAutoSlot, !isSaveBlocked, !isRestoring else { return }
             let awaitingVisit = restoreSession.awaitingBundleIDs(
                 in: slots.resolvedWithSpaces(for: externalScreens)
             )
@@ -626,7 +630,7 @@ public final class PlugbackController: ObservableObject {
         syncScreens() // 명령은 화면 상태를 스스로 동기화한다 — 호출자에게 순서 의식이 없다.
         // 이게 없으면 앱을 켤 때 화면이 이미 꽂혀 있는 경우 등록이 통째로 빠진다:
         // 시작 직후 화면 상태는 '기억만'이고, 연결 이벤트는 이미 지나갔기 때문이다.
-        guard labAutoSlot, isConnected else {
+        guard labAutoSlot, !isSaveBlocked, isConnected else {
             await collectTrigger?.retarget([])
             return
         }
@@ -726,20 +730,6 @@ public final class PlugbackController: ObservableObject {
         }
     }
 
-    /// 체크 해제는 복원 제외일 뿐, 프로필에서 지우지 않는다 (US-006 AC-2).
-    /// screenID nil = 첫 화면 (기존 호출 호환) — 카드는 항상 자기 섹션의 화면을 넘긴다.
-    public func setAppEnabled(_ bundleID: String, _ enabled: Bool, on screenID: String? = nil) {
-        mutateProfile(on: screenID) { p in
-            guard let i = p.apps.firstIndex(where: { $0.bundleID == bundleID }) else { return }
-            p.apps[i].isEnabled = enabled
-        }
-    }
-
-    /// 명시적 삭제 — 프로필에서 완전히 제거한다 (US-006 AC-4).
-    public func removeApp(_ bundleID: String, on screenID: String? = nil) {
-        mutateProfile(on: screenID) { p in p.apps.removeAll { $0.bundleID == bundleID } }
-    }
-
     /// 저장된 모든 프로필 — 연결되지 않은 화면 포함 (F-05.6, US-012 AC-1).
     public var allProfiles: [Profile] { slots.all }
 
@@ -748,6 +738,7 @@ public final class PlugbackController: ObservableObject {
         slots.remove(screenID: screenID)
         restoreSession.invalidate(screens: [screenID])
         resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
+        projectionsByScreen.removeValue(forKey: screenID)
     }
 
     private func mutateProfile(on screenID: String?, _ change: (inout Profile) -> Void) {
@@ -841,45 +832,51 @@ public final class PlugbackController: ObservableObject {
     /// 끄면: 복원에서 빼되 **프로필에서 지우지 않는다** (US-006 AC-2 — 좌표는 남는다).
     /// 화면에서는 이 셋이 한 질문의 답이라 체크박스 하나로 족하다.
     public func setTracked(_ bundleID: String, _ tracked: Bool, on screenID: String? = nil) async {
-        let profile = (screenID ?? currentScreenID).flatMap { slots.source(for: $0)?.profile }
+        guard let id = screenID ?? currentScreenID else { return }
+        let profile = slots.source(for: id)?.profile
         if profile?.apps.contains(where: { $0.bundleID == bundleID }) == true {
-            setAppEnabled(bundleID, tracked, on: screenID)
+            mutateProfile(on: id) { profile in
+                guard let index = profile.apps.firstIndex(where: { $0.bundleID == bundleID })
+                else { return }
+                profile.apps[index].isEnabled = tracked
+            }
+            await refreshCollectTargets()
             await updatePredictions() // 켜고 끈 행이 곧바로 제 묶음으로 간다
         } else if tracked {
-            await addTargetApp(bundleID) // 창이 실재하는 화면의 프로필에 오른다 — 스스로 갱신한다
+            await addTargetApp(bundleID, on: id)
         }
     }
 
-    /// 체크를 꺼 프로필에 남아 있는 앱을 완전히 제거한다. 나중에 외장 화면에서 다시
-    /// 관찰되면 프로필 밖 앱으로 자연히 목록에 나타난다.
-    public func removeUntrackedApp(_ bundleID: String, on screenID: String? = nil) async {
-        guard let id = screenID ?? currentScreenID,
-              slots.source(for: id)?.profile.apps.contains(where: {
-                  $0.bundleID == bundleID && !$0.isEnabled
-              }) == true else {
-            return
+    /// 프로필에서 완전히 제거한다. 창이 해당 외장 화면에 남아 있으면 프로필 밖 앱으로
+    /// 즉시 다시 보이고, 화면에도 없으면 행이 사라진다.
+    public func remove(_ bundleID: String, on screenID: String? = nil) async {
+        guard let id = screenID ?? currentScreenID else { return }
+        mutateProfile(on: id) { profile in
+            profile.apps.removeAll { $0.bundleID == bundleID }
         }
-        removeApp(bundleID, on: id)
+        await refreshCollectTargets()
         await updatePredictions()
     }
 
     /// 프로필에 없던 앱을 대상 앱 명부에 올린다. **저장이 아니다**:
     /// 다른 앱의 좌표를 덮지 않고, 복원 소스를 뒤집지 않으며, 모으던 후보도 안 버린다.
     @discardableResult
-    private func addTargetApp(_ bundleID: String) async -> CaptureOutcome {
+    private func addTargetApp(_ bundleID: String, on screenID: String) async -> CaptureOutcome {
         guard checkAuthorization() else { return .notAuthorized }
         guard !isRestoring else { return .restoringInProgress }
         guard !slots.isSaveBlocked else { return .saveBlocked }
         syncScreens()
-        guard isConnected else { return .notConnected }
+        guard let screen = externalScreens.first(where: { $0.id == screenID })
+        else { return .notConnected }
         let windows = await observation.windows(of: [bundleID])
         let snapshot = spaceObservationEnabled
             ? await observation.stableSnapshot(for: windows)
             : nil
-        slots.addTarget(windows: windows, on: externalScreens, snapshot: snapshot)
+        slots.addTarget(windows: windows, on: [screen], snapshot: snapshot)
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
         await updatePredictions()
-        return .captured(appCount: profile?.apps.filter(\.isEnabled).count ?? 0)
+        let count = slots.source(for: screenID)?.profile.apps.filter(\.isEnabled).count ?? 0
+        return .captured(appCount: count)
     }
 
     /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.

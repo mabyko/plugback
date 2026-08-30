@@ -181,6 +181,22 @@ final class ProfileSlotsTests: XCTestCase {
         )
     }
 
+    func testUnreadableStoreFreezesCollectionAndSlotWrites() throws {
+        let fileAsDirectory = dir.appendingPathComponent("profiles.json")
+        try FileManager.default.createDirectory(
+            at: fileAsDirectory, withIntermediateDirectories: true
+        )
+        let slots = makeSlots(lab: true)
+        XCTAssertTrue(slots.isSaveBlocked)
+
+        slots.collect(windows: [window("com.chrome", left)], on: [screen])
+
+        XCTAssertFalse(slots.hasPendingCollect)
+        XCTAssertFalse(slots.confirm([screen.id]))
+        XCTAssertNil(slots.source(for: screen.id))
+        XCTAssertTrue(slots.all.isEmpty)
+    }
+
     func testConfirmDoesNothingWhileLabIsOff() {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])

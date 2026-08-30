@@ -127,6 +127,7 @@ enum CardPresentation {
     /// 애초에 대상이 아니다. 「그대로 둠」은 「제자리」와 겹친다. 「미등록」은 대상 앱의
     /// 금지어(등록 앱)에 스친다.
     static let untrackedHeader = "저장하지 않는 앱"
+    static let saveBlockedStatus = "저장 중지됨 · 프로필 파일 확인 필요"
 
     // MARK: - 복원 소스 (실험실 · 자동 슬롯) — 어느 슬롯이 이겼는지 카드가 말한다
 

@@ -66,6 +66,13 @@ final class CardPresentationTests: XCTestCase {
                        "대기 중 변경 없음 · 아직 확인 안 함")
     }
 
+    func testSaveBlockedStatusRemainsAfterTheDismissibleBanner() {
+        XCTAssertEqual(
+            CardPresentation.saveBlockedStatus,
+            "저장 중지됨 · 프로필 파일 확인 필요"
+        )
+    }
+
     func testDotFollowsPrediction() {
         // 점의 제품 약속: 찬 점 = 복원이 잘 될 것, 빈 점 = 건너뜀 예정, 회색 = 꺼짐 (US-006 AC-1)
         XCTAssertEqual(CardPresentation.dotStyle(for: .willMove), .filled)

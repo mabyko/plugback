@@ -228,9 +228,46 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(controller.sections[1].profile?.apps.first?.isEnabled, false)
         XCTAssertEqual(controller.sections[1].untrackedApps.map(\.bundleID), ["com.chrome"])
 
-        controller.removeApp("com.chrome", on: "ext-2")
+        gateway.windowsList[1] = WindowInfo(
+            id: 2, appBundleID: "com.chrome", appName: "Chrome",
+            frame: CGRect(x: 100, y: 100, width: 960, height: 700)
+        )
+        await controller.cardOpened()
+        await controller.remove("com.chrome", on: "ext-2")
         XCTAssertEqual(controller.sections[1].profile?.apps ?? [], [])
         XCTAssertEqual(controller.sections[0].profile?.apps.count, 1) // 첫 화면은 그대로
+        XCTAssertTrue(
+            controller.sections[1].untrackedApps.isEmpty,
+            "프로필에서도 외장 화면에서도 사라진 앱의 projection을 즉시 비운다"
+        )
+    }
+
+    func testTrackingANewAppRegistersOnlyTheGivenScreen() async {
+        let external2 = ScreenInfo(
+            id: "ext-2", name: "DELL U2723QE",
+            frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false
+        )
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [
+            WindowInfo(
+                id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)
+            ),
+            WindowInfo(
+                id: 2, appBundleID: "com.chrome", appName: "Chrome",
+                frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)
+            ),
+        ]
+        let controller = makeController()
+
+        await controller.setTracked("com.chrome", true, on: external2.id)
+
+        XCTAssertNil(controller.sections[0].profile)
+        XCTAssertEqual(
+            controller.sections[1].profile?.apps.map(\.bundleID), ["com.chrome"],
+            "두 화면에 창이 있어도 체크한 화면의 프로필만 등록한다"
+        )
     }
 
     func testRemovingAnUncheckedAppAllowsLaterExternalDetection() async {
@@ -250,7 +287,7 @@ final class PlugbackControllerTests: XCTestCase {
         await controller.cardOpened()
         XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
 
-        await controller.removeUntrackedApp("cc.ffitch.shottr", on: external.id)
+        await controller.remove("cc.ffitch.shottr", on: external.id)
         XCTAssertFalse(controller.profile?.apps.contains { $0.bundleID == "cc.ffitch.shottr" } ?? true)
         XCTAssertTrue(controller.untrackedApps.isEmpty)
 
@@ -579,6 +616,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         controller.removeProfile("ext-1")
         XCTAssertNil(controller.lastResult)
+        XCTAssertNil(controller.predictionsByScreen[external.id])
         await controller.captureNow() // 새 삶 — 결과는 아직 없어야 한다
         XCTAssertNil(controller.lastResult)
     }
@@ -605,6 +643,14 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertNil(controller.lastCaptureCount)  // 거짓 확인 표시가 뜨지 않는다
         controller.dismissStoreNotice()            // 알림을 닫아도 차단은 유지
         _ = await controller.captureNow()
+        controller.labAutoSlot = true
+        await controller.collectCandidate()
+        controller.confirmAllCandidates()
+
+        XCTAssertTrue(controller.isSaveBlocked)
+        XCTAssertFalse(controller.hasPendingCollect)
+        XCTAssertTrue(controller.allProfiles.isEmpty)
+        XCTAssertNil(controller.restoreSource)
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본") // 원본 무사

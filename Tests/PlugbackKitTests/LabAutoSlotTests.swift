@@ -302,7 +302,7 @@ final class LabAutoSlotTests: XCTestCase {
         controller.confirmCandidates(for: ["ext-1"])
         XCTAssertEqual(controller.restoreSource, .auto)
 
-        controller.setAppEnabled("com.chrome", false)
+        await controller.setTracked("com.chrome", false)
 
         // 목록(=이긴 슬롯)과 수동 슬롯이 함께 바뀐다 — 체크 상태가 슬롯마다 갈리면
         // 이기는 슬롯이 바뀌는 순간 껐던 앱이 되살아난다.

@@ -143,7 +143,7 @@ final class RestoreSession {
     private func addAwaitingVisits(
         from resolved: [String: ResolvedProfile], screens: [ScreenInfo]
     ) {
-        for item in claimedApps(in: resolved, screens: screens)
+        for item in RestoreEngine.claimedApps(in: resolved, screens: screens)
         where item.pair.overlay?.byBundle[item.app.bundleID].map(scope.restores) == true {
             awaitingVisitByScreen[item.screenID, default: []].insert(item.app.bundleID)
         }
@@ -173,7 +173,7 @@ final class RestoreSession {
     ) async {
         guard options.reopenWindowless else { return }
         var windowless: [String] = []
-        for item in claimedApps(in: resolved, screens: screens) {
+        for item in RestoreEngine.claimedApps(in: resolved, screens: screens) {
             guard only == nil || only?[item.screenID]?.contains(item.app.bundleID) == true,
                   item.pair.overlay?.byBundle[item.app.bundleID].map(scope.restores) != true,
                   await gateway.isRunning(bundleID: item.app.bundleID),
@@ -185,21 +185,6 @@ final class RestoreSession {
                 group.addTask { _ = await self.gateway.openWindow(bundleID: bundleID) }
             }
         }
-    }
-
-    private func claimedApps(
-        in resolved: [String: ResolvedProfile], screens: [ScreenInfo]
-    ) -> [(screenID: String, pair: ResolvedProfile, app: TargetApp)] {
-        var claimed = Set<String>()
-        var result: [(String, ResolvedProfile, TargetApp)] = []
-        for screen in screens.sorted(by: { $0.id < $1.id }) {
-            guard let pair = resolved[screen.id] else { continue }
-            for app in pair.profile.apps
-            where app.isEnabled && claimed.insert(app.bundleID).inserted {
-                result.append((screen.id, pair, app))
-            }
-        }
-        return result
     }
 
     private func removeCompleted(_ completed: [String: Set<String>]) {

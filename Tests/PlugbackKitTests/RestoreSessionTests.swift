@@ -144,6 +144,92 @@ final class RestoreSessionTests: XCTestCase {
         XCTAssertEqual(visited.map(\.screenID), [screen.id])
     }
 
+    func testFingerprintMismatchDoesNotClaimAnAwaitingVisit() async {
+        let staleFingerprint = ScreenFingerprint(vendor: 1, model: 1, serial: 1)
+        let liveFingerprint = ScreenFingerprint(vendor: 2, model: 2, serial: 2)
+        let first = ScreenInfo(
+            id: "a-mismatch", name: "Mismatch",
+            frame: CGRect(x: 1000, y: 0, width: 1000, height: 1000),
+            isBuiltin: false, fingerprint: liveFingerprint
+        )
+        let second = ScreenInfo(
+            id: "b-valid", name: "Valid",
+            frame: CGRect(x: 2000, y: 0, width: 1000, height: 1000),
+            isBuiltin: false, fingerprint: liveFingerprint
+        )
+        let firstHint = SpaceHint(opaqueName: "first-space", localOrderHint: 1)
+        let secondHint = SpaceHint(opaqueName: "second-space", localOrderHint: 1)
+        let app = TargetApp(
+            bundleID: "com.app", displayName: "App",
+            unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5)
+        )
+        let resolved = [
+            first.id: ResolvedProfile(
+                profile: Profile(
+                    screenID: first.id, screenName: first.name, apps: [app],
+                    fingerprint: staleFingerprint
+                ),
+                overlay: SlotSpaceOverlay(byBundle: [app.bundleID: .regular(firstHint)])
+            ),
+            second.id: ResolvedProfile(
+                profile: Profile(
+                    screenID: second.id, screenName: second.name, apps: [app],
+                    fingerprint: liveFingerprint
+                ),
+                overlay: SlotSpaceOverlay(byBundle: [app.bundleID: .regular(secondHint)])
+            ),
+        ]
+        let gateway = FakeWindowGateway()
+        gateway.runningBundleIDs = [app.bundleID]
+        gateway.windowsList = [WindowInfo(
+            id: 1, appBundleID: app.bundleID, appName: app.displayName,
+            frame: CGRect(x: 2000, y: 0, width: 500, height: 500), windowServerID: 11
+        )]
+        let reader = RestoreSessionSpaceReader()
+        let firstSpace = SpaceRuntimeID(1)
+        let secondSpace = SpaceRuntimeID(2)
+        reader.availability = .available(SpaceSnapshot(
+            displays: [
+                .init(screenID: first.id, spaces: [
+                    .init(
+                        runtimeID: firstSpace, opaqueName: firstHint.opaqueName,
+                        localOrder: 1, kind: .regular, isCurrent: true
+                    ),
+                ]),
+                .init(screenID: second.id, spaces: [
+                    .init(
+                        runtimeID: secondSpace, opaqueName: secondHint.opaqueName,
+                        localOrder: 1, kind: .regular, isCurrent: true
+                    ),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [secondSpace]]
+        ))
+        let session = RestoreSession(
+            scope: SpaceRestoreScope(regular: true, fullscreen: false),
+            observation: DesktopObservation(gateway: gateway, spaceReader: reader),
+            gateway: gateway,
+            spaceRelocator: nil
+        )
+
+        let results = await session.restoreAll(
+            resolved: resolved, screens: [second, first], options: RestoreOptions()
+        )
+
+        XCTAssertEqual(
+            results.first(where: { $0.screenID == first.id })?.screenSkipReason,
+            .fingerprintMismatch
+        )
+        XCTAssertEqual(
+            results.first(where: { $0.screenID == second.id })?.entries.first?.outcome,
+            .skipped(.alreadyInPlace)
+        )
+        XCTAssertFalse(
+            session.hasAwaitingVisit(in: resolved),
+            "건너뛴 화면이 먼저 선점한 방문 대기를 남기면 안 된다"
+        )
+    }
+
     func testDisabledBindingUsesLegacyReopenWhileAnotherScopeIsEnabled() async {
         let (session, _, gateway) = makeSession(
             scope: SpaceRestoreScope(regular: true, fullscreen: false)

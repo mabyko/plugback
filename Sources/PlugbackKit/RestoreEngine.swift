@@ -54,6 +54,30 @@ public enum RestoreEngine {
     /// 이동 후 검증 허용 오차. 실기기 측정 후 조정할 수 있는 초기값이다 (F-02.3).
     public static let tolerance: CGFloat = 5
 
+    static func isEligible(_ resolved: ResolvedProfile, on screen: ScreenInfo) -> Bool {
+        guard let saved = resolved.profile.fingerprint, let live = screen.fingerprint else {
+            return true
+        }
+        return saved == live
+    }
+
+    /// 한 복원 회차의 화면별 담당 앱. 지문 불일치 화면을 먼저 제외한 뒤 식별자 순으로
+    /// 선점하므로 세션·엔진·Space 재배치가 같은 F-01.4/F-01.6 판정을 쓴다.
+    static func claimedApps(
+        in resolved: [String: ResolvedProfile], screens: [ScreenInfo]
+    ) -> [(screenID: String, pair: ResolvedProfile, app: TargetApp)] {
+        var claimed = Set<String>()
+        var result: [(String, ResolvedProfile, TargetApp)] = []
+        for screen in screens.sorted(by: { $0.id < $1.id }) {
+            guard let pair = resolved[screen.id], isEligible(pair, on: screen) else { continue }
+            for app in pair.profile.apps
+            where app.isEnabled && claimed.insert(app.bundleID).inserted {
+                result.append((screen.id, pair, app))
+            }
+        }
+        return result
+    }
+
     /// binding이 있는 bundle은 이 결과 하나만 따른다. 실패해도 legacy 선택으로 내려가지 않는다.
     static func selectSpaceWindow(
         bundleID: String,
@@ -181,24 +205,24 @@ public enum RestoreEngine {
     ) async -> SpaceRestorePass {
         var results: [RestoreResult] = []
         var completed: [String: Set<String>] = [:]
-        var claimed = Set<String>()
+        let claimedByScreen = Dictionary(
+            grouping: claimedApps(in: resolved, screens: screens),
+            by: { $0.screenID }
+        )
         // fullscreen 전환은 current Space와 AX 가시성을 바꾼다. 한 stable snapshot에서
         // 둘을 연달아 조작하지 않고 다음 Space 알림의 새 snapshot으로 이어간다.
         var attemptedFullscreenTransition = false
 
         for screen in screens.sorted(by: { $0.id < $1.id }) {
             guard let pair = resolved[screen.id] else { continue }
-            let profile = pair.profile
-            if let saved = profile.fingerprint, let live = screen.fingerprint, saved != live {
+            if !isEligible(pair, on: screen) {
                 results.append(RestoreResult(
                     screenID: screen.id, screenSkipReason: .fingerprintMismatch
                 ))
                 continue
             }
 
-            let uniqueApps = profile.apps.filter { app in
-                app.isEnabled && claimed.insert(app.bundleID).inserted
-            }
+            let uniqueApps = claimedByScreen[screen.id]?.map(\.app) ?? []
             let selectedApps = if let onlyBundles {
                 uniqueApps.filter { onlyBundles[screen.id]?.contains($0.bundleID) == true }
             } else {

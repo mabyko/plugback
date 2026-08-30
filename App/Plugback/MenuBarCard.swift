@@ -265,7 +265,9 @@ private struct Card: View {
                    setTracked: { tracked in
                        Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
                    },
-                   remove: { controller.removeApp(app.bundleID, on: section.screenID) })
+                   remove: {
+                       Task { await controller.remove(app.bundleID, on: section.screenID) }
+                   })
         }
     }
 
@@ -289,7 +291,7 @@ private struct Card: View {
                     if section.profile?.apps.contains(where: { $0.bundleID == app.bundleID }) == true {
                         Spacer(minLength: 0)
                         Button {
-                            Task { await controller.removeUntrackedApp(app.bundleID, on: section.screenID) }
+                            Task { await controller.remove(app.bundleID, on: section.screenID) }
                         } label: {
                             Image(systemName: "xmark.circle")
                         }
@@ -313,7 +315,10 @@ private struct Card: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
-                        .disabled(!controller.isConnected || controller.isRestoring)
+                    .disabled(
+                        !controller.isConnected || controller.isRestoring
+                            || controller.isSaveBlocked
+                    )
                     // 어느 화면에든 프로필이 있으면 복원할 수 있다 — 첫 화면만 보던 판정은 뒷 화면을 잠갔다
                     Button { Task { await controller.restoreNow() } } label: {
                         Label("지금 레이아웃 복원", systemImage: "arrow.counterclockwise")
@@ -329,11 +334,14 @@ private struct Card: View {
                     Text("저장됨 · 대상 앱 \(count)개")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
-                // 실험실이 꺼져 있으면 이 줄이 아예 없다 — 카드가 오늘과 완전히 같다.
+                // 저장 금지는 알림을 닫아도 남는다 — 수동 저장도 막히므로 실험실과 무관하게 표시한다.
                 // 복원 소스(지금 복원되는 값)는 화면마다 다를 수 있어 각 섹션에 붙고,
                 // 여기는 수집(뽑을 때 저장될 값)의 전역 상태 한 줄이다.
                 // 소스와 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
-                if controller.labAutoSlot {
+                if controller.isSaveBlocked {
+                    Text(CardPresentation.saveBlockedStatus)
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                } else if controller.labAutoSlot {
                     Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
                                                        hasPending: controller.hasPendingCollect,
                                                        spaceConfigurationChanged:

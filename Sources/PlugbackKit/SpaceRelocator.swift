@@ -130,19 +130,21 @@ enum SpaceRelocationPlanner {
     private static func desiredSpaces(
         resolved: [String: ResolvedProfile], screens: [ScreenInfo]
     ) -> [(String, SpaceHint)] {
-        var claimedBundles = Set<String>()
         var seenNames = Set<String>()
         var desired: [(String, SpaceHint)] = []
+        let claimedByScreen = Dictionary(
+            grouping: RestoreEngine.claimedApps(in: resolved, screens: screens),
+            by: { $0.screenID }
+        )
         for screen in screens.sorted(by: { $0.id < $1.id }) {
-            guard let pair = resolved[screen.id],
-                  pair.profile.fingerprint == nil || screen.fingerprint == nil
-                    || pair.profile.fingerprint == screen.fingerprint else { continue }
+            guard let pair = resolved[screen.id], RestoreEngine.isEligible(pair, on: screen)
+            else { continue }
             for hint in pair.overlay?.regularSpaces ?? []
             where seenNames.insert(hint.opaqueName).inserted {
                 desired.append((screen.id, hint))
             }
-            for app in pair.profile.apps where app.isEnabled
-                && claimedBundles.insert(app.bundleID).inserted {
+            for item in claimedByScreen[screen.id] ?? [] {
+                let app = item.app
                 guard case .regular(let hint)? = pair.overlay?.byBundle[app.bundleID],
                       seenNames.insert(hint.opaqueName).inserted else { continue }
                 desired.append((screen.id, hint))

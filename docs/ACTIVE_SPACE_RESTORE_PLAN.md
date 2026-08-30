@@ -576,6 +576,8 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 
 진행 기록(2026-08-30): 같은 선택 결과를 쓰도록 통합하고 카드 보정을 삭제했다. 후속 아키텍처 검토에서 별도 legacy 복원 진입점과 앱별 재열거를 삭제해 RestoreSession의 한 복원 회차로 합쳤고, ProfileSlots의 저장값·후보를 profile+overlay pair로 바꿨으며, 수집의 화면 이탈·비활성 fullscreen 정책을 CaptureEngine에 모았다. 카드의 네 병렬 파생 사전은 화면별 projection 한 값으로 줄였다. 관련 기존 문서와 US-006을 갱신했으며, 새 사용자 스토리는 기존 F-08·US-006으로 계약이 충분해 만들지 않았다.
 
+추가 검토에서는 대상 앱 명령을 지정 화면 범위로 고정하고 명령마다 수집 대상·projection을 갱신했다. 화면 지문이 맞는 화면만 앱 선점에 참여하도록 RestoreEngine의 한 판정을 RestoreSession·SpaceRelocator가 함께 쓰며, 프로필 파일 읽기 실패 시 후보 수집과 모든 슬롯 변경을 메모리 변경 전에 동결하고 카드에 지속 상태를 남긴다.
+
 이 기능은 Release에도 기본 꺼짐인 실험실로 노출한다. 정식 동작으로 승격하기 전에는 아래 호환성·실기기 게이트를 계속 적용한다.
 
 진행 기록(2026-08-29, 사용자 확인용 Debug surface):
