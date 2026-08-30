@@ -21,7 +21,7 @@ final class ProfileStoreTests: XCTestCase {
             TargetApp(bundleID: "com.chrome", displayName: "Chrome",
                       unitRect: UnitRect(x: 0.5, y: 0, width: 0.5, height: 1)),
         ])]
-        store.save(profiles)
+        try store.save(profiles)
         let outcome = ProfileStore(directory: dir).load()
         XCTAssertEqual(outcome.profiles, profiles)
         XCTAssertNil(outcome.trouble)
@@ -52,6 +52,14 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertEqual(outcome.trouble, .unreadable)
         // 파일(디렉터리)이 그대로 남아 있다 — 백업·초기화하지 않는다
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileAsDir.path))
+    }
+
+    func testWriteFailureIsReported() throws {
+        let store = ProfileStore(directory: dir)
+        _ = store.load() // 없는 파일을 정상적인 첫 실행으로 읽은 뒤 쓰기 경로만 막는다
+        try Data("not-a-directory".utf8).write(to: dir)
+
+        XCTAssertThrowsError(try store.save([:]))
     }
 }
 
@@ -654,6 +662,30 @@ final class PlugbackControllerTests: XCTestCase {
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본") // 원본 무사
+    }
+
+    func testRuntimeWriteFailureDoesNotClaimCaptureSucceededAndCanRetry() async throws {
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
+                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        let controller = makeController() // 없는 파일을 정상적인 첫 실행으로 읽는다
+        try Data("not-a-directory".utf8).write(to: dir)
+
+        let failed = await controller.captureNow()
+
+        XCTAssertEqual(failed, .saveFailed)
+        XCTAssertEqual(controller.storeNotice, .writeFailed)
+        XCTAssertFalse(controller.isSaveBlocked, "실행 중 쓰기 실패는 다음 저장에서 재시도할 수 있어야 한다")
+        XCTAssertNil(controller.profile)
+        XCTAssertNil(controller.lastCaptureCount)
+
+        try FileManager.default.removeItem(at: dir)
+        let retried = await controller.captureNow()
+
+        XCTAssertEqual(retried, .captured(appCount: 1))
+        XCTAssertNil(controller.storeNotice)
+        XCTAssertEqual(controller.profile?.apps.map(\.bundleID), ["com.chrome"])
+        XCTAssertEqual(controller.lastCaptureCount, 1)
     }
 
     func testCaptureConfirmationExpiresOnCardOpen() async {

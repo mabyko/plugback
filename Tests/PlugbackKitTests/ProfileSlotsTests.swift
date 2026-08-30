@@ -38,6 +38,13 @@ final class ProfileSlotsTests: XCTestCase {
         return Set(try JSONDecoder().decode([String: Profile].self, from: data).keys)
     }
 
+    private func blockWrites() throws {
+        if FileManager.default.fileExists(atPath: dir.path) {
+            try FileManager.default.removeItem(at: dir)
+        }
+        try Data("not-a-directory".utf8).write(to: dir)
+    }
+
     // MARK: - 복원 소스 판정
 
     func testTieGoesToManual() {
@@ -223,6 +230,49 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertTrue(slots.confirmAll())
         XCTAssertEqual(slots.source(for: "ext-1")?.slot, .auto)
         XCTAssertEqual(slots.source(for: "ext-2")?.slot, .auto)
+    }
+
+    func testConfirmPreservesCandidateWhenDiskWriteFails() throws {
+        // 정상 로드 뒤 저장 경로가 막히는 실제 실패를 만든다. 부모 디렉터리 자리에 파일을 두면
+        // createDirectory와 atomic write가 모두 결정적으로 실패한다.
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let slots = makeSlots(lab: true)
+        slots.collect(windows: [window("com.chrome", right)], on: [screen])
+        XCTAssertTrue(slots.hasPendingCollect)
+
+        try blockWrites()
+
+        XCTAssertFalse(slots.confirm([screen.id]), "디스크에 남기지 못한 후보를 확정했다고 보고하면 안 된다")
+        XCTAssertTrue(slots.hasPendingCollect, "실패한 후보는 다음 저장 시도를 위해 메모리에 남아야 한다")
+        XCTAssertEqual(slots.trouble, .writeFailed)
+
+        try FileManager.default.removeItem(at: dir)
+        XCTAssertTrue(slots.confirm([screen.id]), "저장 경로가 정상화되면 같은 후보를 다시 확정해야 한다")
+        XCTAssertFalse(slots.hasPendingCollect)
+        XCTAssertNil(slots.trouble)
+        XCTAssertEqual(slots.source(for: screen.id)?.slot, .auto)
+    }
+
+    func testManualCaptureDoesNotPublishMemoryStateWhenDiskWriteFails() throws {
+        let slots = makeSlots()
+        try blockWrites()
+
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+
+        XCTAssertNil(slots.source(for: screen.id), "재시작하면 사라질 배치를 메모리에서 저장된 것처럼 보이면 안 된다")
+        XCTAssertEqual(slots.trouble, .writeFailed)
+    }
+
+    func testEditAndRemoveKeepPublishedStateWhenDiskWriteFails() throws {
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        try blockWrites()
+
+        slots.edit(screenID: screen.id) { $0.apps[0].isEnabled = false }
+        XCTAssertEqual(slots.source(for: screen.id)?.profile.apps[0].isEnabled, true)
+
+        slots.remove(screenID: screen.id)
+        XCTAssertNotNil(slots.source(for: screen.id), "디스크에서 지우지 못한 프로필을 메모리에서 먼저 숨기면 안 된다")
     }
 
     func testManualSaveIsNotOvertakenByAStaleCandidate() {

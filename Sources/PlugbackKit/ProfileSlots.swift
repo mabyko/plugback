@@ -48,7 +48,8 @@ struct ResolvedProfile: Equatable, Sendable {
 ///
 /// 화면 하나가 슬롯 둘을 갖는다는 사실은 이 안에서 끝난다 — 바깥은 「이 화면의 프로필」만 묻는다.
 /// 숨기는 것: 슬롯 키 규약, 복원 소스 판정(더 최근 것·동점은 수동), 씨앗 복사, 수집 후보의 수명,
-/// 확정, 병합, 실험실 on/off가 후보 판정에 미치는 영향, 그리고 읽기 실패 시 모든 변경을 동결하는 금지.
+/// 확정, 병합, 실험실 on/off가 후보 판정에 미치는 영향, 읽기 실패 시 모든 변경을 동결하는 금지,
+/// 쓰기 성공 뒤에만 저장값과 후보 수명을 함께 공개하는 순서.
 ///
 /// ObservableObject다 — 카드가 이 상태를 직접 그린다. 컨트롤러는 변경을 자기 것으로 전달만 한다.
 @MainActor
@@ -66,8 +67,8 @@ final class ProfileSlots: ObservableObject {
     /// 이게 없으면 "돌고 있는지"를 물어볼 곳이 없다 (2026-08-18 실기기에서 실제로 그랬다).
     @Published private(set) var lastCollectedAt: Date?
 
-    /// 로드 중 만난 문제. 표시는 바깥의 일이다.
-    @Published private(set) var trouble: ProfileStore.LoadOutcome.Trouble?
+    /// 마지막 저장소 문제. 표시는 바깥의 일이다.
+    @Published private(set) var trouble: ProfileStore.Trouble?
 
     /// 읽기 실패를 첫 실행처럼 보이지 않게 한다 — 알림을 닫아도 수집·변경 금지는 유지된다.
     let isSaveBlocked: Bool
@@ -190,11 +191,14 @@ final class ProfileSlots: ObservableObject {
 
     /// 수동 저장 (F-03). **수동 슬롯에만 쓴다** — 사람이 저장한 배치를 앱이 덮지 않는다.
     /// 방금 저장한 것이 가장 최근이 되므로 다음 복원이 이 배치를 쓴다 — 슬롯 전환 조작이 필요 없는 이유다.
+    @discardableResult
     func capture(
         windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil
-    ) {
-        guard !isSaveBlocked else { return }
+    ) -> Bool {
+        guard !isSaveBlocked else { return false }
         let now = Date()
+        var nextStored = stored
+        var nextCandidates = candidates
         for screen in screens {
             let key = Slot.manual.key(screen.id)
             // 체크 해제한 앱의 창은 넘기지 않는다 — 「저장하지 않고 감지하지 않는다」가 해제의 뜻이다.
@@ -205,25 +209,25 @@ final class ProfileSlots: ObservableObject {
                 merged = CaptureEngine.capture(
                     windows: selected,
                     on: screen,
-                    merging: stored[key],
+                    merging: nextStored[key],
                     snapshot: snapshot
                 )
             } else {
                 merged = ResolvedProfile(
                     profile: CaptureEngine.capture(
-                        windows: selected, on: screen, merging: stored[key]?.profile
+                        windows: selected, on: screen, merging: nextStored[key]?.profile
                     ),
                     overlay: nil
                 )
             }
             merged.profile.fingerprint = screen.fingerprint
             merged.profile.savedAt = now
-            stored[key] = merged
+            nextStored[key] = merged
             // 사람이 방금 이 배치를 선언했다 — 그 전에 모아둔 후보는 낡았다.
             // 버리지 않으면 종료·분리 시 확정이 낡은 배치를 더 새 시각으로 써서 방금 저장한 것을 이긴다.
-            candidates.removeValue(forKey: screen.id)
+            nextCandidates.removeValue(forKey: screen.id)
         }
-        persist()
+        return persist(stored: nextStored, candidates: nextCandidates)
     }
 
     /// 대상 앱 하나를 명부에 올린다 (체크를 켰는데 프로필에 없던 앱). **저장이 아니다** —
@@ -232,34 +236,37 @@ final class ProfileSlots: ObservableObject {
     ///
     /// 두 슬롯과 후보 모두에 넣는다 — **명부는 슬롯마다 다를 이유가 없다.**
     /// 한쪽에만 넣으면 그 슬롯이 이길 때만 보이고, 이기는 슬롯이 바뀌는 순간 사라진다.
+    @discardableResult
     func addTarget(
         windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil
-    ) {
-        guard !isSaveBlocked else { return }
+    ) -> Bool {
+        guard !isSaveBlocked else { return false }
+        var nextStored = stored
+        var nextCandidates = candidates
         for screen in screens {
             let manualKey = Slot.manual.key(screen.id)
             var manual = capturePair(
-                windows: windows, on: screen, existing: stored[manualKey], snapshot: snapshot
+                windows: windows, on: screen, existing: nextStored[manualKey], snapshot: snapshot
             )
             manual.profile.fingerprint = screen.fingerprint
             // 이 화면의 첫 앱이면 프로필이 방금 생긴 것이라 시각이 없다 — 그때만 채운다.
             if manual.profile.savedAt == nil { manual.profile.savedAt = Date() }
-            stored[manualKey] = manual
+            nextStored[manualKey] = manual
 
             let autoKey = Slot.auto.key(screen.id)
-            if let auto = stored[autoKey] {
-                stored[autoKey] = capturePair(
+            if let auto = nextStored[autoKey] {
+                nextStored[autoKey] = capturePair(
                     windows: windows, on: screen, existing: auto,
                     snapshot: snapshot
                 )
             }
-            if let candidate = candidates[screen.id] {
-                candidates[screen.id] = capturePair(
+            if let candidate = nextCandidates[screen.id] {
+                nextCandidates[screen.id] = capturePair(
                     windows: windows, on: screen, existing: candidate, snapshot: snapshot
                 )
             }
         }
-        persist()
+        return persist(stored: nextStored, candidates: nextCandidates)
     }
 
     /// 수집 — 지금 배치를 메모리 후보에 담는다. **파일에는 닿지 않는다.**
@@ -299,16 +306,17 @@ final class ProfileSlots: ObservableObject {
     func confirm(_ screenIDs: Set<String>) -> Bool {
         guard !isSaveBlocked, isLabEnabled else { return false }
         let now = Date()
+        var nextStored = stored
+        var nextCandidates = candidates
         var wrote = false
         for id in screenIDs {
-            guard var candidate = candidates.removeValue(forKey: id) else { continue }
+            guard var candidate = nextCandidates.removeValue(forKey: id) else { continue }
             candidate.profile.savedAt = now
-            stored[Slot.auto.key(id)] = candidate
+            nextStored[Slot.auto.key(id)] = candidate
             wrote = true
         }
         guard wrote else { return false }
-        persist()
-        return true
+        return persist(stored: nextStored, candidates: nextCandidates)
     }
 
     /// 종료 직전 — 남은 후보를 전부 확정한다. 화면을 뽑기 전에 앱을 끄면 여기가 마지막 기회다.
@@ -322,30 +330,36 @@ final class ProfileSlots: ObservableObject {
     /// 켜진 채 남아 수집이 계속 따라가던 버그가 이것이었다.)
     ///
     /// 창 위치는 건드리지 않으므로 「자동은 자동 슬롯만, 사람은 수동 슬롯만 쓴다」는 유지된다.
-    func edit(screenID: String, _ change: (inout Profile) -> Void) {
-        guard !isSaveBlocked else { return }
+    @discardableResult
+    func edit(screenID: String, _ change: (inout Profile) -> Void) -> Bool {
+        guard !isSaveBlocked else { return false }
+        var nextStored = stored
+        var nextCandidates = candidates
         for key in [Slot.manual.key(screenID), Slot.auto.key(screenID)] {
-            guard var pair = stored[key] else { continue }
+            guard var pair = nextStored[key] else { continue }
             change(&pair.profile)
             pruneOverlay(in: &pair)
-            stored[key] = pair
+            nextStored[key] = pair
         }
-        if var candidate = candidates[screenID] {
+        if var candidate = nextCandidates[screenID] {
             change(&candidate.profile)
             pruneOverlay(in: &candidate)
-            candidates[screenID] = candidate
+            nextCandidates[screenID] = candidate
         }
-        persist()
+        return persist(stored: nextStored, candidates: nextCandidates)
     }
 
     /// 프로필 통째 삭제 (F-05.6). 슬롯 둘과 모으던 후보를 함께 버린다 —
     /// 한쪽만 남으면 목록에 안 보이면서 복원에는 쓰이는 유령이 된다.
-    func remove(screenID: String) {
-        guard !isSaveBlocked else { return }
-        stored.removeValue(forKey: Slot.manual.key(screenID))
-        stored.removeValue(forKey: Slot.auto.key(screenID))
-        candidates.removeValue(forKey: screenID)
-        persist()
+    @discardableResult
+    func remove(screenID: String) -> Bool {
+        guard !isSaveBlocked else { return false }
+        var nextStored = stored
+        var nextCandidates = candidates
+        nextStored.removeValue(forKey: Slot.manual.key(screenID))
+        nextStored.removeValue(forKey: Slot.auto.key(screenID))
+        nextCandidates.removeValue(forKey: screenID)
+        return persist(stored: nextStored, candidates: nextCandidates)
     }
 
     func dismissTrouble() { trouble = nil }
@@ -377,19 +391,35 @@ final class ProfileSlots: ObservableObject {
     /// savedAt은 그대로 옮긴다 — 내용이 같으니 동점이 되고, 동점은 수동이 이긴다.
     private func seed() {
         guard !isSaveBlocked else { return }
+        var nextStored = stored
         var seeded = false
         for (key, manual) in stored where !Slot.isAutoKey(key) {
             let autoKey = Slot.auto.key(key)
             guard stored[autoKey] == nil else { continue } // 다시 켤 때 기존 자동 슬롯을 덮지 않는다
-            stored[autoKey] = manual
+            nextStored[autoKey] = manual
             seeded = true
         }
-        if seeded { persist() }
+        if seeded { persist(stored: nextStored) }
     }
 
-    private func persist() {
-        guard !isSaveBlocked else { return } // 읽기 실패를 첫 실행처럼 덮어쓰면 손상보다 나쁜 손실이다
-        store.save(stored.mapValues(\.profile))
+    /// 디스크가 성공한 뒤에만 메모리 상태를 공개한다. 후보까지 같은 호출에 넣어야
+    /// 확정 실패가 candidate를 잃거나 수동 저장 실패가 낡은 candidate를 지우지 않는다.
+    @discardableResult
+    private func persist(
+        stored nextStored: [String: ResolvedProfile],
+        candidates nextCandidates: [String: ResolvedProfile]? = nil
+    ) -> Bool {
+        guard !isSaveBlocked else { return false } // 읽기 실패를 첫 실행처럼 덮어쓰면 손상보다 나쁜 손실이다
+        do {
+            try store.save(nextStored.mapValues(\.profile))
+        } catch {
+            trouble = .writeFailed
+            return false
+        }
+        stored = nextStored
+        if let nextCandidates { candidates = nextCandidates }
+        if trouble == .writeFailed { trouble = nil }
+        return true
     }
 
     private func capturePair(

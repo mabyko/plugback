@@ -94,7 +94,7 @@ private struct Card: View {
     }
 
     // 저장소 문제를 조용히 넘기지 않는다 (F-04.2). 확인하면 배너는 사라진다.
-    private func storeNotice(_ notice: ProfileStore.LoadOutcome.Trouble) -> some View {
+    private func storeNotice(_ notice: ProfileStore.Trouble) -> some View {
         zone {
             VStack(alignment: .leading, spacing: 4) {
                 switch notice {
@@ -119,6 +119,16 @@ private struct Card: View {
                             .foregroundStyle(.orange)
                             .accessibilityHidden(true)
                         Text("프로필 파일을 읽지 못해 이번 실행에서는 저장하지 않습니다.\n파일을 지키기 위해 덮어쓰기를 막았습니다 — 재시작하면 다시 시도합니다.")
+                    }
+                    .font(.system(size: 12))
+                    Button("확인") { controller.dismissStoreNotice() }
+                        .font(.system(size: 11))
+                case .writeFailed:
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                        Text("프로필을 저장하지 못했습니다.\n기존 프로필과 저장 대기 중인 배치는 그대로 두었습니다 — 다음 저장 때 다시 시도합니다.")
                     }
                     .font(.system(size: 12))
                     Button("확인") { controller.dismissStoreNotice() }

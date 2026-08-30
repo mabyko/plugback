@@ -23,6 +23,8 @@ public enum CaptureOutcome: Equatable, Sendable {
     case restoringInProgress
     /// 프로필 파일을 읽지 못한 실행 — 덮어쓰기 방지로 저장이 차단됐다 (F-04.2).
     case saveBlocked
+    /// 실행 중 프로필 파일에 쓰지 못했다. 이전 상태는 유지되고 다음 저장에서 재시도할 수 있다.
+    case saveFailed
 }
 
 /// restoreNow의 반환 — 실행되지 않은 경로도 성공과 구별된다. 호출자는 published를 뒤져 추론하지 않는다.
@@ -98,7 +100,7 @@ public final class PlugbackController: ObservableObject {
     @Published public private(set) var lastCaptureCount: Int?
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
     /// **파생이다** — 슬롯 모듈이 유일한 출처다. 사본을 들면 손으로 맞춰야 하고, 그러면 어긋난다.
-    public var storeNotice: ProfileStore.LoadOutcome.Trouble? { slots.trouble }
+    public var storeNotice: ProfileStore.Trouble? { slots.trouble }
     /// 알림을 닫아도 프로세스 수명 동안 유지되는 저장 금지 상태.
     public var isSaveBlocked: Bool { slots.isSaveBlocked }
     /// 복원 모드 (F-05.4). 기본값 자동, 변경은 보존된다.
@@ -582,7 +584,9 @@ public final class PlugbackController: ObservableObject {
         let snapshot = spaceObservationEnabled
             ? await observation.stableSnapshot(for: windows)
             : nil
-        slots.capture(windows: windows, on: externalScreens, snapshot: snapshot)
+        guard slots.capture(windows: windows, on: externalScreens, snapshot: snapshot) else {
+            return .saveFailed
+        }
         // 사람이 지금 배치를 다시 선언했으므로 이전 복원 세션의 방문 대기는 더 이상 유효하지 않다.
         restoreSession.invalidate(screens: Set(externalScreens.map(\.id)))
         // 연결된 모든 화면의 합이다 — 저장이 모든 화면에 썼는데 첫 화면만 세면 「저장됨 · n개」가 거짓이다.
@@ -640,8 +644,8 @@ public final class PlugbackController: ObservableObject {
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.
     /// 이 시점에 창을 읽지 않는다는 것이 이 경로의 핵심이며, 그 이유는 슬롯 모듈에 적혀 있다.
     func confirmCandidates(for screenIDs: Set<String>) {
-        restoreSession.invalidate(screens: screenIDs)
         guard slots.confirm(screenIDs) else { return }
+        restoreSession.invalidate(screens: screenIDs)
         Task { await updatePredictions() }
     }
 
@@ -735,15 +739,18 @@ public final class PlugbackController: ObservableObject {
 
     /// 프로필 통째 삭제 (F-05.6). 그 화면을 다시 연결하면 프로필 없는 화면이다 (US-012 AC-3).
     public func removeProfile(_ screenID: String) {
-        slots.remove(screenID: screenID)
+        guard slots.remove(screenID: screenID) else { return }
         restoreSession.invalidate(screens: [screenID])
         resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
         projectionsByScreen.removeValue(forKey: screenID)
     }
 
-    private func mutateProfile(on screenID: String?, _ change: (inout Profile) -> Void) {
-        guard let id = screenID ?? currentScreenID else { return }
-        slots.edit(screenID: id, change)
+    @discardableResult
+    private func mutateProfile(
+        on screenID: String?, _ change: (inout Profile) -> Void
+    ) -> Bool {
+        guard let id = screenID ?? currentScreenID else { return false }
+        return slots.edit(screenID: id, change)
     }
 
     private func updatePredictions() async {
@@ -835,11 +842,11 @@ public final class PlugbackController: ObservableObject {
         guard let id = screenID ?? currentScreenID else { return }
         let profile = slots.source(for: id)?.profile
         if profile?.apps.contains(where: { $0.bundleID == bundleID }) == true {
-            mutateProfile(on: id) { profile in
+            guard mutateProfile(on: id, { profile in
                 guard let index = profile.apps.firstIndex(where: { $0.bundleID == bundleID })
                 else { return }
                 profile.apps[index].isEnabled = tracked
-            }
+            }) else { return }
             await refreshCollectTargets()
             await updatePredictions() // 켜고 끈 행이 곧바로 제 묶음으로 간다
         } else if tracked {
@@ -851,9 +858,9 @@ public final class PlugbackController: ObservableObject {
     /// 즉시 다시 보이고, 화면에도 없으면 행이 사라진다.
     public func remove(_ bundleID: String, on screenID: String? = nil) async {
         guard let id = screenID ?? currentScreenID else { return }
-        mutateProfile(on: id) { profile in
+        guard mutateProfile(on: id, { profile in
             profile.apps.removeAll { $0.bundleID == bundleID }
-        }
+        }) else { return }
         await refreshCollectTargets()
         await updatePredictions()
     }
@@ -872,14 +879,17 @@ public final class PlugbackController: ObservableObject {
         let snapshot = spaceObservationEnabled
             ? await observation.stableSnapshot(for: windows)
             : nil
-        slots.addTarget(windows: windows, on: [screen], snapshot: snapshot)
+        guard slots.addTarget(windows: windows, on: [screen], snapshot: snapshot) else {
+            return .saveFailed
+        }
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
         await updatePredictions()
         let count = slots.source(for: screenID)?.profile.apps.filter(\.isEnabled).count ?? 0
         return .captured(appCount: count)
     }
 
-    /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남는다.
+    /// 저장소 알림 확인 — 배너만 사라진다. unreadable의 쓰기 금지는 남고,
+    /// writeFailed는 다음 저장 동작에서 다시 시도한다.
     public func dismissStoreNotice() { slots.dismissTrouble() }
 
     /// UserDefaults 키 — 읽기·쓰기가 같은 이름을 쓰도록 한곳에 (오타는 조용한 버그다).
