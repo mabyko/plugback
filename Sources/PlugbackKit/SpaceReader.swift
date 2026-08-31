@@ -114,14 +114,6 @@ public actor SpaceReader: SpaceReading {
     }
 }
 
-public struct UnavailableSpaceReader: SpaceReading {
-    public init() {}
-
-    public func stableSnapshot(
-        windowServerIDs: [CGWindowID]
-    ) async -> SpaceSnapshotAvailability { .unavailable }
-}
-
 private typealias SLSMainConnectionID = @convention(c) () -> Int32
 private typealias SLSCopyManagedDisplaySpaces = @convention(c) (Int32) -> Unmanaged<CFArray>?
 private typealias SLSCopySpacesForWindows = @convention(c) (

@@ -44,6 +44,12 @@ struct ResolvedProfile: Equatable, Sendable {
     var overlay: SlotSpaceOverlay?
 }
 
+enum TargetEnableOutcome: Equatable {
+    case applied
+    case missing
+    case failed
+}
+
 /// 저장된 프로필 전부와, 그것을 쓰는 규칙 전부 (F-04, F-08).
 ///
 /// 화면 하나가 슬롯 둘을 갖는다는 사실은 이 안에서 끝난다 — 바깥은 「이 화면의 프로필」만 묻는다.
@@ -323,29 +329,61 @@ final class ProfileSlots: ObservableObject {
     @discardableResult
     func confirmAll() -> Bool { confirm(Set(candidates.keys)) }
 
-    /// 대상 앱 편집 — 체크 켜고 끄기, 프로필에서 삭제.
-    ///
-    /// **두 슬롯과 후보에 모두 적용한다.** 체크 상태와 명부는 슬롯마다 다를 이유가 없다 —
-    /// 한쪽만 고치면 이기는 슬롯이 바뀌는 순간 되살아난다. (체크를 껐는데 자동 슬롯엔
-    /// 켜진 채 남아 수집이 계속 따라가던 버그가 이것이었다.)
-    ///
-    /// 창 위치는 건드리지 않으므로 「자동은 자동 슬롯만, 사람은 수동 슬롯만 쓴다」는 유지된다.
+    /// 대상 앱의 체크 상태를 두 슬롯과 후보에서 함께 바꾼다.
+    /// source에 없는 앱은 caller가 현재 창을 읽어 `addTarget`으로 등록해야 한다.
     @discardableResult
-    func edit(screenID: String, _ change: (inout Profile) -> Void) -> Bool {
+    func setTargetEnabled(
+        _ bundleID: String, _ enabled: Bool, on screenID: String
+    ) -> TargetEnableOutcome {
+        guard !isSaveBlocked else { return .failed }
+        guard source(for: screenID)?.profile.apps.contains(where: {
+            $0.bundleID == bundleID
+        }) == true else { return .missing }
+        return updateTargets(on: screenID) { pair in
+            guard let index = pair.profile.apps.firstIndex(where: {
+                $0.bundleID == bundleID
+            })
+            else { return false }
+            guard pair.profile.apps[index].isEnabled != enabled else { return false }
+            pair.profile.apps[index].isEnabled = enabled
+            return true
+        } ? .applied : .failed
+    }
+
+    /// 대상 앱을 두 슬롯과 후보에서 완전히 지운다. 창이 화면에 남아 있으면
+    /// 다음 projection에서 저장되지 않은 앱으로 다시 보인다.
+    @discardableResult
+    func removeTarget(_ bundleID: String, on screenID: String) -> Bool {
+        updateTargets(on: screenID) { pair in
+            let previous = pair
+            pair.profile.apps.removeAll { $0.bundleID == bundleID }
+            self.pruneOverlay(in: &pair)
+            return pair != previous
+        }
+    }
+
+    /// 대상 앱 규칙의 저장 구현. generic mutation은 이 module 밖으로 노출하지 않는다.
+    /// 변화가 없으면 디스크를 다시 쓰지 않고, 실제 변경은 쓰기 성공 뒤에만 공개한다.
+    private func updateTargets(
+        on screenID: String, _ change: (inout ResolvedProfile) -> Bool
+    ) -> Bool {
         guard !isSaveBlocked else { return false }
         var nextStored = stored
         var nextCandidates = candidates
+        var changed = false
         for key in [Slot.manual.key(screenID), Slot.auto.key(screenID)] {
             guard var pair = nextStored[key] else { continue }
-            change(&pair.profile)
-            pruneOverlay(in: &pair)
+            guard change(&pair) else { continue }
             nextStored[key] = pair
+            changed = true
         }
         if var candidate = nextCandidates[screenID] {
-            change(&candidate.profile)
-            pruneOverlay(in: &candidate)
-            nextCandidates[screenID] = candidate
+            if change(&candidate) {
+                nextCandidates[screenID] = candidate
+                changed = true
+            }
         }
+        guard changed else { return true }
         return persist(stored: nextStored, candidates: nextCandidates)
     }
 

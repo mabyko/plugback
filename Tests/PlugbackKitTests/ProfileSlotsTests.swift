@@ -263,16 +263,29 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertEqual(slots.trouble, .writeFailed)
     }
 
-    func testEditAndRemoveKeepPublishedStateWhenDiskWriteFails() throws {
+    func testTargetEditAndRemoveKeepPublishedStateWhenDiskWriteFails() throws {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])
         try blockWrites()
 
-        slots.edit(screenID: screen.id) { $0.apps[0].isEnabled = false }
+        XCTAssertEqual(slots.setTargetEnabled("com.chrome", false, on: screen.id), .failed)
         XCTAssertEqual(slots.source(for: screen.id)?.profile.apps[0].isEnabled, true)
+
+        XCTAssertFalse(slots.removeTarget("com.chrome", on: screen.id))
+        XCTAssertEqual(slots.source(for: screen.id)?.profile.apps.map(\.bundleID), ["com.chrome"])
 
         slots.remove(screenID: screen.id)
         XCTAssertNotNil(slots.source(for: screen.id), "디스크에서 지우지 못한 프로필을 메모리에서 먼저 숨기면 안 된다")
+    }
+
+    func testUnchangedOrMissingTargetDoesNotWrite() throws {
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        try blockWrites()
+
+        XCTAssertEqual(slots.setTargetEnabled("com.chrome", true, on: screen.id), .applied)
+        XCTAssertEqual(slots.setTargetEnabled("com.missing", true, on: screen.id), .missing)
+        XCTAssertNil(slots.trouble, "변화 없는 명령은 디스크 쓰기를 시도하지 않는다")
     }
 
     func testManualSaveIsNotOvertakenByAStaleCandidate() {
@@ -296,7 +309,7 @@ final class ProfileSlotsTests: XCTestCase {
         // 실기기에서 나온 것: 체크를 껐는데 저장이 그 앱 좌표를 계속 갱신했다.
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])
-        slots.edit(screenID: "ext-1") { $0.apps[0].isEnabled = false }
+        slots.setTargetEnabled("com.chrome", false, on: "ext-1")
 
         // 창을 옮긴 뒤 저장 — 체크가 꺼진 앱이니 좌표가 그대로여야 한다
         slots.capture(windows: [window("com.chrome", right)], on: [screen])
@@ -310,7 +323,7 @@ final class ProfileSlotsTests: XCTestCase {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])
         slots.isLabEnabled = true
-        slots.edit(screenID: "ext-1") { $0.apps[0].isEnabled = false }
+        slots.setTargetEnabled("com.chrome", false, on: "ext-1")
 
         XCTAssertTrue(slots.targets(for: [screen]).isEmpty, "체크 해제한 앱은 감지하지 않는다")
 
@@ -365,14 +378,14 @@ final class ProfileSlotsTests: XCTestCase {
         XCTAssertEqual(slots.firstByName?.screenName, "LG")
     }
 
-    func testEditAppliesToBothSlots() {
+    func testTargetEditAppliesToBothSlots() {
         let slots = makeSlots()
         slots.capture(windows: [window("com.chrome", left)], on: [screen])
         slots.isLabEnabled = true
         slots.collect(windows: [window("com.chrome", right)], on: [screen])
         slots.confirm(["ext-1"])
 
-        slots.edit(screenID: "ext-1") { $0.apps[0].isEnabled = false }
+        slots.setTargetEnabled("com.chrome", false, on: "ext-1")
 
         // 한쪽만 고치면 이기는 슬롯이 바뀌는 순간 되살아난다 — 체크 상태는 슬롯마다 다를 이유가 없다.
         XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.first?.isEnabled, false, "이긴 슬롯")

@@ -31,9 +31,6 @@ final class SpaceReaderTests: XCTestCase {
             .unavailable
         )
 
-        let unavailable = await UnavailableSpaceReader().stableSnapshot(windowServerIDs: [7])
-        XCTAssertEqual(unavailable, .unavailable)
-
         let unknown = WindowInfo(
             id: 1, appBundleID: "com.example", appName: "Example", frame: .zero,
             fullscreenState: .unknown, windowServerID: 7

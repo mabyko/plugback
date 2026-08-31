@@ -2,32 +2,16 @@ import CoreGraphics
 import Foundation
 
 /// 복원 옵션 (F-02.2 예외 설정들). 옵션이 늘어도 restore 시그니처는 안 넓어진다.
-public struct RestoreOptions: Sendable {
+struct RestoreOptions: Sendable {
     /// 최소화된 창도 Dock에서 꺼내 복원 (기본 꺼짐 — 최소화는 사용자의 의도다).
-    public var restoreMinimized: Bool
+    var restoreMinimized: Bool
     /// 실행 중인데 창이 없는 앱에 새 창을 열게 해 복원 (기본 꺼짐). 꺼진 앱은 실행하지 않는다.
-    public var reopenWindowless: Bool
+    var reopenWindowless: Bool
 
-    public init(restoreMinimized: Bool = false, reopenWindowless: Bool = false) {
+    init(restoreMinimized: Bool = false, reopenWindowless: Bool = false) {
         self.restoreMinimized = restoreMinimized
         self.reopenWindowless = reopenWindowless
     }
-}
-
-/// 복원 예측 — 카드의 점이 쓰는 어휘. 진실(restore)과 같은 선택 규칙에서 계산된다.
-/// 일치 범위: 식별자 정렬상 첫 화면(카드가 보여주는 화면)에서 **판정 규칙**이 진실과 일치한다.
-/// 실행 시점 사건 — 이동 실패, 새 창 미등장, 지문 불일치의 화면 통째 건너뜀,
-/// 체크 해제, 한 pass의 두 번째 이후 fullscreen 전환 — 은 예측이 담지 않는다.
-/// 방문 대기·판정 불가처럼 이번 회차에 결과가 없는 앱은 사전에도 들어가지 않는다.
-/// 뒷 화면에서는 앞 화면과 겹치는 앱이 다중 화면 중복 제거(F-01.6)로 빠질 수 있다 —
-/// 예측은 화면 목록 맥락을 받지 않으므로 그 제거를 모른다.
-public enum RestorePrediction: Equatable, Sendable {
-    /// 복원하면 이 앱의 창이 옮겨진다 (새 창 열기 옵션으로 열려서 옮겨지는 경우 포함).
-    case willMove
-    /// 이미 제자리 — 옮길 필요가 없다.
-    case alreadyInPlace
-    /// 이 사유로 건너뛸 것이다.
-    case willSkip(SkipReason)
 }
 
 /// Space-aware 경로의 순수 선택 결과. 이동과 방문 대기 수명은 RestoreSession의 일이다.
@@ -50,9 +34,9 @@ struct SpaceRestorePass: Equatable, Sendable {
 /// 격리 자유 — 어느 액터에도 묶이지 않는다. AX의 실행 흐름은 게이트웨이 어댑터의 것이다 (F-02.4).
 /// 복원 정책 전부가 여기 산다: 창 선택, 건너뜀 판정, 지문 검증(F-01.4),
 /// 다중 화면 중복 제거(F-01.6), 이동 검증·재시도(F-02.3), 새 창 열기 후 복원.
-public enum RestoreEngine {
+enum RestoreEngine {
     /// 이동 후 검증 허용 오차. 실기기 측정 후 조정할 수 있는 초기값이다 (F-02.3).
-    public static let tolerance: CGFloat = 5
+    static let tolerance: CGFloat = 5
 
     static func isEligible(_ resolved: ResolvedProfile, on screen: ScreenInfo) -> Bool {
         guard let saved = resolved.profile.fingerprint, let live = screen.fingerprint else {
@@ -338,93 +322,9 @@ public enum RestoreEngine {
         return .moved
     }
 
-    // MARK: - 예측 (점의 어휘) — 진실과 같은 선택 규칙
-
-    /// 복원을 실행하면 각 대상 앱이 어떻게 될지의 사전 판정. 부수효과 없음 — 복원과 같은
-    /// profile+Space overlay, 창, snapshot, 범위를 받아 같은 창 선택 결과에서 계산한다.
-    /// 방문 대기·판정 불가처럼 이번 회차에 결과가 없는 앱은 사전에 넣지 않는다.
-    static func predict(
-        resolved: ResolvedProfile, on screen: ScreenInfo?, windows: [WindowInfo],
-        snapshot: SpaceSnapshot?, running: Set<String>, scope: SpaceRestoreScope,
-        options: RestoreOptions = RestoreOptions()
-    ) -> [String: RestorePrediction] {
-        var result: [String: RestorePrediction] = [:]
-        for app in resolved.profile.apps {
-            result[app.bundleID] = predictOne(
-                app, in: resolved, on: screen, windows: windows, snapshot: snapshot,
-                running: running, scope: scope, options: options
-            )
-        }
-        return result
-    }
-
-    private static func predictOne(
-        _ app: TargetApp, in resolved: ResolvedProfile, on screen: ScreenInfo?,
-        windows: [WindowInfo], snapshot: SpaceSnapshot?, running: Set<String>,
-        scope: SpaceRestoreScope, options: RestoreOptions
-    ) -> RestorePrediction? {
-        guard running.contains(app.bundleID) else { return .willSkip(.appNotRunning) }
-
-        let selection: SpaceWindowSelection
-        if let screen {
-            selection = selectSpaceWindow(
-                bundleID: app.bundleID, in: resolved, on: screen,
-                windows: windows, snapshot: snapshot, scope: scope
-            )
-        } else if let binding = resolved.overlay?.byBundle[app.bundleID],
-                  scope.restores(binding) {
-            selection = .unavailable
-        } else {
-            selection = .legacy
-        }
-
-        switch selection {
-        case .legacy:
-            return predictLegacy(app, on: screen, windows: windows, options: options)
-        case .window(let window):
-            return predict(app, from: window, on: screen, options: options)
-        case .enterFullscreen(let window):
-            guard !window.isMinimized || options.restoreMinimized else {
-                return .willSkip(.minimized)
-            }
-            return .willMove
-        case .fullscreen:
-            return .willSkip(.fullscreen)
-        case .inactive, .unavailable:
-            return nil
-        }
-    }
-
-    private static func predictLegacy(
-        _ app: TargetApp, on screen: ScreenInfo?, windows: [WindowInfo],
-        options: RestoreOptions
-    ) -> RestorePrediction {
-        let all = windows.filter { $0.appBundleID == app.bundleID }
-        if all.isEmpty {
-            // 새 창 열기 옵션이 켜졌으면 복원이 창을 열어서 옮길 것이다
-            return options.reopenWindowless ? .willMove : .willSkip(.noWindow)
-        }
-        switch pickWindow(from: all, on: screen, options: options) {
-        case .skip(let reason): return .willSkip(reason)
-        case .window(let window): return predict(app, from: window, on: screen, options: options)
-        }
-    }
-
-    private static func predict(
-        _ app: TargetApp, from window: WindowInfo, on screen: ScreenInfo?,
-        options: RestoreOptions
-    ) -> RestorePrediction {
-        guard !window.isMinimized || options.restoreMinimized else {
-            return .willSkip(.minimized)
-        }
-        guard let screen else { return .willMove }
-        let target = app.unitRect.frame(in: screen.frame)
-        return approximatelyEqual(window.frame, target) ? .alreadyInPlace : .willMove
-    }
-
     // MARK: - 공유 코어
 
-    /// 창 선택 규칙 (F-02.1의 4, 요구사항 다) — 진실(restore)과 예측(predict)이 공유하는 유일한 구현.
+    /// 창 선택 규칙 (F-02.1의 4, 요구사항 다).
     /// 대상 화면의 창이 있으면 그중에서 — 없으면 첫 표준 창을 어디서든 데려온다.
     /// 케이블을 뽑으면 macOS가 창을 내장으로 옮겨두므로, 데려오지 못하면 핵심 시나리오가 성립하지 않는다.
     /// 이동 가능한 첫 창을 고르되 보이는 창 우선, 최소화 창은 옵션이 켜졌을 때만 차선.

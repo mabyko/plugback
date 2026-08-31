@@ -154,12 +154,12 @@ public enum Slot: String, Equatable, Sendable {
     /// 자동 슬롯만 접미사를 단다. 화면 식별자에는 '#'이 없다(WindowServer UUID).
     static let autoSuffix = "#auto"
 
-    public func key(_ screenID: String) -> String {
+    func key(_ screenID: String) -> String {
         self == .auto ? screenID + Slot.autoSuffix : screenID
     }
 
     /// 저장소 키가 자동 슬롯의 것인가 — 프로필 목록에서 걸러낼 때 쓴다.
-    public static func isAutoKey(_ key: String) -> Bool { key.hasSuffix(autoSuffix) }
+    static func isAutoKey(_ key: String) -> Bool { key.hasSuffix(autoSuffix) }
 }
 
 /// 이 외장 화면에 창이 있지만 프로필에 없는 앱 — **복원이 건드리지 않는다.**

@@ -18,34 +18,6 @@ enum CardPresentation {
         }
     }
 
-    // MARK: - 대상 앱 점 — 복원 예측의 표현 (US-006 AC-1)
-
-    enum DotStyle: Equatable {
-        case filled  // 복원하면 옮겨지거나 이미 제자리
-        case hollow  // 실행 중이지만 건너뜀 예정
-        case off     // 꺼짐
-    }
-
-    static func dotStyle(for prediction: RestorePrediction) -> DotStyle {
-        switch prediction {
-        case .willMove, .alreadyInPlace: return .filled
-        case .willSkip(.appNotRunning): return .off
-        case .willSkip: return .hollow
-        }
-    }
-
-    static func dotLabel(for prediction: RestorePrediction) -> String {
-        switch prediction {
-        case .willMove: return "복원 대상"
-        case .alreadyInPlace: return "제자리"
-        case .willSkip(.appNotRunning): return "꺼짐"
-        case .willSkip(.noWindow): return "창 없음"
-        case .willSkip(.fullscreen): return "전체화면"
-        case .willSkip(.minimized): return "최소화"
-        case .willSkip(.alreadyInPlace): return "제자리" // 예측은 .alreadyInPlace 케이스로 오지만 방어
-        }
-    }
-
     // MARK: - Space 그룹 — 번호는 외장 화면 안에서 저장된 일반 Space의 로컬 순서다
 
     static func spaceGroupTitle(for kind: PlugbackController.SpaceGroup.Kind) -> String {

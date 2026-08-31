@@ -48,54 +48,18 @@ public final class PlugbackController: ObservableObject {
         if case .connected = screenPresence { return true } else { return false }
     }
 
-    /// 첫 화면 편의용 식별자 — 연결 시 식별자 정렬상 첫 화면, 아니면 기억한 화면.
-    /// **카드는 이것에 의존하지 않는다** — 카드는 sections로 모든 화면을 그린다.
-    /// 화면 식별자를 받지 않은 호출(테스트·기존 API)의 기본값으로만 쓴다.
-    private var currentScreenID: String? {
-        switch screenPresence {
-        case .connected(let screen, _): return screen.id
-        case .remembered(let screenID, _): return screenID
-        case .none: return nil
-        }
-    }
     /// 복원 진행 중 — 재진입 가드이자 버튼 비활성용 UI 상태.
     @Published public private(set) var isRestoring = false
-    /// 한 번의 창·Space 관찰에서 파생한 화면별 카드 값. 네 사전을 따로 발행하지 않아
+    /// 한 번의 창·Space 관찰에서 파생한 화면별 카드 값. 사전을 따로 발행하지 않아
     /// 화면 키와 갱신 시점이 갈라질 상태를 만들지 않는다. profile·복원 소스·결과는 slots와
     /// 복원 수명에 실시간으로 따라가므로 이 값에 복사하지 않고 section에서 붙인다.
     private struct ScreenProjection {
-        let predictions: [String: RestorePrediction]
         let spaceGroups: [SpaceGroup]
         let spaceConfigurationDiffers: Bool
         let untrackedApps: [UntrackedApp]
     }
     @Published private var projectionsByScreen: [String: ScreenProjection] = [:]
 
-    /// 화면별 · 대상 앱별 복원 예측 — "복원하면 이 앱이 어떻게 될까"의 답 (US-006 AC-1의 점이 이것을 그린다).
-    /// 바깥 키는 화면 식별자, 안쪽 키는 번들 ID. 엔진의 창 선택 규칙 그대로 계산된다.
-    /// 실행 시점 사건(이동 실패·새 창 미등장·지문 불일치·체크 해제)은 예측 범위 밖 —
-    /// 결과 스트립과 알림이 사후에 답한다. 방문 대기·판정 불가는 이번 회차 결과가 없어 사전에도 없다.
-    /// 뒷 화면의 예측은 다중 화면 중복 제거(F-01.6)를 모른다.
-    public var predictionsByScreen: [String: [String: RestorePrediction]] {
-        projectionsByScreen.mapValues(\.predictions)
-    }
-
-    /// 화면별 · 저장하지 않는 앱 — 체크를 껐던 대상 앱과, 그 화면에 있지만 프로필에 없는 앱.
-    /// **화면에서는 같은 칸이다**: 체크 해제는 「아무것도 안 한다」 하나의 뜻이고,
-    /// 프로필 소속 여부는 내부 사정이다. 껐던 앱은 좌표가 남아 있어 다시 켜면 그 자리로 돌아온다.
-    /// 프로필에 없는 앱은 저장이 잡아갈 창과 같은 규칙으로 고른다 — 체크했는데 아무 일도
-    /// 안 일어나는 행을 만들지 않기 위해서다.
-    public var untrackedAppsByScreen: [String: [UntrackedApp]] {
-        projectionsByScreen.mapValues(\.untrackedApps)
-    }
-
-    /// 첫 화면 파생 편의 — 테스트·기존 호출용. 카드는 sections를 쓴다.
-    public var predictions: [String: RestorePrediction] {
-        currentScreenID.flatMap { projectionsByScreen[$0]?.predictions } ?? [:]
-    }
-    public var untrackedApps: [UntrackedApp] {
-        currentScreenID.flatMap { projectionsByScreen[$0]?.untrackedApps } ?? []
-    }
     /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
     @Published public private(set) var lastCaptureCount: Int?
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
@@ -112,7 +76,6 @@ public final class PlugbackController: ObservableObject {
     @Published public var restoreMinimized: Bool {
         didSet {
             defaults.set(restoreMinimized, forKey: Keys.restoreMinimized)
-            refreshPredictionsAfterOptionChange() // 옵션은 예측을 바꾼다 — 갱신 의무를 변이 지점에
         }
     }
 
@@ -121,7 +84,6 @@ public final class PlugbackController: ObservableObject {
     @Published public var reopenWindowless: Bool {
         didSet {
             defaults.set(reopenWindowless, forKey: Keys.reopenWindowless)
-            refreshPredictionsAfterOptionChange()
         }
     }
 
@@ -137,7 +99,7 @@ public final class PlugbackController: ObservableObject {
             pendingSpaceRefresh = false
             syncCollectTrigger()
             syncSpaceWatcher()
-            refreshPredictionsAfterOptionChange() // 복원 소스가 바뀌면 점도 바뀐다
+            refreshProjectionAfterStateChange()
         }
     }
 
@@ -149,7 +111,7 @@ public final class PlugbackController: ObservableObject {
             slots.updateMode = autoSlotUpdateMode
             resetRestoreSession()
             pendingSpaceRefresh = false
-            refreshPredictionsAfterOptionChange()
+            refreshProjectionAfterStateChange()
         }
     }
 
@@ -162,7 +124,7 @@ public final class PlugbackController: ObservableObject {
             resetRestoreSession()
             pendingSpaceRefresh = false
             syncSpaceWatcher()
-            refreshPredictionsAfterOptionChange()
+            refreshProjectionAfterStateChange()
         }
     }
 
@@ -174,13 +136,13 @@ public final class PlugbackController: ObservableObject {
             resetRestoreSession()
             pendingSpaceRefresh = false
             syncSpaceWatcher()
-            refreshPredictionsAfterOptionChange()
+            refreshProjectionAfterStateChange()
         }
     }
 
-    /// 설정 창과 카드가 나란히 열려 있어도 점이 스테일하지 않게 — didSet에서 비동기로 쏜다.
-    private func refreshPredictionsAfterOptionChange() {
-        Task { await updatePredictions() }
+    /// 설정 창과 카드가 나란히 열려 있어도 Space 그룹과 복원 소스가 낡지 않게 갱신한다.
+    private func refreshProjectionAfterStateChange() {
+        Task { await refreshProjection() }
     }
 
     /// UUID는 맞는데 지문이 다른 화면이 있었다 — 복원하지 않았다 (F-01.4).
@@ -209,14 +171,7 @@ public final class PlugbackController: ObservableObject {
     private var slotChanges: AnyCancellable?
     @Published private var resultsByScreen: [String: RestoreResult] = [:]
 
-    /// 파생 상태 — 수동 동기화 지점을 두지 않는다. 첫 화면 편의 — 카드는 sections를 쓴다.
-    public var profile: Profile? { currentScreenID.flatMap { slots.source(for: $0)?.profile } }
-    /// 지금 복원에 쓰일 슬롯 — 첫 화면 편의. 파생이므로 표시와 동작이 어긋날 수 없다.
-    public var restoreSource: Slot? { currentScreenID.flatMap { slots.source(for: $0)?.slot } }
-    /// 첫 화면의 마지막 복원 결과 — 편의. 카드는 lastResults로 모든 화면을 본다.
-    public var lastResult: RestoreResult? { currentScreenID.flatMap { resultsByScreen[$0] } }
-
-    /// 카드가 화면 하나를 그리는 단위 — 프로필·복원 소스·예측·저장하지 않는 앱·마지막 결과가
+    /// 카드가 화면 하나를 그리는 단위 — 프로필·복원 소스·저장하지 않는 앱·마지막 결과가
     /// 전부 그 화면의 것이다. 첫 화면만 보여주던 카드가 화면을 빠뜨리지 않게 하는 인터페이스.
     public struct SpaceGroup: Identifiable, Equatable, Sendable {
         public enum RegularState: Equatable, Sendable {
@@ -245,7 +200,6 @@ public final class PlugbackController: ObservableObject {
         public let profile: Profile?
         public let restoreSource: Slot?
         public let usesPendingSource: Bool
-        public let predictions: [String: RestorePrediction]
         public let spaceGroups: [SpaceGroup]
         public let spaceConfigurationDiffers: Bool
         public let untrackedApps: [UntrackedApp]
@@ -270,7 +224,6 @@ public final class PlugbackController: ObservableObject {
         return ScreenSection(screenID: screenID, name: name,
                              profile: source?.profile, restoreSource: source?.slot,
                              usesPendingSource: slots.usesCandidate(for: screenID),
-                             predictions: projection?.predictions ?? [:],
                              spaceGroups: projection?.spaceGroups ?? [],
                              spaceConfigurationDiffers:
                                  projection?.spaceConfigurationDiffers ?? false,
@@ -369,8 +322,7 @@ public final class PlugbackController: ObservableObject {
 
     /// 프로필 있는 화면이 하나라도 있나 — 복원 버튼 활성 판정. 첫 화면만 보던 판정을 대체한다.
     public var hasRestorableProfile: Bool {
-        if isConnected { return externalScreens.contains { slots.source(for: $0.id) != nil } }
-        return profile != nil
+        sections.contains { $0.profile != nil }
     }
     /// 카드가 그리는 실험실 상태 — 전부 슬롯 모듈에서 파생된다.
     public var hasPendingCollect: Bool { slots.hasPendingCollect }
@@ -534,7 +486,7 @@ public final class PlugbackController: ObservableObject {
     func externalScreensAppeared() async {
         syncScreens()
         await refreshCollectTargets() // 새 화면의 대상 앱까지 이동 관찰에 넣는다
-        await updatePredictions() // 카드가 열려 있는 채로 연결돼도 점이 맞게 (예측 갱신)
+        await refreshProjection()
         guard restoreMode == .automatic else { return } // 수동 모드면 연결돼도 복원하지 않는다 (US-007 AC-4)
         // 권한 게이트는 restoreNow 내부에 있다 — 여기서 중복 검사하지 않는다
         if isRestoring {
@@ -554,13 +506,13 @@ public final class PlugbackController: ObservableObject {
         checkAuthorization()
         lastCaptureCount = nil
         syncScreens()
-        await updatePredictions()
+        await refreshProjection()
     }
 
     /// 화면 상태 동기화. 명령이 스스로 호출한다 — 호출자에게 순서 의식이 없다.
     private func syncScreens() {
-        // 식별자 정렬 — "첫 화면"의 정의를 복원의 중복 제거(F-01.6)와 공유한다.
-        // NSScreen 열거 순서는 불안정하고, 다르게 고르면 카드의 예측이 진실과 어긋난다.
+        // 식별자 정렬 — 카드와 복원의 중복 제거(F-01.6)가 같은 화면 순서를 쓴다.
+        // NSScreen 열거 순서는 불안정하므로 그대로 노출하지 않는다.
         externalScreens = screenProvider.screens().filter { !$0.isBuiltin }.sorted { $0.id < $1.id }
         if let first = externalScreens.first {
             screenPresence = .connected(first, count: externalScreens.count)
@@ -595,7 +547,7 @@ public final class PlugbackController: ObservableObject {
             .compactMap { slots.source(for: $0.id)?.profile }
             .reduce(0) { $0 + $1.apps.filter(\.isEnabled).count }
         lastCaptureCount = count
-        await updatePredictions()
+        await refreshProjection()
         return .captured(appCount: count)
     }
 
@@ -646,7 +598,7 @@ public final class PlugbackController: ObservableObject {
     func confirmCandidates(for screenIDs: Set<String>) {
         guard slots.confirm(screenIDs) else { return }
         restoreSession.invalidate(screens: screenIDs)
-        Task { await updatePredictions() }
+        Task { await refreshProjection() }
     }
 
     /// 종료 직전 — 남은 후보를 전부 확정한다. 화면을 뽑기 전에 앱을 끄면 여기가 마지막 기회다.
@@ -721,9 +673,9 @@ public final class PlugbackController: ObservableObject {
             }
         } while isConnected && (pendingRestore || (spaceAware && pendingSpaceRefresh))
 
-        isRestoring = false // 수집·예측 전에 해제 — 둘 다 복원 중엔 양보한다
+        isRestoring = false // 수집·카드 갱신 전에 해제 — 둘 다 복원 중엔 양보한다
         await collectCandidate() // 방문 대기는 제외하고, 복원으로 정착한 현재 Space만 후보에 담는다
-        await updatePredictions()
+        await refreshProjection()
         return latest
     }
 
@@ -745,20 +697,12 @@ public final class PlugbackController: ObservableObject {
         projectionsByScreen.removeValue(forKey: screenID)
     }
 
-    @discardableResult
-    private func mutateProfile(
-        on screenID: String?, _ change: (inout Profile) -> Void
-    ) -> Bool {
-        guard let id = screenID ?? currentScreenID else { return false }
-        return slots.edit(screenID: id, change)
-    }
-
-    private func updatePredictions() async {
+    private func refreshProjection() async {
         // 복원 진행 중엔 양보한다 — 여기의 재열거가 진행 중 복원이 든 창 ID를 무효화한다
         // (ID 수명 계약: 마지막 열거만 유효). 복원이 끝나면 스스로 갱신하므로 잃는 것이 없다.
         guard !isRestoring else { return }
         // 화면별로 계산하되 열거는 한 번이다 — 카드가 「그 화면에 뭐가 있나」도 답하기 때문이다(대상 아님 행).
-        // 게이트웨이가 actor라 메인은 막히지 않고, 점은 원래 비동기로 채워진다.
+        // 게이트웨이가 actor라 메인은 막히지 않고, 카드 값은 비동기로 채워진다.
         let windows = await observation.windows(of: nil)
         let snapshot = spaceObservationEnabled
             ? await observation.stableSnapshot(for: windows)
@@ -777,22 +721,6 @@ public final class PlugbackController: ObservableObject {
             let resolved = slots.resolvedWithSpaces(for: screenID)
             let profile = resolved?.profile
             let bundleIDs = profile?.apps.map(\.bundleID) ?? []
-            var running = Set<String>()
-            for bundleID in bundleIDs where await gateway.isRunning(bundleID: bundleID) {
-                running.insert(bundleID)
-            }
-            let predictions = if let resolved {
-                RestoreEngine.predict(
-                    resolved: resolved, on: screen, windows: windows, snapshot: snapshot,
-                    running: running, scope: restoreScope,
-                    options: RestoreOptions(
-                        restoreMinimized: restoreMinimized,
-                        reopenWindowless: reopenWindowless
-                    )
-                )
-            } else {
-                [String: RestorePrediction]()
-            }
             var spaceGroups: [SpaceGroup] = []
             var spaceConfigurationDiffers = false
             if spaceObservationEnabled, let resolved {
@@ -807,7 +735,6 @@ public final class PlugbackController: ObservableObject {
             let disabled = (profile?.apps.filter { !$0.isEnabled } ?? [])
                 .map { UntrackedApp(bundleID: $0.bundleID, displayName: $0.displayName) }
             next[screenID] = ScreenProjection(
-                predictions: predictions,
                 spaceGroups: spaceGroups,
                 spaceConfigurationDiffers: spaceConfigurationDiffers,
                 untrackedApps: disabled + Self.untracked(
@@ -834,35 +761,29 @@ public final class PlugbackController: ObservableObject {
         return out
     }
 
-    /// 카드 체크박스의 유일한 동작 — 「이 앱을 다루나」. screenID nil = 첫 화면 (기존 호출 호환).
+    /// 카드 체크박스의 유일한 동작 — 「이 앱을 다루나」.
     /// 켜면: 그 화면 프로필에 있으면 다시 복원 대상으로(저장된 좌표 그대로), 없으면 지금 자리로 등록한다.
     /// 끄면: 복원에서 빼되 **프로필에서 지우지 않는다** (US-006 AC-2 — 좌표는 남는다).
     /// 화면에서는 이 셋이 한 질문의 답이라 체크박스 하나로 족하다.
-    public func setTracked(_ bundleID: String, _ tracked: Bool, on screenID: String? = nil) async {
-        guard let id = screenID ?? currentScreenID else { return }
-        let profile = slots.source(for: id)?.profile
-        if profile?.apps.contains(where: { $0.bundleID == bundleID }) == true {
-            guard mutateProfile(on: id, { profile in
-                guard let index = profile.apps.firstIndex(where: { $0.bundleID == bundleID })
-                else { return }
-                profile.apps[index].isEnabled = tracked
-            }) else { return }
+    public func setTracked(_ bundleID: String, _ tracked: Bool, on screenID: String) async {
+        switch slots.setTargetEnabled(bundleID, tracked, on: screenID) {
+        case .applied:
             await refreshCollectTargets()
-            await updatePredictions() // 켜고 끈 행이 곧바로 제 묶음으로 간다
-        } else if tracked {
-            await addTargetApp(bundleID, on: id)
+            await refreshProjection() // 켜고 끈 행이 곧바로 제 묶음으로 간다
+        case .missing:
+            if tracked { await addTargetApp(bundleID, on: screenID) }
+        case .failed:
+            return
         }
     }
 
     /// 프로필에서 완전히 제거한다. 창이 해당 외장 화면에 남아 있으면 프로필 밖 앱으로
     /// 즉시 다시 보이고, 화면에도 없으면 행이 사라진다.
-    public func remove(_ bundleID: String, on screenID: String? = nil) async {
-        guard let id = screenID ?? currentScreenID else { return }
-        guard mutateProfile(on: id, { profile in
-            profile.apps.removeAll { $0.bundleID == bundleID }
-        }) else { return }
+    public func remove(_ bundleID: String, on screenID: String) async {
+        guard slots.removeTarget(bundleID, on: screenID) else { return }
+        restoreSession.invalidate(bundleID: bundleID, on: screenID)
         await refreshCollectTargets()
-        await updatePredictions()
+        await refreshProjection()
     }
 
     /// 프로필에 없던 앱을 대상 앱 명부에 올린다. **저장이 아니다**:
@@ -883,7 +804,7 @@ public final class PlugbackController: ObservableObject {
             return .saveFailed
         }
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
-        await updatePredictions()
+        await refreshProjection()
         let count = slots.source(for: screenID)?.profile.apps.filter(\.isEnabled).count ?? 0
         return .captured(appCount: count)
     }

@@ -271,7 +271,6 @@ private struct Card: View {
         // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
         ForEach(apps, id: \.bundleID) { app in
             AppRow(app: app,
-                   prediction: section.predictions[app.bundleID],
                    setTracked: { tracked in
                        Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
                    },
@@ -385,8 +384,6 @@ private struct Card: View {
 
 private struct AppRow: View {
     let app: TargetApp
-    /// nil = 아직 계산 안 됐거나 이번 회차 결과 없음 — "모름"을 지어내지 않고 점을 그리지 않는다
-    let prediction: RestorePrediction?
     let setTracked: (Bool) -> Void
     let remove: () -> Void
 
@@ -397,12 +394,6 @@ private struct AppRow: View {
             }
             .toggleStyle(.checkbox)
             Spacer()
-            // 점은 엔진의 복원 예측을 그린다 — 스타일·문구 매핑은 CardPresentation의 것
-            if let prediction {
-                dot(for: prediction).frame(width: 7, height: 7)
-                Text(CardPresentation.dotLabel(for: prediction))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
         }
         .contextMenu {
             Button("프로필에서 삭제", role: .destructive) { remove() }
@@ -410,13 +401,6 @@ private struct AppRow: View {
         .padding(.vertical, 1)
     }
 
-    @ViewBuilder private func dot(for prediction: RestorePrediction) -> some View {
-        switch CardPresentation.dotStyle(for: prediction) {
-        case .filled: Circle().fill(Color.orange)
-        case .off: Circle().fill(Color.secondary.opacity(0.4))
-        case .hollow: Circle().strokeBorder(Color.orange, lineWidth: 1.5)
-        }
-    }
 }
 
 // 설정 창 열기 — macOS 13은 셀렉터 경로, 14+는 공식 환경 액션.

@@ -8,6 +8,7 @@
 > - [RESTORE_FLOW.md](./RESTORE_FLOW.md) — 현재 복원 순서. 활성 Space 흐름이 제품에 들어갈 때 함께 갱신한다.
 > - [UNDOCUMENTED_APIS.md](./UNDOCUMENTED_APIS.md) — 비공식 이름의 목록과 fail-closed 정책.
 > - [research/mission-control-spaces-on-external-screens.md](./research/mission-control-spaces-on-external-screens.md) — 공개 문서, 외부 사례, 로컬 실측 근거.
+> - [ACTIVE_SPACE_RESTORE_DEVICE_TEST_CHECKLIST.md](./ACTIVE_SPACE_RESTORE_DEVICE_TEST_CHECKLIST.md) — 남은 실기기 게이트를 기록하는 임시 작업표. 완료 뒤 결과를 이 문서에 합치고 삭제한다.
 
 - 상태: **P1–P5.6 구현 완료 · regular Space 자체의 수집·수동 재배치 통과 · 자동 재연결 1/3 통과**
 - 작업 브랜치: `feature/active-space-restore`
@@ -197,11 +198,11 @@ implementation 안에 다음 복잡성을 숨긴다.
 
 ### DesktopObservation
 
-컨트롤러와 RestoreSession이 창을 따로 열거해 임시 window ID의 수명을 깨지 않도록 `windows(of:)`, `drain()`, `stableSnapshot(for:)` 세 동작을 한곳에 둔다. 별도 protocol은 만들지 않는다. 복원 시작 전에는 먼저 진행 중이던 저장·수집·예측 열거를 끝내고, Space 범위와 무관하게 같은 authoritative 열거를 RestoreEngine에 넘긴다. stable snapshot은 Space 범위가 하나라도 켜졌을 때만 같은 window ID로 만든다.
+컨트롤러와 RestoreSession이 창을 따로 열거해 임시 window ID의 수명을 깨지 않도록 `windows(of:)`, `drain()`, `stableSnapshot(for:)` 세 동작을 한곳에 둔다. 별도 protocol은 만들지 않는다. 복원 시작 전에는 먼저 진행 중이던 저장·수집·카드 열거를 끝내고, Space 범위와 무관하게 같은 authoritative 열거를 RestoreEngine에 넘긴다. stable snapshot은 Space 범위가 하나라도 켜졌을 때만 같은 window ID로 만든다.
 
 ### RestoreSession
 
-연결 직후와 수동 복원은 `restoreAll`, Space 활성화는 `restoreVisited`로 들어간다. 선택된 profile+overlay 값만 받아 새 창 열기, authoritative 창 열거, 일반 Space 사전 재배치, 방문 대기 생성·가지치기, 현재 Space 복원, 완료 제거를 실행한다. Space 범위가 모두 꺼져도 별도 legacy 진입점으로 갈라지지 않고 같은 RestoreEngine 복원 회차를 쓴다. `restoreVisited`도 이전 snapshot 불안정이나 차단 뒤 안전해진 regular Space를 놓치지 않도록 사전 재배치를 다시 시도한다. ProfileSlots와 카드 상태는 소유하지 않으며, 화면 저장·확정·삭제가 배치를 다시 선언하면 `invalidate(screens:)`로 그 화면의 방문 대기만 버린다.
+연결 직후와 수동 복원은 `restoreAll`, Space 활성화는 `restoreVisited`로 들어간다. 선택된 profile+overlay 값만 받아 새 창 열기, authoritative 창 열거, 일반 Space 사전 재배치, 방문 대기 생성·가지치기, 현재 Space 복원, 완료 제거를 실행한다. Space 범위가 모두 꺼져도 별도 legacy 진입점으로 갈라지지 않고 같은 RestoreEngine 복원 회차를 쓴다. `restoreVisited`도 이전 snapshot 불안정이나 차단 뒤 안전해진 regular Space를 놓치지 않도록 사전 재배치를 다시 시도한다. ProfileSlots와 카드 상태는 소유하지 않으며, 화면 저장·확정·삭제가 배치를 다시 선언하면 그 화면의 방문 대기를 버리고, 대상 앱 완전 삭제는 그 앱의 방문 대기만 버린다.
 
 ### WindowGateway
 
@@ -293,7 +294,7 @@ fullscreen 진입의 AX 상태 변화만으로는 방문 대기를 끝내지 않
 6. 모든 move가 끝날 때까지 다른 standardWindows 열거 금지
 ```
 
-capture·collect·prediction에서 이미 시작된 창 열거가 있으면 restore의 authoritative 열거 전에 끝까지 기다린다. 새 actor 계층 대신 MainActor의 작은 `DesktopObservation`이 in-flight counter와 drain을 소유하고 컨트롤러와 RestoreSession이 함께 쓴다.
+capture·collect·card projection에서 이미 시작된 창 열거가 있으면 restore의 authoritative 열거 전에 끝까지 기다린다. 새 actor 계층 대신 MainActor의 작은 `DesktopObservation`이 in-flight counter와 drain을 소유하고 컨트롤러와 RestoreSession이 함께 쓴다.
 
 ## 8. 단계별 작업
 
@@ -488,8 +489,7 @@ GO:
 
 1. 자동 슬롯 ON에서 두 regular Space를 방문·교란하고 분리해 후보가 함께 확정되는지 확인
 2. 자동 슬롯 OFF에서 같은 방문·교란이 후보 시각과 저장값을 바꾸지 않는지 확인
-3. 방문하지 않은 처음 본 앱의 single fullscreen 자동 수집 뒤 A → B → A
-4. Split View 방문·재연결에서는 fullscreen write와 창 이동이 0회인지 확인
+3. Split View 방문·재연결에서는 fullscreen write와 창 이동이 0회인지 확인
 
 ### P5.5 — regular Space 화면 소속 복구
 
@@ -567,14 +567,14 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 
 ### P6 — 결과 표시와 현재 문서 동기화
 
-실기기 vertical slice가 통과한 뒤에도 예측 어휘는 늘리지 않는다. 방문 대기·Space 판정 불가는 이번 복원 회차의 결과가 아니므로 점을 만들지 않고 Space 그룹 상태가 이유를 설명한다.
+실행 전 예측은 관찰과 실제 복원 사이의 상태 변화·AX 실패를 담지 못하고, 자동 복원에서는 사용자가 볼 시점도 없다. 카드에는 저장된 Space 상태와 실제 복원 결과만 남긴다.
 
-- legacy와 Space-aware 복원 예측이 같은 선택 결과를 쓰게 한다
-- 카드의 Space별 예측 보정을 삭제한다
+- `RestorePrediction`과 예측 계산·카드 점을 삭제한다
+- 방문 대기·Space 판정 불가는 Space 그룹 상태로, 이동·건너뜀·실패는 실제 결과로 설명한다
 - `CONTEXT.md`, `FUNCTIONAL_SPEC.md`, `ARCHITECTURE.md`, `RESTORE_FLOW.md`, `UNDOCUMENTED_APIS.md` 갱신
 - 필요하면 `US-014-active-space-restore.md` 추가
 
-진행 기록(2026-08-30): 같은 선택 결과를 쓰도록 통합하고 카드 보정을 삭제했다. 후속 아키텍처 검토에서 별도 legacy 복원 진입점과 앱별 재열거를 삭제해 RestoreSession의 한 복원 회차로 합쳤고, ProfileSlots의 저장값·후보를 profile+overlay pair로 바꿨으며, 수집의 화면 이탈·비활성 fullscreen 정책을 CaptureEngine에 모았다. 카드의 네 병렬 파생 사전은 화면별 projection 한 값으로 줄였다. 관련 기존 문서와 US-006을 갱신했으며, 새 사용자 스토리는 기존 F-08·US-006으로 계약이 충분해 만들지 않았다.
+진행 기록(2026-08-30~31): 처음에는 legacy와 Space-aware 예측을 같은 선택 결과로 통합했지만, 실제 실행과 시간차가 있는 사전 판정 자체를 제품에서 제거했다. 후속 아키텍처 검토에서 별도 legacy 복원 진입점과 앱별 재열거를 삭제해 RestoreSession의 한 복원 회차로 합쳤고, ProfileSlots의 저장값·후보를 profile+overlay pair로 바꿨으며, 수집의 화면 이탈·비활성 fullscreen 정책을 CaptureEngine에 모았다. 카드의 파생값은 화면별 projection 한 값으로 유지하되 Space 그룹·구성 차이·저장하지 않는 앱만 담는다. 관련 기존 문서와 US-006·US-008을 갱신했으며, 새 사용자 스토리는 기존 F-08·US-006으로 계약이 충분해 만들지 않았다.
 
 추가 검토에서는 대상 앱 명령을 지정 화면 범위로 고정하고 명령마다 수집 대상·projection을 갱신했다. 화면 지문이 맞는 화면만 앱 선점에 참여하도록 RestoreEngine의 한 판정을 RestoreSession·SpaceRelocator가 함께 쓰며, 프로필 파일 읽기 실패 시 후보 수집과 모든 슬롯 변경을 메모리 변경 전에 동결하고 카드에 지속 상태를 남긴다. 후속 저장소 검토에서는 정상 로드 뒤 쓰기 실패도 성공으로 삼지 않도록 ProfileStore 오류를 보존하고, ProfileSlots가 atomic write 성공 뒤에만 저장값·후보 수명을 함께 바꾸게 했다. 실패한 수동 저장·편집·삭제는 이전 상태를 유지하고, 자동 확정 후보는 다음 시도를 위해 남는다.
 
@@ -584,7 +584,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 
 - 카드의 평면 앱 목록을 저장된 일반 Space별로 묶고, 한 외장 화면 안의 저장 순서대로 `Space N`을 붙인다. macOS의 전역 `데스크탑 N`을 흉내 내지 않으며 overlay identity나 저장값으로 쓰지 않는다.
 - 카드 행은 live inventory가 아니라 저장된 복원 계획이다. snapshot이 없거나 name 대응이 유일하지 않아도 저장된 로컬 순번을 유지하고 상태만 숨긴다. unique 대응이면 `현재`, `방문 시 복원`, `다른 화면 · 복원 대기`, `현재 없음`을 구분하며 live-but-unsaved Space는 행으로 섞지 않는다.
-- 앱이 없는 저장 regular Space도 `저장된 앱 없음`으로 보인다. 비활성·판정 불가 Space에는 복원 결과와 예측 점을 만들지 않고 그룹 상태로 이유를 설명한다. 목표 화면의 현재 regular Space 구성과 저장본이 다르면 자동 슬롯은 분리 시 확정될 변경으로, 수동 슬롯은 저장 버튼으로 갱신할 변경으로 알린다. single fullscreen은 `전체 화면`, 불명 binding은 `Space 확인 필요`로 분리한다.
+- 앱이 없는 저장 regular Space도 `저장된 앱 없음`으로 보인다. 비활성·판정 불가 Space는 그룹 상태로 이유를 설명한다. 목표 화면의 현재 regular Space 구성과 저장본이 다르면 자동 슬롯은 분리 시 확정될 변경으로, 수동 슬롯은 저장 버튼으로 갱신할 변경으로 알린다. single fullscreen은 `전체 화면`, 불명 binding은 `Space 확인 필요`로 분리한다.
 - core의 로컬 순번 테스트와 앱 표현 테스트를 추가했다. 최종 제품 surface 확정과 P6 전체 문서 승격은 남은 relocation 실기기 게이트 뒤에 한다.
 
 ### P7 — 영속화 여부: 별도 결정

@@ -335,40 +335,6 @@ final class RestoreEngineTests: XCTestCase {
         XCTAssertEqual(result.entries[0].outcome, .skipped(.noWindow))
     }
 
-    func testPredictionMatchesRestoreTruth() async {
-        // 예측(점)과 진실(복원)은 같은 선택 규칙 — 대표 시나리오 전부에서 일치해야 한다
-        gateway.runningBundleIDs = ["com.full", "com.min", "com.ok", "com.place"]
-        gateway.windowsList = [
-            window(1, "com.full", x: 1512, y: 0, w: 2560, h: 1440, fullscreen: true),
-            window(2, "com.min", x: 1600, y: 0, w: 800, h: 600, minimized: true),
-            window(3, "com.ok", x: 2500, y: 500, w: 800, h: 600),
-            window(4, "com.place", x: 1512, y: 0, w: 1280, h: 1440), // 목표 자리 그대로
-        ]
-        let profile = profileWith(("com.closed", leftHalf), ("com.full", leftHalf), ("com.min", leftHalf),
-                                  ("com.ok", leftHalf), ("com.place", leftHalf))
-
-        let predictions = RestoreEngine.predict(
-            resolved: ResolvedProfile(profile: profile, overlay: nil), on: external,
-            windows: gateway.windowsList, snapshot: nil,
-            running: gateway.runningBundleIDs, scope: .all
-        )
-        let result = await restore(profile)
-
-        XCTAssertEqual(result.entries.count, 5)
-        for entry in result.entries {
-            switch entry.outcome {
-            case .moved:
-                XCTAssertEqual(predictions[entry.bundleID], .willMove, entry.bundleID)
-            case .skipped(.alreadyInPlace):
-                XCTAssertEqual(predictions[entry.bundleID], .alreadyInPlace, entry.bundleID)
-            case .skipped(let reason):
-                XCTAssertEqual(predictions[entry.bundleID], .willSkip(reason), entry.bundleID)
-            case .failed:
-                XCTFail("이 시나리오에 실패는 없다: \(entry.bundleID)")
-            }
-        }
-    }
-
     func testWindowlessAppsAreOpenedInParallel() async {
         // 창 없는 앱이 여럿이어도 새 창 열기 대기는 병렬 — 총 지연이 앱 수에 비례하지 않는다 (F-07)
         gateway.runningBundleIDs = ["com.a", "com.b"]

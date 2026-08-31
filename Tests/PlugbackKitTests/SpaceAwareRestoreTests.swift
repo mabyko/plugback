@@ -539,71 +539,6 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(selection(bound, [target], snapshot), .unavailable)
     }
 
-    func testSpacePredictionMatchesRestoreTruthAndOmitsNoResult() async {
-        let runtimeID = SpaceRuntimeID(1)
-        let target = TargetApp(
-            bundleID: "com.app", displayName: "App",
-            unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 1)
-        )
-        let resolved = ResolvedProfile(
-            profile: Profile(
-                screenID: external.id, screenName: external.name, apps: [target]
-            ),
-            overlay: SlotSpaceOverlay(byBundle: [
-                target.bundleID: .regular(SpaceHint(
-                    opaqueName: "stable-name", localOrderHint: 1
-                )),
-            ])
-        )
-        let displaced = window(
-            1, bundleID: target.bundleID,
-            frame: CGRect(x: 100, y: 100, width: 300, height: 300),
-            windowServerID: 11
-        )
-        let current = makeSnapshot(
-            externalSpaces: [space(runtimeID, "stable-name", order: 1, current: true)],
-            memberships: [11: [runtimeID]]
-        )
-        let gateway = FakeWindowGateway()
-        gateway.runningBundleIDs = [target.bundleID]
-        gateway.windowsList = [displaced]
-
-        let predictions = RestoreEngine.predict(
-            resolved: resolved, on: external, windows: [displaced], snapshot: current,
-            running: gateway.runningBundleIDs, scope: .all
-        )
-        let pass = await RestoreEngine.restore(
-            resolved: [external.id: resolved], screens: [external], windows: [displaced],
-            snapshot: current, scope: .all, using: gateway
-        )
-        XCTAssertEqual(predictions[target.bundleID], .willMove)
-        XCTAssertEqual(pass.results.first?.entries.first?.outcome, .moved)
-
-        let inactive = makeSnapshot(
-            externalSpaces: [
-                space(runtimeID, "stable-name", order: 1),
-                space(SpaceRuntimeID(2), "other", order: 2, current: true),
-            ],
-            memberships: [11: [runtimeID]]
-        )
-        let waiting = RestoreEngine.predict(
-            resolved: resolved, on: external, windows: [displaced], snapshot: inactive,
-            running: gateway.runningBundleIDs, scope: .all
-        )
-        let waitingPass = await RestoreEngine.restore(
-            resolved: [external.id: resolved], screens: [external], windows: [displaced],
-            snapshot: inactive, scope: .all, using: gateway
-        )
-        XCTAssertNil(waiting[target.bundleID])
-        XCTAssertTrue(waitingPass.results.first?.entries.isEmpty == true)
-
-        let stopped = RestoreEngine.predict(
-            resolved: resolved, on: external, windows: [displaced], snapshot: inactive,
-            running: [], scope: .all
-        )
-        XCTAssertEqual(stopped[target.bundleID], .willSkip(.appNotRunning))
-    }
-
     func testSpaceRestoreHonorsMinimizedOption() async {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -678,9 +613,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
             Set(resolved.overlay?.byBundle.keys.map { $0 } ?? []), ["com.app", "com.second"]
         )
 
-        slots.edit(screenID: external.id) {
-            $0.apps.removeAll { $0.bundleID == "com.app" }
-        }
+        slots.removeTarget("com.app", on: external.id)
         resolved = try XCTUnwrap(slots.resolvedWithSpaces(for: [external])[external.id])
         XCTAssertNil(resolved.overlay?.byBundle["com.app"])
 
@@ -903,13 +836,65 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(gateway.windowsList[0].frame, secondFrame)
         XCTAssertEqual(gateway.standardWindowsCallsAtMove.last.map { $0 + 2 },
                        gateway.standardWindowsCalls,
-                       "복원 authoritative 열거 뒤에는 자동 수집과 예측 읽기만 와야 한다")
+                       "복원 authoritative 열거 뒤에는 자동 수집과 카드 갱신만 와야 한다")
 
         let callsAfterCompletion = gateway.standardWindowsCalls
         await controller.activeSpaceChanged()
         XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1, 2])
         XCTAssertEqual(gateway.standardWindowsCalls, callsAfterCompletion + 1,
                        "완료 뒤 Space 방문은 복원하지 않고 자동 수집만 한다")
+    }
+
+    func testRemovingAndReaddingAnAppDoesNotReviveItsEarlierVisit() async {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, external]
+        let reader = FakeSpaceReader()
+        let controller = makeController(
+            gateway: gateway, screens: screens, reader: reader,
+            autoSlot: false, regularSpaceRestore: true, fullscreenRestore: false,
+            directory: directory
+        )
+        let savedSpace = SpaceRuntimeID(1)
+        let currentSpace = SpaceRuntimeID(2)
+        let savedFrame = CGRect(x: 1000, y: 0, width: 400, height: 1000)
+        let registeredFrame = CGRect(x: 1200, y: 0, width: 400, height: 1000)
+
+        gateway.runningBundleIDs = ["com.app"]
+        gateway.windowsList = [window(
+            1, bundleID: "com.app", frame: savedFrame, windowServerID: 11
+        )]
+        reader.availability = .available(makeSnapshot(
+            externalSpaces: [space(savedSpace, "saved", order: 1, current: true),
+                             space(currentSpace, "current", order: 2)],
+            memberships: [11: [savedSpace]]
+        ))
+        await controller.captureNow()
+
+        gateway.windowsList = [window(
+            1, bundleID: "com.app", frame: registeredFrame, windowServerID: 11
+        )]
+        reader.availability = .available(makeSnapshot(
+            externalSpaces: [space(savedSpace, "saved", order: 1),
+                             space(currentSpace, "current", order: 2, current: true)],
+            memberships: [11: [currentSpace]]
+        ))
+        await controller.restoreNow() // saved Space 방문 대기
+
+        await controller.remove("com.app", on: external.id)
+        await controller.setTracked("com.app", true, on: external.id)
+        gateway.windowsList = [window(
+            1, bundleID: "com.app",
+            frame: CGRect(x: 1500, y: 0, width: 400, height: 1000),
+            windowServerID: 11
+        )]
+
+        await controller.activeSpaceChanged()
+
+        XCTAssertTrue(gateway.moveCalls.isEmpty,
+                      "완전히 삭제한 대상의 이전 방문 대기는 재등록 뒤 되살아나면 안 된다")
     }
 
     func testReconnectMovesBoundWindowFromBuiltinCurrentSpace() async {
@@ -980,7 +965,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
             memberships: [11: [bound]]
         ))
         await controller.captureNow()
-        XCTAssertEqual(controller.restoreSource, .manual)
+        XCTAssertEqual(controller.sections.first?.restoreSource, .manual)
         XCTAssertNil(controller.lastCollectedAt)
 
         let before = SpaceSnapshot(
@@ -1074,7 +1059,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
         await controller.captureNow()
 
         XCTAssertTrue(reader.requestedWindowIDs.isEmpty)
-        XCTAssertEqual(controller.restoreSource, .manual)
+        XCTAssertEqual(controller.sections.first?.restoreSource, .manual)
     }
 
     func testSpaceVisitCollectsOnlyWhileAutoSlotIsEnabled() async {
@@ -1126,9 +1111,9 @@ final class SpaceAwareRestoreTests: XCTestCase {
             from: Data(contentsOf: directory.appendingPathComponent("profiles.json"))
         )
         XCTAssertEqual(stored?["EXTERNAL#auto"]?.apps.map(\.bundleID).sorted(), ["com.app", "com.new"])
-        XCTAssertEqual(controller.restoreSource, .auto)
+        XCTAssertEqual(controller.sections.first?.restoreSource, .auto)
         XCTAssertEqual(
-            controller.profile?.apps.map(\.bundleID).sorted(), ["com.app", "com.new"],
+            controller.sections.first?.profile?.apps.map(\.bundleID).sorted(), ["com.app", "com.new"],
             "자동 슬롯은 방문한 Space에서 처음 본 앱도 등록해야 한다"
         )
 
@@ -1149,7 +1134,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(controller.lastCollectedAt, collectedAt)
         XCTAssertFalse(controller.hasPendingCollect)
         controller.labAutoSlot = true
-        XCTAssertEqual(controller.profile?.apps.map(\.bundleID).sorted(), ["com.app", "com.new"])
+        XCTAssertEqual(controller.sections.first?.profile?.apps.map(\.bundleID).sorted(), ["com.app", "com.new"])
     }
 
     func testManualRestoreOnlyHandlesTheCurrentSpace() async {
@@ -1383,7 +1368,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
             memberships: [22: [externalFullscreen]]
         ))
         await controller.captureNow()
-        XCTAssertEqual(controller.restoreSource, .manual)
+        XCTAssertEqual(controller.sections.first?.restoreSource, .manual)
         XCTAssertNil(controller.lastCollectedAt)
 
         let stranded = SpaceSnapshot(
@@ -1470,16 +1455,16 @@ final class SpaceAwareRestoreTests: XCTestCase {
 
         gateway.standardWindowsDelay = 0.03
         let callsBefore = gateway.standardWindowsCalls
-        let prediction = Task { await controller.cardOpened() }
+        let cardRefresh = Task { await controller.cardOpened() }
         while gateway.standardWindowsCalls == callsBefore { await Task.yield() }
         let restore = Task { await controller.restoreNow() }
-        await prediction.value
+        await cardRefresh.value
         _ = await restore.value
 
         XCTAssertEqual(gateway.standardWindowsHighWater, 1)
         XCTAssertEqual(gateway.standardWindowsCallsAtMove.last.map { $0 + 2 },
                        gateway.standardWindowsCalls,
-                       "authoritative 열거 뒤에는 move, 자동 수집, 예측 순서여야 한다")
+                       "authoritative 열거 뒤에는 move, 자동 수집, 카드 갱신 순서여야 한다")
     }
 
     func testActiveSpaceWatcherCompressesAnEventBurst() async {

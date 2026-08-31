@@ -73,23 +73,6 @@ final class CardPresentationTests: XCTestCase {
         )
     }
 
-    func testDotFollowsPrediction() {
-        // 점의 제품 약속: 찬 점 = 복원이 잘 될 것, 빈 점 = 건너뜀 예정, 회색 = 꺼짐 (US-006 AC-1)
-        XCTAssertEqual(CardPresentation.dotStyle(for: .willMove), .filled)
-        XCTAssertEqual(CardPresentation.dotStyle(for: .alreadyInPlace), .filled)
-        XCTAssertEqual(CardPresentation.dotStyle(for: .willSkip(.appNotRunning)), .off)
-        XCTAssertEqual(CardPresentation.dotStyle(for: .willSkip(.noWindow)), .hollow)
-        XCTAssertEqual(CardPresentation.dotStyle(for: .willSkip(.fullscreen)), .hollow)
-        XCTAssertEqual(CardPresentation.dotStyle(for: .willSkip(.minimized)), .hollow)
-
-        XCTAssertEqual(CardPresentation.dotLabel(for: .willMove), "복원 대상")
-        XCTAssertEqual(CardPresentation.dotLabel(for: .alreadyInPlace), "제자리")
-        XCTAssertEqual(CardPresentation.dotLabel(for: .willSkip(.appNotRunning)), "꺼짐")
-        XCTAssertEqual(CardPresentation.dotLabel(for: .willSkip(.noWindow)), "창 없음")
-        XCTAssertEqual(CardPresentation.dotLabel(for: .willSkip(.fullscreen)), "전체화면")
-        XCTAssertEqual(CardPresentation.dotLabel(for: .willSkip(.minimized)), "최소화")
-    }
-
     func testSpaceGroupLabelsUseStableLocalSpaceNumber() {
         let current = PlugbackController.SpaceGroup.Kind.regular(number: 1, state: .current)
         let inactive = PlugbackController.SpaceGroup.Kind.regular(number: 2, state: .inactive)

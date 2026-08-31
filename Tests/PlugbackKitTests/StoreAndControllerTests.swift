@@ -99,13 +99,13 @@ final class PlugbackControllerTests: XCTestCase {
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
         await controller.captureNow()
-        XCTAssertEqual(controller.profile?.apps.map(\.bundleID), ["com.chrome"])
+        XCTAssertEqual(controller.sections.first?.profile?.apps.map(\.bundleID), ["com.chrome"])
 
         // 창이 어질러졌다 → 수동 복원 (US-007 AC-1)
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
         await controller.restoreNow()
-        XCTAssertEqual(controller.lastResult?.movedCount, 1)
+        XCTAssertEqual(controller.sections.first?.lastResult?.movedCount, 1)
         XCTAssertEqual(gateway.windowsList[0].frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
     }
 
@@ -118,7 +118,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         let second = makeController()
         await second.cardOpened()
-        XCTAssertEqual(second.profile?.apps.map(\.bundleID), ["com.chrome"])
+        XCTAssertEqual(second.sections.first?.profile?.apps.map(\.bundleID), ["com.chrome"])
     }
 
     func testRestoreWithoutProfileMovesNothing() async {
@@ -128,7 +128,7 @@ final class PlugbackControllerTests: XCTestCase {
                                           frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
         let controller = makeController()
         await controller.restoreNow()
-        XCTAssertNil(controller.lastResult)
+        XCTAssertNil(controller.sections.first?.lastResult)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
     func testDisconnectKeepsLastScreenAndProfile() async {
@@ -142,12 +142,12 @@ final class PlugbackControllerTests: XCTestCase {
         screens.screensList = [builtin] // 외장 화면 분리
         await controller.cardOpened()
         XCTAssertEqual(controller.screenPresence, .remembered(screenID: "ext-1", name: "LG UltraFine 27"))
-        XCTAssertEqual(controller.profile?.apps.count, 1)
+        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 1)
     }
 
-    func testCardScreenSharesRestoreOrderSoPredictionHoldsOnTwoScreens() async {
+    func testCardScreenSharesRestoreOrderOnTwoScreens() async {
         // "현재 화면"의 정의는 하나 — 식별자 정렬상 첫 화면. 공급자가 어떤 순서로 주든
-        // 카드의 화면 = 중복 제거(F-01.6)의 첫 화면이라, 카드의 예측은 다중 화면에서도 진실과 일치한다.
+        // 카드와 중복 제거(F-01.6)가 같은 첫 화면을 쓴다.
         let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
                                    frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
         screens.screensList = [builtin, external2, external] // 일부러 역순 공급
@@ -166,13 +166,11 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(first.id, "ext-1") // 공급 순서와 무관하게 식별자 정렬상 첫 화면
         XCTAssertEqual(count, 2)
 
-        // 어질러진 뒤: 카드 예측은 복원 대상, 복원 결과도 이동 — 공유 앱인데도 어긋나지 않는다
+        // 공유 앱은 식별자 정렬상 첫 화면에서 복원된다.
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        await controller.cardOpened()
-        XCTAssertEqual(controller.predictions["com.chrome"], .willMove)
         await controller.restoreNow()
-        XCTAssertEqual(controller.lastResult?.entries.first?.outcome, .moved)
+        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .moved)
     }
 
     func testSectionsCoverEveryConnectedScreen() async {
@@ -195,9 +193,6 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(sections.map(\.screenID), ["ext-1", "ext-2"])
         XCTAssertEqual(sections[0].profile?.apps.map(\.bundleID), ["com.orca"])
         XCTAssertEqual(sections[1].profile?.apps.map(\.bundleID), ["com.slack"])
-        // 두 번째 화면의 예측도 계산된다 — 첫 화면만 계산하던 시절엔 빈 채였다
-        XCTAssertEqual(sections[1].predictions["com.slack"], .alreadyInPlace)
-
         // 새 앱이 두 번째 화면에 떴다 — 그 화면의 「저장하지 않는 앱」에만 나타난다
         gateway.runningBundleIDs.insert("com.figma")
         gateway.windowsList.append(WindowInfo(id: 3, appBundleID: "com.figma", appName: "Figma",
@@ -293,18 +288,18 @@ final class PlugbackControllerTests: XCTestCase {
             frame: CGRect(x: 100, y: 100, width: 800, height: 600)
         )
         await controller.cardOpened()
-        XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
+        XCTAssertEqual(controller.sections.first?.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
 
         await controller.remove("cc.ffitch.shottr", on: external.id)
-        XCTAssertFalse(controller.profile?.apps.contains { $0.bundleID == "cc.ffitch.shottr" } ?? true)
-        XCTAssertTrue(controller.untrackedApps.isEmpty)
+        XCTAssertFalse(controller.sections.first?.profile?.apps.contains { $0.bundleID == "cc.ffitch.shottr" } ?? true)
+        XCTAssertTrue(controller.sections.first?.untrackedApps.isEmpty ?? false)
 
         gateway.windowsList[0] = WindowInfo(
             id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
             frame: CGRect(x: 1800, y: 100, width: 800, height: 600)
         )
         await controller.cardOpened()
-        XCTAssertEqual(controller.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
+        XCTAssertEqual(controller.sections.first?.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
     }
 
     func testRestorableWhenOnlyALaterScreenHasAProfile() async {
@@ -321,7 +316,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         screens.screensList = [builtin, external, external2] // ext-1이 새로 연결 — 프로필 없음
         await controller.cardOpened()
-        XCTAssertNil(controller.profile)                    // 첫 화면 기준으로는 프로필이 없다
+        XCTAssertNil(controller.sections.first?.profile)    // 첫 화면 기준으로는 프로필이 없다
         XCTAssertTrue(controller.hasRestorableProfile)      // 그래도 복원은 가능해야 한다
 
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.slack", appName: "Slack",
@@ -329,24 +324,6 @@ final class PlugbackControllerTests: XCTestCase {
         guard case .restored(let results) = await controller.restoreNow() else { return XCTFail() }
         XCTAssertEqual(results.map(\.screenID), ["ext-2"])
         XCTAssertEqual(results.first?.movedCount, 1)
-    }
-
-    func testPredictionsFollowWindowStateAndOptions() async {
-        // 실행 중 + 창 0개 → "창 없음" 예측. 새 창 열기 옵션을 켜면 같은 상태가 "복원 대상"이 된다 —
-        // 점이 옵션까지 반영한 엔진 예측을 그린다는 증거
-        gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
-        let controller = makeController()
-        await controller.captureNow()
-
-        gateway.windowsList = [] // 창만 모두 닫힘 — 프로세스는 생존
-        await controller.cardOpened()
-        XCTAssertEqual(controller.predictions["com.chrome"], .willSkip(.noWindow))
-
-        // 옵션 토글만으로 예측이 갱신된다 — 카드를 다시 열 필요가 없다 (didSet → 갱신)
-        controller.reopenWindowless = true
-        while controller.predictions["com.chrome"] != .willMove { await Task.yield() }
     }
 
     func testSettingsFlowIntoRestoreOptions() async {
@@ -364,7 +341,7 @@ final class PlugbackControllerTests: XCTestCase {
         controller.reopenWindowless = true
         await controller.restoreNow()
         XCTAssertEqual(gateway.openWindowCalls, ["com.chrome"])
-        XCTAssertEqual(controller.lastResult?.entries.first?.outcome, .moved) // 최종 결과 — 중간 상태 없음
+        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .moved) // 최종 결과 — 중간 상태 없음
         XCTAssertEqual(gateway.windowsList.first?.frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
     }
 
@@ -390,7 +367,7 @@ final class PlugbackControllerTests: XCTestCase {
         let controller = makeController()
         await controller.captureNow()
         await controller.cardOpened() // 확인 표시 만료 — 아래 거부가 새 표시를 안 만드는지 보기 위해
-        let before = controller.profile
+        let before = controller.sections.first?.profile
 
         let restore = await startHangingRestore(controller)
         // 복원이 매달린 사이 창이 엉뚱한 자리에 — 저장이 허용되면 이 배치가 박제된다
@@ -398,7 +375,7 @@ final class PlugbackControllerTests: XCTestCase {
                                           frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
         let capture = await controller.captureNow()
         XCTAssertEqual(capture, .restoringInProgress)
-        XCTAssertEqual(controller.profile, before) // 반쯤 복원된 배치가 프로필을 오염시키지 않았다
+        XCTAssertEqual(controller.sections.first?.profile, before) // 반쯤 복원된 배치가 프로필을 오염시키지 않았다
         XCTAssertNil(controller.lastCaptureCount)  // 저장 확인 표시도 뜨지 않는다
         _ = await restore.value
     }
@@ -426,12 +403,12 @@ final class PlugbackControllerTests: XCTestCase {
         let restore = await startHangingRestore(controller)
         controller.removeProfile("ext-1") // 복원이 매달린 사이 프로필 삭제
         _ = await restore.value
-        XCTAssertNil(controller.lastResult) // await 뒤의 결과 쓰기가 삭제를 되돌리지 않는다
+        XCTAssertNil(controller.sections.first?.lastResult) // await 뒤의 결과 쓰기가 삭제를 되돌리지 않는다
     }
 
     func testCardOpenDuringRestoreDoesNotReenumerate() async {
-        // 복원 중 카드 열기 → 예측 갱신의 재열거가 진행 중 복원의 창 ID를 죽인다 —
-        // updatePredictions는 복원 중엔 양보해야 한다 (ID 수명 계약)
+        // 복원 중 카드 열기 → projection 갱신의 재열거가 진행 중 복원의 창 ID를 죽인다 —
+        // refreshProjection은 복원 중엔 양보해야 한다 (ID 수명 계약)
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
@@ -504,7 +481,7 @@ final class PlugbackControllerTests: XCTestCase {
                                           frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
         let controller = makeController()
         await controller.captureNow()
-        XCTAssertEqual(controller.profile?.fingerprint, fpA) // 저장 시 지문 기록
+        XCTAssertEqual(controller.sections.first?.profile?.fingerprint, fpA) // 저장 시 지문 기록
 
         // 같은 UUID, 다른 지문의 화면으로 교체 (OS가 배정을 바꾼 상황)
         screens.screensList = [builtin, ScreenInfo(id: "ext-1", name: "LG", frame: external.frame,
@@ -528,7 +505,7 @@ final class PlugbackControllerTests: XCTestCase {
         gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
                                             frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
         await controller.externalScreensAppeared()
-        XCTAssertEqual(controller.lastResult?.movedCount, 1)
+        XCTAssertEqual(controller.sections.first?.lastResult?.movedCount, 1)
     }
 
     func testManualModeDoesNotRestoreOnConnect() async {
@@ -577,10 +554,10 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertTrue(gateway.moveCalls.isEmpty)      // 수동 복원 차단
         XCTAssertFalse(controller.isAuthorized)       // UI 바인딩용 상태 갱신
 
-        let before = controller.profile
+        let before = controller.sections.first?.profile
         let capture = await controller.captureNow()         // 저장도 차단 — 어질러진 배치로 덮어쓰지 않는다
         XCTAssertEqual(capture, .notAuthorized)
-        XCTAssertEqual(controller.profile, before)
+        XCTAssertEqual(controller.sections.first?.profile, before)
     }
 
     func testRestoreModePersists() {
@@ -605,11 +582,11 @@ final class PlugbackControllerTests: XCTestCase {
 
         controller.removeProfile("ext-1")
         XCTAssertTrue(controller.allProfiles.isEmpty)
-        XCTAssertNil(controller.profile)
+        XCTAssertNil(controller.sections.first?.profile)
 
         let relaunched = makeController()
         await relaunched.cardOpened()
-        XCTAssertNil(relaunched.profile)
+        XCTAssertNil(relaunched.sections.first?.profile)
     }
 
     func testRemoveProfileAlsoDropsItsResult() async {
@@ -620,13 +597,12 @@ final class PlugbackControllerTests: XCTestCase {
         let controller = makeController()
         await controller.captureNow()
         await controller.restoreNow()
-        XCTAssertNotNil(controller.lastResult)
+        XCTAssertNotNil(controller.sections.first?.lastResult)
 
         controller.removeProfile("ext-1")
-        XCTAssertNil(controller.lastResult)
-        XCTAssertNil(controller.predictionsByScreen[external.id])
+        XCTAssertNil(controller.sections.first?.lastResult)
         await controller.captureNow() // 새 삶 — 결과는 아직 없어야 한다
-        XCTAssertNil(controller.lastResult)
+        XCTAssertNil(controller.sections.first?.lastResult)
     }
 
     func testUnreadableStoreNeverOverwritesTheFile() async throws {
@@ -647,7 +623,7 @@ final class PlugbackControllerTests: XCTestCase {
         // 저장은 통째로 거부된다 — 재시작에 증발할 메모리 저장으로 "저장됨"을 속이지 않는다
         let outcome = await controller.captureNow()
         XCTAssertEqual(outcome, .saveBlocked)
-        XCTAssertNil(controller.profile)
+        XCTAssertNil(controller.sections.first?.profile)
         XCTAssertNil(controller.lastCaptureCount)  // 거짓 확인 표시가 뜨지 않는다
         controller.dismissStoreNotice()            // 알림을 닫아도 차단은 유지
         _ = await controller.captureNow()
@@ -658,7 +634,7 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertTrue(controller.isSaveBlocked)
         XCTAssertFalse(controller.hasPendingCollect)
         XCTAssertTrue(controller.allProfiles.isEmpty)
-        XCTAssertNil(controller.restoreSource)
+        XCTAssertNil(controller.sections.first?.restoreSource)
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본") // 원본 무사
@@ -676,7 +652,7 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(failed, .saveFailed)
         XCTAssertEqual(controller.storeNotice, .writeFailed)
         XCTAssertFalse(controller.isSaveBlocked, "실행 중 쓰기 실패는 다음 저장에서 재시도할 수 있어야 한다")
-        XCTAssertNil(controller.profile)
+        XCTAssertNil(controller.sections.first?.profile)
         XCTAssertNil(controller.lastCaptureCount)
 
         try FileManager.default.removeItem(at: dir)
@@ -684,7 +660,7 @@ final class PlugbackControllerTests: XCTestCase {
 
         XCTAssertEqual(retried, .captured(appCount: 1))
         XCTAssertNil(controller.storeNotice)
-        XCTAssertEqual(controller.profile?.apps.map(\.bundleID), ["com.chrome"])
+        XCTAssertEqual(controller.sections.first?.profile?.apps.map(\.bundleID), ["com.chrome"])
         XCTAssertEqual(controller.lastCaptureCount, 1)
     }
 

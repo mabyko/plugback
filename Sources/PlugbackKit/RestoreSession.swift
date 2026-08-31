@@ -80,6 +80,11 @@ final class RestoreSession {
         for screenID in screenIDs { awaitingVisitByScreen.removeValue(forKey: screenID) }
     }
 
+    /// 명부에서 완전히 삭제한 앱만 잊는다. 체크 해제한 앱의 방문 대기는 그대로 둔다.
+    func invalidate(bundleID: String, on screenID: String) {
+        removeCompleted([screenID: [bundleID]])
+    }
+
     func hasAwaitingVisit(in resolved: [String: ResolvedProfile]) -> Bool {
         !currentAwaitingVisits(in: resolved).isEmpty
     }
