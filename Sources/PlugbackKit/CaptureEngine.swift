@@ -166,7 +166,7 @@ public enum CaptureEngine {
         snapshot: SpaceSnapshot
     ) -> SpaceBinding {
         if bundleWindows.contains(where: { $0.fullscreenState == .unknown }) {
-            return .unresolved(.fullscreenUnknown)
+            return .unresolved(kind: .fullscreen, reason: .fullscreenUnknown)
         }
         if selected.fullscreenState == .fullscreen {
             return fullscreenBinding(
@@ -175,7 +175,7 @@ public enum CaptureEngine {
             )
         }
         if bundleWindows.contains(where: { $0.fullscreenState == .fullscreen }) {
-            return .unresolved(.fullscreen)
+            return .unresolved(kind: .fullscreen, reason: .fullscreen)
         }
 
         let placement = SpacePlacement.of(
@@ -184,26 +184,28 @@ public enum CaptureEngine {
             in: snapshot
         )
         if let found = placement.found, found.screenID != screen.id {
-            return .unresolved(.stranded)
+            return .unresolved(kind: .regular, reason: .stranded)
         }
         switch placement {
         case .current(let found):
             guard let identity = found.identity else {
-                return .unresolved(.nameUnavailable)
+                return .unresolved(kind: .regular, reason: .nameUnavailable)
             }
             return .regular(identity)
         case .inactive:
-            return .unresolved(.inactive)
+            return .unresolved(kind: .regular, reason: .inactive)
         case .stranded:
-            return .unresolved(.stranded)
+            return .unresolved(kind: .regular, reason: .stranded)
         case .fullscreen:
-            return .unresolved(.fullscreen)
+            return .unresolved(kind: .fullscreen, reason: .fullscreen)
         case .unsupported:
-            return .unresolved(.unsupportedSpace)
+            return .unresolved(kind: .regular, reason: .unsupportedSpace)
         case .missing:
-            return .unresolved(.spaceMissing)
+            return .unresolved(kind: .regular, reason: .spaceMissing)
         case .unknown(let ambiguity):
-            return .unresolved(blockReason(for: ambiguity))
+            return .unresolved(
+                kind: .regular, reason: blockReason(for: ambiguity)
+            )
         }
     }
 
@@ -214,23 +216,33 @@ public enum CaptureEngine {
         on screen: ScreenInfo,
         snapshot: SpaceSnapshot
     ) -> SpaceBinding {
-        guard bundleWindows.count == 1 else { return .unresolved(.multipleSpaces) }
+        guard bundleWindows.count == 1 else {
+            return .unresolved(kind: .fullscreen, reason: .multipleSpaces)
+        }
         let placement = SpacePlacement.of(
             windowServerIDs: [selected.windowServerID], on: screen.id, in: snapshot
         )
         guard let found = placement.found else {
             if case .unknown(let ambiguity) = placement {
-                return .unresolved(blockReason(for: ambiguity))
+                return .unresolved(
+                    kind: .fullscreen, reason: blockReason(for: ambiguity)
+                )
             }
-            return .unresolved(.spaceMissing)
+            return .unresolved(kind: .fullscreen, reason: .spaceMissing)
         }
-        guard found.screenID == screen.id else { return .unresolved(.stranded) }
+        guard found.screenID == screen.id else {
+            return .unresolved(kind: .fullscreen, reason: .stranded)
+        }
         switch placement {
         case .fullscreen: break
-        case .unsupported: return .unresolved(.unsupportedSpace)
-        default: return .unresolved(.fullscreen)
+        case .unsupported:
+            return .unresolved(kind: .fullscreen, reason: .unsupportedSpace)
+        default:
+            return .unresolved(kind: .fullscreen, reason: .fullscreen)
         }
-        guard found.space.isCurrent else { return .unresolved(.inactive) }
+        guard found.space.isCurrent else {
+            return .unresolved(kind: .fullscreen, reason: .inactive)
+        }
 
         // type 4 하나에 AX 표준 창이 둘이면 Split View다. 자동 수집은 single만 기록한다.
         let joined = allWindows.filter { window in
@@ -239,7 +251,7 @@ public enum CaptureEngine {
             ).found?.space.runtimeID == found.space.runtimeID
         }
         guard joined.count == 1, joined[0].id == selected.id else {
-            return .unresolved(.unsupportedSpace)
+            return .unresolved(kind: .fullscreen, reason: .unsupportedSpace)
         }
         return .fullscreen
     }

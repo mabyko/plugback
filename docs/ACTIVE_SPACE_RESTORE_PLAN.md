@@ -548,6 +548,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - 「전체 화면 복원」은 확인된 single native fullscreen 재생성만 제어한다.
 - 수동 저장은 자동 슬롯 OFF에서도 일반 Space 또는 전체 화면 복원이 ON이면 manual overlay를 함께 잡는다. 두 복원 토글은 manual/auto 중 선택된 슬롯에 같은 방식으로 적용된다.
 - 복원 범위가 OFF인 binding은 legacy 창 복원으로 내려가며 raw fullscreen write나 Mission Control drag를 실행하지 않는다.
+- binding 판정에 실패해도 일반 Space·전체 화면 의도를 보존한다. 반대 범위만 ON인 unresolved binding은 방문 대기나 자동 수집 제외 대상으로 잡지 않고 legacy 창 복원으로 내려간다.
 - 이전 「일반 Space 자체 복원」 값과 기존 자동 슬롯 사용자의 fullscreen 동작은 각각 한 번 이어받고, 이후 세 값은 독립적으로 저장한다.
 
 자동 슬롯 OFF에서 수동 슬롯만으로 regular Space를 외장 화면에 되돌린 뒤 방문한 창 위치를 복원하는 회귀 테스트와, single fullscreen 재생성·별도 OFF 시 fullscreen write 0회 회귀 테스트를 추가했다.
@@ -617,6 +618,7 @@ A → B → A에서 저장된 다른 regular Space와 두 native fullscreen Spac
 - 자동 슬롯 OFF에서는 Space 방문과 이동 정착이 후보를 만들지 않음
 - 같은 화면의 확실한 다른 bundle은 계속 복원
 - Space-bound bundle은 legacy로 재선택되지 않음
+- unresolved binding은 저장 당시 일반 Space·전체 화면 범위만 따르고, 꺼진 범위는 legacy 복원·방문 대기 없음
 - 다른 화면의 비활성 regular binding만 Space relocation 대상으로 선택
 - current·마지막 regular·name 중복/소실·AX child count 불일치에서는 visible drag 0회
 - regular relocation 전후 동일 SID·kind·name·membership과 다른 regular 소속·상대 순서 검증

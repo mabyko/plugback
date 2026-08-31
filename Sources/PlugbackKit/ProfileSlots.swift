@@ -20,11 +20,17 @@ enum SpaceBlockReason: Equatable, Sendable {
 }
 
 enum SpaceBinding: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case regular
+        case fullscreen
+    }
+
     case regular(SpaceHint)
     /// 이 화면에서 single native fullscreen으로 다시 만들 의도.
     /// 화면은 슬롯이 이미 정하므로 별도 식별자를 중복 저장하지 않는다.
     case fullscreen
-    case unresolved(SpaceBlockReason)
+    /// binding을 확정하지 못해도 어느 복원 범위의 의도인지는 잃지 않는다.
+    case unresolved(kind: Kind, reason: SpaceBlockReason)
 }
 
 struct SlotSpaceOverlay: Equatable, Sendable {

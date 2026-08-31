@@ -57,7 +57,7 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 ### ProfileSlots
 
-- **인터페이스**: `source(for:)` / `resolvedWithSpaces(for:)` / `targets(for:)` / `all` / `capture` / `collect` / `confirm` / `edit` / `remove` + 실험실 토글·자동 슬롯 반영 방식. 파일에 쓰는 명령은 실제 보존 성공 여부를 돌려준다.
+- **인터페이스**: `source(for:)` / `resolvedWithSpaces(for:)` / `targets(for:)` / `all` / `capture` / `addTarget` / `collect` / `confirm` / `setTargetEnabled` / `removeTarget` / `remove(screenID:)` + 실험실 토글·자동 슬롯 반영 방식. 파일에 쓰는 명령은 실제 보존 성공 여부를 돌려준다.
 - **숨기는 것**: 화면 하나가 슬롯 둘을 갖는다는 사실 전부 — 키 규약, 복원 소스 판정(더 최근 것·동점은 수동, 선택한 방식에서는 현재 후보 우선), 씨앗 복사, 화면별 수집 후보의 수명, 즉시/분리 확정, 병합, 실험실 on/off가 후보 판정에 미치는 영향, 읽기 실패에서 후보 수집과 모든 슬롯 변경을 메모리 변경 전에 동결하는 금지(F-04.2). 정상 로드 뒤 쓰기에서는 다음 저장값을 먼저 만들고 atomic write가 성공한 뒤에만 `stored`와 candidate 수명을 함께 공개한다. 실패하면 이전 상태와 candidate를 유지하고 다음 쓰기에서 재시도한다. 프로필과 Space overlay는 저장된 슬롯·후보마다 `ResolvedProfile` 한 값으로 움직이며, JSON에는 프로필만 기록한다.
 - **복원 엔진은 슬롯을 모른다** — `resolvedWithSpaces(for:)`가 화면당 같은 슬롯의 프로필·overlay 한 쌍으로 좁혀서 넘긴다.
 - ObservableObject다. 컨트롤러가 변경을 자기 것으로 전달하므로 바인딩은 여전히 컨트롤러 하나만 본다.
@@ -77,7 +77,7 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 ### RestoreSession
 
 - **인터페이스**: `restoreAll`(연결·수동 복원) / `restoreVisited`(Space 방문) / 화면·완전 삭제 앱의 방문 대기 무효화 + 읽기 전용 방문 대기 조회.
-- **숨기는 것**: 일반 Space·전체 화면 복원 범위, 일반 Space 사전 재배치와 검증, 연결 직후 방문 대기 생성, 현재 Space만 복원, 완료된 대상 제거, 새 창 열기 뒤 authoritative 창 열거 → 필요할 때만 stable snapshot → RestoreEngine 순서. 방문 대기와 창 없는 앱 재열기도 RestoreEngine의 같은 화면 적격성·앱 선점 결과를 쓴다. Space 복원 범위가 모두 꺼져도 같은 복원 회차를 쓰되 private snapshot은 읽지 않는다.
+- **숨기는 것**: 일반 Space·전체 화면 복원 범위, binding 확정 실패에도 저장된 의도만 따르는 범위 판정, 일반 Space 사전 재배치와 검증, 연결 직후 방문 대기 생성, 현재 Space만 복원, 완료된 대상 제거, 새 창 열기 뒤 authoritative 창 열거 → 필요할 때만 stable snapshot → RestoreEngine 순서. 방문 대기와 창 없는 앱 재열기도 RestoreEngine의 같은 화면 적격성·앱 선점 결과를 쓴다. Space 복원 범위가 모두 꺼져도 같은 복원 회차를 쓰되 private snapshot은 읽지 않는다.
 - ProfileSlots를 소유하지 않는다. 컨트롤러가 고른 최신 `ResolvedProfile` 값만 받아 프로필과 Space overlay의 복원 소스를 섞지 않는다.
 - 카드 상태를 소유하지 않는 MainActor 내부 타입이다. 결과는 컨트롤러에 돌려주고, 결과 수명·복원 중 게이트·새 화면 재요청·복원 뒤 수집과 카드 갱신은 컨트롤러가 맡는다.
 

@@ -9,8 +9,7 @@
 - 시작 HEAD: `2c3b1d1`
 - A 화면: `PHL 27E2F7901`
 - B 화면: `LG ULTRAFINE`
-- 현재 상태: 기존 Release 0.1.0이 `/Applications/Plugback.app`에서 실행 중
-- 주의: 현재 실행 바이너리에는 이번 소스의 복원 예측 제거 변경이 들어 있지 않다
+- 현재 상태: 현재 worktree의 새 Release가 `/Applications/Plugback.app`에서 실행 중
 
 ## 판정 원칙
 
@@ -26,21 +25,21 @@
 
 현재 소스의 최종 실기기 판정을 시작하기 전에 한 번만 수행한다.
 
-- [ ] 전체 테스트 통과
-- [ ] Release 빌드 성공
-- [ ] `/Applications/Plugback.app` 교체
-- [ ] 기존 Plugback 종료 후 새 Release 실행
-- [ ] 실행 경로가 `/Applications/Plugback.app/Contents/MacOS/Plugback`인지 확인
-- [ ] 손쉬운 사용 권한 정상
-- [ ] 카드 앱 행에서 복원 예측 점·라벨이 사라졌는지 확인
-- [ ] 저장된 Space 그룹, 체크박스, 실제 복원 결과 스트립은 그대로 보이는지 확인
+- [x] 전체 테스트 통과
+- [x] Release 빌드 성공
+- [x] `/Applications/Plugback.app` 교체
+- [x] 기존 Plugback 종료 후 새 Release 실행
+- [x] 실행 경로가 `/Applications/Plugback.app/Contents/MacOS/Plugback`인지 확인
+- [x] 손쉬운 사용 권한 정상
+- [x] 카드 앱 행에서 복원 예측 점·라벨이 사라졌는지 확인
+- [x] 저장된 Space 그룹, 체크박스, 실제 복원 결과 스트립은 그대로 보이는지 확인
 
 기록:
 
-- 빌드한 commit/worktree: `________________`
-- 빌드 시각: `________________`
-- 실행 PID: `________________`
-- 테스트 결과: `________________`
+- 빌드한 commit/worktree: `e5f3d98 + unresolved binding 범위 보존 변경`
+- 빌드 시각: `2026-08-31 15:59 KST`
+- 실행 PID: `87031`
+- 테스트 결과: `Swift 패키지 180/180 · 앱 9/9 통과`
 
 ## 1. A 기준 배치 다시 만들기
 
@@ -72,6 +71,29 @@ Release 재실행 뒤 메모리 overlay를 다시 만드는 단계다.
 - 두 번째 Space 앱: `________________`
 - 자동 슬롯 확정 시각: `________________`
 - 특이사항: `________________`
+
+단일 외장 보충 게이트 (`LG HDR 4K`, 2026-08-31):
+
+- [x] 일반 Space 두 곳 배치·수동 저장
+- [x] 두 Space 각각 3초 방문
+- [x] 카드의 두 Space 그룹·저장 대기 후보 확인
+- [x] 화면 분리로 후보 확정 (`2026-08-31 16:38:08 KST`)
+- [ ] 내장 화면 교란 뒤 재연결 복원 확인
+
+관찰: 재연결 콜백은 실행됐지만 Space drag 호출은 0회였다. 재연결 직후에는 창 이동이
+없었고, 내장 화면에서 교란된 Space를 방문하자 Aside가 외장 화면으로 복원됐다. 저장된
+Space가 macOS에 의해 이미 외장 화면으로 돌아왔는지는 카드 상태로 판정한다.
+
+판정: 카드에서 Space 1 `현재`, Space 2 `방문 시 복원`을 확인해 두 저장 Space는 macOS가
+외장 화면으로 되돌린 것으로 판정했다. 이후 수동 복원·수동 저장이 섞인 회차는 자동 방문
+복원 판정에서 제외하고, 두 Space를 다시 저장해 새 회차를 시작했다.
+
+새 회차 자동 슬롯 확정: `2026-08-31 17:51:51 KST` · 대상 앱 4개.
+
+단일 외장 최종 판정: 두 Space 모두 재연결·방문 시 처음부터 저장 위치였다. 방문 복원
+경로는 10회 진입했지만 `MissionControlSpaceRelocator.relocate`와
+`AXWindowGateway.move`는 모두 0회였다. macOS 자체 복구로 시각적 회귀는 없었으나,
+Plugback의 Space·창 이동 성공 횟수에는 포함하지 않는다. A → B → A 게이트는 보류한다.
 
 ## 2. 게이트 A — 자동 regular Space 재배치 3/3
 

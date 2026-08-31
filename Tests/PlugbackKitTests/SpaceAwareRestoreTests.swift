@@ -49,7 +49,8 @@ final class SpaceAwareRestoreTests: XCTestCase {
         )
         XCTAssertEqual(ambiguous.profile.apps[0].unitRect, existingRect)
         XCTAssertEqual(
-            ambiguous.overlay?.byBundle["com.app"], .unresolved(.multipleSpaces)
+            ambiguous.overlay?.byBundle["com.app"],
+            .unresolved(kind: .regular, reason: .multipleSpaces)
         )
     }
 
@@ -85,7 +86,10 @@ final class SpaceAwareRestoreTests: XCTestCase {
             windows: [target], on: external, merging: existing, snapshot: snapshot
         )
 
-        XCTAssertEqual(captured.overlay?.byBundle["com.app"], .unresolved(.nameUnavailable))
+        XCTAssertEqual(
+            captured.overlay?.byBundle["com.app"],
+            .unresolved(kind: .regular, reason: .nameUnavailable)
+        )
         XCTAssertEqual(captured.overlay?.regularSpaces, [])
     }
 
@@ -124,7 +128,10 @@ final class SpaceAwareRestoreTests: XCTestCase {
             windows: [target], on: external, merging: existing, snapshot: snapshot
         )
 
-        XCTAssertEqual(captured.overlay?.byBundle["com.app"], .unresolved(.stranded))
+        XCTAssertEqual(
+            captured.overlay?.byBundle["com.app"],
+            .unresolved(kind: .regular, reason: .stranded)
+        )
     }
 
     func testCaptureRemembersRegularSpacesWithoutWindows() {
@@ -177,7 +184,9 @@ final class SpaceAwareRestoreTests: XCTestCase {
                         opaqueName: "external-first", localOrderHint: 1
                     )),
                     fullscreen.bundleID: .fullscreen,
-                    unresolved.bundleID: .unresolved(.spaceMissing),
+                    unresolved.bundleID: .unresolved(
+                        kind: .regular, reason: .spaceMissing
+                    ),
                 ],
                 regularSpaces: [
                     SpaceHint(opaqueName: "external-first", localOrderHint: 1),
@@ -386,7 +395,8 @@ final class SpaceAwareRestoreTests: XCTestCase {
             windows: [target, partner], on: external, merging: captured, snapshot: split
         )
         XCTAssertEqual(
-            rejected.overlay?.byBundle["com.app"], .unresolved(.unsupportedSpace)
+            rejected.overlay?.byBundle["com.app"],
+            .unresolved(kind: .fullscreen, reason: .unsupportedSpace)
         )
     }
 

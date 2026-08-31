@@ -81,9 +81,9 @@ enum RestoreEngine {
             return selectFullscreenWindow(
                 bundleID: bundleID, on: screen, windows: windows, snapshot: snapshot
             )
-        case .unresolved(.fullscreen):
+        case .unresolved(_, .fullscreen):
             return .fullscreen
-        case .unresolved(.fullscreenUnknown):
+        case .unresolved(_, .fullscreenUnknown):
             return .unavailable
         case .unresolved:
             return .unavailable

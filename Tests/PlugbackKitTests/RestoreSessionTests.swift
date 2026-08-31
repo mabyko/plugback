@@ -230,6 +230,20 @@ final class RestoreSessionTests: XCTestCase {
         )
     }
 
+    func testUnresolvedBindingUsesOnlyItsOwnRestoreScope() {
+        let regularOnly = SpaceRestoreScope(regular: true, fullscreen: false)
+        let fullscreenOnly = SpaceRestoreScope(regular: false, fullscreen: true)
+        let regular = SpaceBinding.unresolved(kind: .regular, reason: .spaceMissing)
+        let fullscreen = SpaceBinding.unresolved(
+            kind: .fullscreen, reason: .unsupportedSpace
+        )
+
+        XCTAssertTrue(regularOnly.restores(regular))
+        XCTAssertFalse(regularOnly.restores(fullscreen))
+        XCTAssertFalse(fullscreenOnly.restores(regular))
+        XCTAssertTrue(fullscreenOnly.restores(fullscreen))
+    }
+
     func testDisabledBindingUsesLegacyReopenWhileAnotherScopeIsEnabled() async {
         let (session, _, gateway) = makeSession(
             scope: SpaceRestoreScope(regular: true, fullscreen: false)

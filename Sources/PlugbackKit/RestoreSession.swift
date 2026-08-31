@@ -11,12 +11,8 @@ struct SpaceRestoreScope: Equatable, Sendable {
 
     func restores(_ binding: SpaceBinding) -> Bool {
         switch binding {
-        case .regular:
-            return regular
-        case .fullscreen, .unresolved(.fullscreen), .unresolved(.fullscreenUnknown):
-            return fullscreen
-        case .unresolved:
-            return isEnabled
+        case .regular, .unresolved(.regular, _): regular
+        case .fullscreen, .unresolved(.fullscreen, _): fullscreen
         }
     }
 }
