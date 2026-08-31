@@ -73,7 +73,7 @@ final class CardPresentationTests: XCTestCase {
         )
     }
 
-    func testSpaceGroupLabelsUseStableLocalSpaceNumber() {
+    func testSpaceGroupLabelsUseStableLocalSpaceNumberAndActualPendingState() {
         let current = PlugbackController.SpaceGroup.Kind.regular(number: 1, state: .current)
         let inactive = PlugbackController.SpaceGroup.Kind.regular(number: 2, state: .inactive)
         let other = PlugbackController.SpaceGroup.Kind.regular(number: 3, state: .otherDisplay)
@@ -81,13 +81,30 @@ final class CardPresentationTests: XCTestCase {
         let unknown = PlugbackController.SpaceGroup.Kind.regular(number: 5, state: .unknown)
 
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: current), "Space 1")
-        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: current), "현재")
+        XCTAssertEqual(
+            CardPresentation.spaceGroupStatus(for: current, hasAwaitingVisit: false), "현재"
+        )
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: inactive), "Space 2")
-        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: inactive), "방문 시 복원")
-        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: other), "다른 화면 · 복원 대기")
-        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: missing), "현재 없음")
+        XCTAssertNil(CardPresentation.spaceGroupStatus(for: inactive, hasAwaitingVisit: false))
+        XCTAssertEqual(
+            CardPresentation.spaceGroupStatus(for: inactive, hasAwaitingVisit: true),
+            "방문 시 복원"
+        )
+        XCTAssertEqual(
+            CardPresentation.spaceGroupStatus(for: other, hasAwaitingVisit: false), "다른 화면"
+        )
+        XCTAssertEqual(
+            CardPresentation.spaceGroupStatus(for: other, hasAwaitingVisit: true),
+            "다른 화면 · 복원 대기"
+        )
+        XCTAssertEqual(
+            CardPresentation.spaceGroupStatus(for: missing, hasAwaitingVisit: false), "현재 없음"
+        )
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: unknown), "Space 5")
-        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: unknown), "현재 상태 확인 불가")
+        XCTAssertEqual(
+            CardPresentation.spaceGroupStatus(for: unknown, hasAwaitingVisit: false),
+            "현재 상태 확인 불가"
+        )
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .fullscreen), "전체 화면")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .unresolved), "Space 확인 필요")
 

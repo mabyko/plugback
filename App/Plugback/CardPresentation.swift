@@ -31,12 +31,14 @@ enum CardPresentation {
         }
     }
 
-    static func spaceGroupStatus(for kind: PlugbackController.SpaceGroup.Kind) -> String? {
+    static func spaceGroupStatus(
+        for kind: PlugbackController.SpaceGroup.Kind, hasAwaitingVisit: Bool
+    ) -> String? {
         guard case .regular(_, let state) = kind else { return nil }
         switch state {
         case .current: return "현재"
-        case .inactive: return "방문 시 복원"
-        case .otherDisplay: return "다른 화면 · 복원 대기"
+        case .inactive: return hasAwaitingVisit ? "방문 시 복원" : nil
+        case .otherDisplay: return hasAwaitingVisit ? "다른 화면 · 복원 대기" : "다른 화면"
         case .missing: return "현재 없음"
         case .unknown: return "현재 상태 확인 불가"
         }

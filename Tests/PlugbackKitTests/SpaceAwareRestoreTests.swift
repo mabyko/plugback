@@ -830,20 +830,32 @@ final class SpaceAwareRestoreTests: XCTestCase {
         await controller.externalScreensAppeared()
         XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1])
         XCTAssertEqual(gateway.windowsList[0].frame, firstFrame)
+        XCTAssertEqual(
+            controller.sections[0].spaceGroups.map(\.hasAwaitingVisit), [false, true]
+        )
 
         // Desktop 4를 방문했을 때만 두 번째 binding이 복원된다.
         gateway.windowsList = [window(
             2, bundleID: "com.second",
             frame: CGRect(x: 200, y: 100, width: 300, height: 300), windowServerID: 22
         )]
-        reader.availability = .available(makeSnapshot(
+        let settledSecondSpace = makeSnapshot(
             externalSpaces: [space(e1, "desktop-3", order: 1),
                              space(e2, "desktop-4", order: 2, current: true)],
             memberships: [22: [e2]]
-        ))
+        )
+        reader.availability = .available(settledSecondSpace)
+        reader.queuedAvailabilities = [.available(makeSnapshot(
+            externalSpaces: [space(e1, "desktop-3", order: 1, current: true),
+                             space(e2, "desktop-4", order: 2)],
+            memberships: [22: [e2]]
+        ))]
         await controller.activeSpaceChanged()
         XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1, 2])
         XCTAssertEqual(gateway.windowsList[0].frame, secondFrame)
+        XCTAssertEqual(
+            controller.sections[0].spaceGroups.map(\.hasAwaitingVisit), [false, false]
+        )
         XCTAssertEqual(gateway.standardWindowsCallsAtMove.last.map { $0 + 2 },
                        gateway.standardWindowsCalls,
                        "복원 authoritative 열거 뒤에는 자동 수집과 카드 갱신만 와야 한다")
@@ -1596,10 +1608,12 @@ private final class FakeSpaceRelocator: SpaceRelocating {
 @MainActor
 private final class FakeSpaceReader: SpaceReading {
     var availability: SpaceSnapshotAvailability = .unavailable
+    var queuedAvailabilities: [SpaceSnapshotAvailability] = []
     private(set) var requestedWindowIDs: [[CGWindowID]] = []
 
     func stableSnapshot(windowServerIDs: [CGWindowID]) async -> SpaceSnapshotAvailability {
         requestedWindowIDs.append(windowServerIDs)
+        if !queuedAvailabilities.isEmpty { return queuedAvailabilities.removeFirst() }
         return availability
     }
 }

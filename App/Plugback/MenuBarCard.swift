@@ -245,7 +245,9 @@ private struct Card: View {
                     .font(.system(size: 11, weight: .semibold))
                     .monospacedDigit()
                 Spacer()
-                if let status = CardPresentation.spaceGroupStatus(for: group.kind) {
+                if let status = CardPresentation.spaceGroupStatus(
+                    for: group.kind, hasAwaitingVisit: group.hasAwaitingVisit
+                ) {
                     Text(status)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)

@@ -191,6 +191,7 @@ public final class PlugbackController: ObservableObject {
         public let id: String
         public let kind: Kind
         public let apps: [TargetApp]
+        public let hasAwaitingVisit: Bool
     }
 
     public struct ScreenSection: Identifiable, Equatable, Sendable {
@@ -234,7 +235,8 @@ public final class PlugbackController: ObservableObject {
     /// 저장 identity는 opaque name 그대로 두고, 저장된 일반 Space 순서만 표시값으로 붙인다.
     /// live snapshot은 저장 행을 늘리거나 지우지 않고 현재 위치 상태만 붙인다.
     static func spaceGroups(
-        in resolved: ResolvedProfile, snapshot: SpaceSnapshot?, targetConnected: Bool = true
+        in resolved: ResolvedProfile, snapshot: SpaceSnapshot?, targetConnected: Bool = true,
+        awaitingVisitBundleIDs: Set<String> = []
     ) -> [SpaceGroup] {
         guard let overlay = resolved.overlay else { return [] }
 
@@ -274,17 +276,31 @@ public final class PlugbackController: ObservableObject {
                 case .fullscreen, .unsupported, .unknown: .unknown
                 }
             }
+            let apps = appsByName[hint.opaqueName] ?? []
             return SpaceGroup(
                 id: "regular:\(hint.opaqueName)",
                 kind: .regular(number: index + 1, state: state),
-                apps: appsByName[hint.opaqueName] ?? []
+                apps: apps,
+                hasAwaitingVisit: apps.contains {
+                    awaitingVisitBundleIDs.contains($0.bundleID)
+                }
             )
         }
         if !fullscreenApps.isEmpty {
-            groups.append(SpaceGroup(id: "fullscreen", kind: .fullscreen, apps: fullscreenApps))
+            groups.append(SpaceGroup(
+                id: "fullscreen", kind: .fullscreen, apps: fullscreenApps,
+                hasAwaitingVisit: fullscreenApps.contains {
+                    awaitingVisitBundleIDs.contains($0.bundleID)
+                }
+            ))
         }
         if !unresolvedApps.isEmpty {
-            groups.append(SpaceGroup(id: "unresolved", kind: .unresolved, apps: unresolvedApps))
+            groups.append(SpaceGroup(
+                id: "unresolved", kind: .unresolved, apps: unresolvedApps,
+                hasAwaitingVisit: unresolvedApps.contains {
+                    awaitingVisitBundleIDs.contains($0.bundleID)
+                }
+            ))
         }
         return groups
     }
@@ -632,7 +648,25 @@ public final class PlugbackController: ObservableObject {
         let resolved = slots.resolvedWithSpaces(for: externalScreens)
         if restoreMode == .automatic,
            restoreSession.hasAwaitingVisit(in: resolved) {
-            _ = await performRestore(startingWithAll: false)
+            for attempt in 0..<2 {
+                if attempt == 1 {
+                    // Space 알림 뒤 첫 snapshot이 직전 Space로 안정돼 보일 수 있다.
+                    // 같은 정착 간격 뒤 딱 한 번만 다시 읽고, 주기 폴링은 만들지 않는다.
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(activeSpaceDebounceInterval * 1_000_000_000)
+                    )
+                    if isRestoring {
+                        pendingSpaceRefresh = true
+                        return
+                    }
+                    syncScreens()
+                    guard isConnected, restoreMode == .automatic,
+                          checkAuthorization() else { return }
+                }
+                let current = slots.resolvedWithSpaces(for: externalScreens)
+                guard restoreSession.hasAwaitingVisit(in: current) else { return }
+                _ = await performRestore(startingWithAll: false)
+            }
         } else if labAutoSlot {
             await collectCandidate()
         }
@@ -724,8 +758,12 @@ public final class PlugbackController: ObservableObject {
             var spaceGroups: [SpaceGroup] = []
             var spaceConfigurationDiffers = false
             if spaceObservationEnabled, let resolved {
+                let awaitingVisitBundleIDs = restoreSession.awaitingBundleIDs(
+                    in: [screenID: resolved]
+                )
                 spaceGroups = Self.spaceGroups(
-                    in: resolved, snapshot: snapshot, targetConnected: screen != nil
+                    in: resolved, snapshot: snapshot, targetConnected: screen != nil,
+                    awaitingVisitBundleIDs: awaitingVisitBundleIDs
                 )
                 spaceConfigurationDiffers = Self.spaceConfigurationDiffers(
                     in: resolved, snapshot: snapshot, targetConnected: screen != nil
