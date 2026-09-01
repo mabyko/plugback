@@ -346,9 +346,9 @@ private struct Card: View {
                     .controlSize(.regular)
                         .disabled(!controller.isConnected || !controller.hasRestorableProfile || controller.isRestoring)
                 }
-                if let count = controller.lastCaptureCount {
-                    // 저장됐다는 것을 화면에서 확인할 수 있다 (US-002 AC-1)
-                    Text("저장됨 · 대상 앱 \(count)개")
+                if let notice = controller.captureNotice {
+                    // 성공과 Space 관찰 실패 중 실제 마지막 결과 하나만 보여준다.
+                    Text(CardPresentation.captureNotice(notice))
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
                 // 저장 금지는 알림을 닫아도 남는다 — 수동 저장도 막히므로 실험실과 무관하게 표시한다.

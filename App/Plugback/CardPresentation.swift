@@ -4,6 +4,17 @@ import PlugbackKit
 /// 카드·Intent의 표현 매핑 — 뷰에서 분리한 순수 함수들. PlugbackTests가 여기에 닿는다.
 /// 문구는 앱의 것이다 — 헤드리스 코어(PlugbackKit)에 UI 문자열을 넣지 않는다 (docs/ARCHITECTURE.md §2 MenuBarUI).
 enum CardPresentation {
+    // MARK: - 명시적 저장 결과
+
+    static func captureNotice(_ notice: CaptureNotice) -> String {
+        switch notice {
+        case .captured(let appCount):
+            return "저장됨 · 대상 앱 \(appCount)개"
+        case .spaceObservationUnavailable:
+            return "Space 상태를 확인하지 못해 저장하지 않았습니다.\n잠시 후 다시 시도해 주세요."
+        }
+    }
+
     // MARK: - 결과 스트립 — 건너뜀·실패 사유 문구 (US-008: "왜 안 옮겨졌지?"의 유일한 답)
 
     static func describe(_ outcome: RestoreResult.Outcome) -> String {

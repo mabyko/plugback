@@ -25,6 +25,14 @@ public enum CaptureOutcome: Equatable, Sendable {
     case saveBlocked
     /// 실행 중 프로필 파일에 쓰지 못했다. 이전 상태는 유지되고 다음 저장에서 재시도할 수 있다.
     case saveFailed
+    /// Space reader는 있지만 안정된 snapshot을 얻지 못해 기존 배치를 보존했다.
+    case spaceObservationUnavailable
+}
+
+/// 카드에 잠깐 남기는 저장 관련 명시적 동작의 결과. 성공과 관찰 실패가 동시에 보일 수 없다.
+public enum CaptureNotice: Equatable, Sendable {
+    case captured(appCount: Int)
+    case spaceObservationUnavailable
 }
 
 /// restoreNow의 반환 — 실행되지 않은 경로도 성공과 구별된다. 호출자는 published를 뒤져 추론하지 않는다.
@@ -59,9 +67,16 @@ public final class PlugbackController: ObservableObject {
         let untrackedApps: [UntrackedApp]
     }
     @Published private var projectionsByScreen: [String: ScreenProjection] = [:]
+    /// async 관찰은 MainActor에서도 완료 순서가 바뀔 수 있다. 더 오래된 sample은 게시하지 않는다.
+    private var latestProjectionSequence = 0
 
-    /// 방금 저장의 확인 표시용 대상 앱 수 (US-002 AC-1). 카드를 다시 열면 사라진다.
-    @Published public private(set) var lastCaptureCount: Int?
+    /// 방금 저장의 확인 또는 Space 관찰 실패. 카드를 다시 열면 사라진다.
+    @Published public private(set) var captureNotice: CaptureNotice?
+    /// 기존 성공 확인값 — transient notice 한곳에서 파생한다.
+    public var lastCaptureCount: Int? {
+        guard case .captured(let count) = captureNotice else { return nil }
+        return count
+    }
     /// 저장소 문제 알림 (F-04.2). 사용자가 확인하면 사라진다 — 영구 배너가 아니다.
     /// **파생이다** — 슬롯 모듈이 유일한 출처다. 사본을 들면 손으로 맞춰야 하고, 그러면 어긋난다.
     public var storeNotice: ProfileStore.Trouble? { slots.trouble }
@@ -490,7 +505,7 @@ public final class PlugbackController: ObservableObject {
     public func cardOpened() async {
         checkAuthorization()
         syncSpaceWatcher() // 권한을 방금 허용한 첫 실행도 재시작 없이 붙인다
-        lastCaptureCount = nil
+        captureNotice = nil
         syncScreens()
         await refreshProjection()
     }
@@ -513,6 +528,7 @@ public final class PlugbackController: ObservableObject {
     /// async — 창 열거가 이 동작의 본체라서다. 반환값 = 실행/거부 사유 — 확인 표시는 진짜 저장됐을 때만 뜬다.
     @discardableResult
     public func captureNow() async -> CaptureOutcome {
+        captureNotice = nil
         guard checkAuthorization() else { return .notAuthorized } // 권한 없이 빈 열거로 저장하지 않는다
         guard !isRestoring else { return .restoringInProgress }   // 반쯤 복원된 배치를 박제하지 않는다
         // 저장이 차단된 실행에서 메모리에만 담는 저장은 재시작에 증발하는 거짓 저장이다 —
@@ -521,8 +537,19 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard isConnected else { return .notConnected }
         let sample = await observation.sample(includeSpaces: spaceObservationEnabled)
+        let snapshot: SpaceSnapshot?
+        switch sample.spaceAvailability {
+        case nil:
+            snapshot = nil
+        case .some(.available(let available)):
+            snapshot = available
+        case .some(.unavailable):
+            captureNotice = .spaceObservationUnavailable
+            applyProjection(sample)
+            return .spaceObservationUnavailable
+        }
         guard slots.capture(
-            windows: sample.windows, on: externalScreens, snapshot: sample.snapshot
+            windows: sample.windows, on: externalScreens, snapshot: snapshot
         ) else {
             return .saveFailed
         }
@@ -533,7 +560,7 @@ public final class PlugbackController: ObservableObject {
         let count = externalScreens
             .compactMap { slots.source(for: $0.id)?.profile }
             .reduce(0) { $0 + $1.apps.filter(\.isEnabled).count }
-        lastCaptureCount = count
+        captureNotice = .captured(appCount: count)
         await refreshProjection()
         return .captured(appCount: count)
     }
@@ -553,13 +580,16 @@ public final class PlugbackController: ObservableObject {
         let sample = await observation.sample()
         guard labAutoSlot, !isSaveBlocked, !isRestoring,
               !restoreSession.hasPendingRecovery else { return }
-        if spaceReader != nil {
-            guard let snapshot = sample.snapshot else { return }
+        switch sample.spaceAvailability {
+        case nil:
+            slots.collect(windows: sample.windows, on: externalScreens)
+        case .some(.available(let snapshot)):
             slots.collect(
                 windows: sample.windows, on: externalScreens, snapshot: snapshot
             )
-        } else {
-            slots.collect(windows: sample.windows, on: externalScreens)
+        case .some(.unavailable):
+            applyProjection(sample)
+            return
         }
         await refreshCollectTargets() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
     }
@@ -664,16 +694,15 @@ public final class PlugbackController: ObservableObject {
                 restoreMinimized: restoreMinimized,
                 reopenWindowless: reopenWindowless
             )
-            let update = if runAll {
-                await session.restore(
+            if runAll {
+                latest = await session.restore(
                     resolved: resolved, screens: screens, options: options
                 )
             } else {
-                await session.recheck(
+                latest = await session.recheck(
                     resolved: resolved, screens: screens, options: options
-                )
+                ) ?? []
             }
-            latest = update?.results ?? []
             record(latest)
             if pendingRestore {
                 syncScreens()
@@ -716,6 +745,24 @@ public final class PlugbackController: ObservableObject {
         // 화면별로 계산하되 열거는 한 번이다 — 카드가 「그 화면에 뭐가 있나」도 답하기 때문이다(대상 아님 행).
         // 게이트웨이가 actor라 메인은 막히지 않고, 카드 값은 비동기로 채워진다.
         let sample = await observation.sample(includeSpaces: spaceObservationEnabled)
+        applyProjection(sample)
+    }
+
+    /// 이미 얻은 관찰을 카드 값으로 투영한다. 실패한 변경이 같은 관찰을 재사용해
+    /// 즉시 재시도하지 않고도 저장 Space의 현재 상태를 unknown으로 보여준다.
+    private func applyProjection(
+        _ sample: DesktopObservation.Sample,
+        preservingUntrackedApps: Bool = false
+    ) {
+        guard sample.sequence > latestProjectionSequence else { return }
+        latestProjectionSequence = sample.sequence
+        let snapshot: SpaceSnapshot?
+        switch sample.spaceAvailability {
+        case nil, .some(.unavailable):
+            snapshot = nil
+        case .some(.available(let available)):
+            snapshot = available
+        }
         // (화면, 실제 ScreenInfo?) 쌍 — 기억만 상태에서는 화면이 없어 제자리 판정이 생략된다.
         let targets: [(screenID: String, screen: ScreenInfo?)] = if isConnected {
             externalScreens.map { ($0.id, $0) }
@@ -735,25 +782,31 @@ public final class PlugbackController: ObservableObject {
             if spaceObservationEnabled, let resolved {
                 spaceGroups = Self.spaceGroups(
                     in: resolved,
-                    snapshot: sample.snapshot,
+                    snapshot: snapshot,
                     targetConnected: screen != nil,
                     recoveries: restoreSession.recoveries,
                     screenNamesByID: screenNamesByID
                 )
                 spaceConfigurationDiffers = Self.spaceConfigurationDiffers(
-                    in: resolved, snapshot: sample.snapshot,
+                    in: resolved, snapshot: snapshot,
                     targetConnected: screen != nil
                 )
             }
             // 껐던 대상 앱이 먼저다 — 좌표가 남아 있어 되돌리기 쉬운 쪽을 위에 둔다.
             let disabled = (profile?.apps.filter { !$0.isEnabled } ?? [])
                 .map { UntrackedApp(bundleID: $0.bundleID, displayName: $0.displayName) }
+            let untrackedApps = if preservingUntrackedApps,
+                                   let existing = projectionsByScreen[screenID] {
+                existing.untrackedApps
+            } else {
+                disabled + Self.untracked(
+                    in: sample.windows, on: screen, excluding: Set(bundleIDs)
+                )
+            }
             next[screenID] = ScreenProjection(
                 spaceGroups: spaceGroups,
                 spaceConfigurationDiffers: spaceConfigurationDiffers,
-                untrackedApps: disabled + Self.untracked(
-                    in: sample.windows, on: screen, excluding: Set(bundleIDs)
-                )
+                untrackedApps: untrackedApps
             )
         }
         projectionsByScreen = next
@@ -782,6 +835,7 @@ public final class PlugbackController: ObservableObject {
     public func setTracked(_ bundleID: String, _ tracked: Bool, on screenID: String) async {
         switch slots.setTargetEnabled(bundleID, tracked, on: screenID) {
         case .applied:
+            captureNotice = nil
             restoreSession.cancel()
             await refreshCollectTargets()
             await refreshProjection() // 켜고 끈 행이 곧바로 제 묶음으로 간다
@@ -805,6 +859,7 @@ public final class PlugbackController: ObservableObject {
     /// 다른 앱의 좌표를 덮지 않고, 복원 소스를 뒤집지 않으며, 모으던 후보도 안 버린다.
     @discardableResult
     private func addTargetApp(_ bundleID: String, on screenID: String) async -> CaptureOutcome {
+        captureNotice = nil
         guard checkAuthorization() else { return .notAuthorized }
         guard !isRestoring else { return .restoringInProgress }
         guard !slots.isSaveBlocked else { return .saveBlocked }
@@ -814,8 +869,20 @@ public final class PlugbackController: ObservableObject {
         let sample = await observation.sample(
             of: [bundleID], includeSpaces: spaceObservationEnabled
         )
+        let snapshot: SpaceSnapshot?
+        switch sample.spaceAvailability {
+        case nil:
+            snapshot = nil
+        case .some(.available(let available)):
+            snapshot = available
+        case .some(.unavailable):
+            captureNotice = .spaceObservationUnavailable
+            // 앱 하나만 열거한 sample이므로 다른 비대상 앱 목록은 기존 projection을 보존한다.
+            applyProjection(sample, preservingUntrackedApps: true)
+            return .spaceObservationUnavailable
+        }
         guard slots.addTarget(
-            windows: sample.windows, on: [screen], snapshot: sample.snapshot
+            windows: sample.windows, on: [screen], snapshot: snapshot
         ) else {
             return .saveFailed
         }

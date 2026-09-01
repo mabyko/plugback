@@ -69,7 +69,7 @@ stable Space snapshot은 화면별 Space 종류·현재 여부·opaque name·로
 
 ### DesktopObservation
 
-`sample(of:includeSpaces:)`가 AX 창과 그 창 ID로 만든 Space snapshot을 한 값으로 돌려준다. 둘을 따로 읽는 API는 없다. `drain()`은 복원보다 먼저 시작한 카드·수집·저장 열거가 끝날 때까지 기다려 임시 창 ID를 섞지 않게 한다.
+`sample(of:includeSpaces:)`가 관찰 시작 sequence, AX 창과 그 창 ID로 만든 Space availability를 한 값으로 돌려준다. reader 부재·의도적 생략은 유효한 flat 관찰이고, reader가 stable snapshot을 만들지 못한 `.unavailable`과 구별된다. 둘을 따로 읽는 API는 없다. `drain()`은 복원보다 먼저 시작한 카드·수집·저장 열거가 끝날 때까지 기다려 임시 창 ID를 섞지 않게 한다.
 
 ### RestoreSession
 
@@ -77,7 +77,7 @@ stable Space snapshot은 화면별 Space 종류·현재 여부·opaque name·로
 - `recheck`: recovery가 있을 때만 sample → `move/visit/current/unavailable` 재판정 → current recovery의 bundle만 복원
 - `cancel`: 저장·대상 변경·프로필 삭제·복원 소스 변경 때 호출
 
-ProfileSlots나 UI 상태를 소유하지 않는다. 컨트롤러가 선택한 같은 슬롯의 `Profile + Space overlay`만 받는다.
+`restore/recheck`는 복원 결과만 반환한다. recovery는 반환값에 복제하지 않고 세션의 읽기 전용 상태로만 제공한다. ProfileSlots나 UI 상태를 소유하지 않으며, 컨트롤러가 선택한 같은 슬롯의 `Profile + Space overlay`만 받는다.
 
 ### RestoreEngine
 
@@ -137,7 +137,7 @@ Space overlay는 프로세스 메모리에만 있고 JSON 프로필에는 기록
 
 ### P2 · observation 단일화 — 완료
 
-- `DesktopObservation.Sample(windows, snapshot)` 도입
+- `DesktopObservation.Sample(windows, spaceAvailability?)` 도입 — flat 관찰과 snapshot 실패를 구분
 - 저장·수집·카드·복원이 같은 API 사용
 - authoritative 복원 전 `drain` 유지
 
@@ -162,8 +162,8 @@ Space overlay는 프로세스 메모리에만 있고 JSON 프로필에는 기록
 
 ### P6 · 검증 — 자동 검증 완료
 
-- 패키지 단위 테스트: 154개 통과
-- 앱 타깃 단위 테스트: 11개 통과
+- 패키지 단위 테스트: 158개 통과
+- 앱 타깃 단위 테스트: 12개 통과
 - Release 앱 빌드: 통과
 - 실기기 안내 흐름: [체크리스트](./ACTIVE_SPACE_RESTORE_DEVICE_TEST_CHECKLIST.md)에 따라 확인 필요
 
@@ -172,8 +172,10 @@ Space overlay는 프로세스 메모리에만 있고 JSON 프로필에는 기록
 - stranded → Mission Control 이동 뒤 inactive → 방문 뒤 current → 창 복원·완료
 - 처음부터 inactive → recovery 없음, 방문해도 자동 복원 없음
 - snapshot 불가 → binding 앱 평면 복원 없음
+- snapshot 불가 중 저장·대상 추가·수집 → 기존 프로필·Space overlay·후보·수집 시각 보존
 - legacy 프로필 → 기존 창 복원 유지
 - 카드 projection → 출발·목적 이름, active recovery에만 방문 안내
+- 겹친 카드 projection → 나중에 시작한 observation보다 늦게 끝난 예전 sample 폐기
 - 컨트롤러 → Mission Control 닫힘과 활성 Space 이벤트가 한 recovery를 이어감
 - fullscreen Space는 저장 regular 목록에서 제외, fullscreen 창은 건너뜀
 - 앞선 observation을 drain한 뒤 authoritative sample 실행

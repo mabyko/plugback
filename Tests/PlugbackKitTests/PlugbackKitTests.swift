@@ -122,7 +122,7 @@ final class RestoreEngineTests: XCTestCase {
             },
             screens: screens,
             options: options
-        ).results
+        )
     }
 
     func testClosedAppIsSkippedAndNotLaunched() async {

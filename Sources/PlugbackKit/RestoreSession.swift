@@ -22,11 +22,6 @@ final class RestoreSession {
         var step: Step
     }
 
-    struct Update: Equatable, Sendable {
-        let results: [RestoreResult]
-        let recoveries: [Recovery]
-    }
-
     private struct Pending {
         let hint: SpaceHint
         var recovery: Recovery
@@ -57,35 +52,44 @@ final class RestoreSession {
         resolved: [String: ResolvedProfile],
         screens: [ScreenInfo],
         options: RestoreOptions
-    ) async -> Update {
+    ) async -> [RestoreResult] {
         generation &+= 1
         let startedGeneration = generation
         pending.removeAll()
         await observation.drain()
         guard startedGeneration == generation else {
-            return Update(results: [], recoveries: [])
+            return []
         }
         await reopenLegacyWindowless(in: resolved, screens: screens, options: options)
         guard startedGeneration == generation else {
-            return Update(results: [], recoveries: [])
+            return []
         }
         let sample = await observation.sample()
         guard startedGeneration == generation else {
-            return Update(results: [], recoveries: [])
+            return []
         }
-        addRecoveries(from: resolved, screens: screens, snapshot: sample.snapshot)
+        let snapshot: SpaceSnapshot?
+        switch sample.spaceAvailability {
+        case .some(.available(let available)):
+            snapshot = available
+        case nil, .some(.unavailable):
+            // unavailable에서도 overlay 없는 legacy 앱은 기존 flat 경로를 유지한다.
+            // Space binding이 있는 앱은 RestoreEngine이 snapshot 부재로 fail-close한다.
+            snapshot = nil
+        }
+        addRecoveries(from: resolved, screens: screens, snapshot: snapshot)
         let results = await RestoreEngine.restore(
             resolved: resolved,
             screens: screens,
             windows: sample.windows,
-            snapshot: sample.snapshot,
+            snapshot: snapshot,
             using: gateway,
             options: options
         )
         guard startedGeneration == generation else {
-            return Update(results: results, recoveries: [])
+            return results
         }
-        return Update(results: results, recoveries: recoveries)
+        return results
     }
 
     /// Mission Control이 닫히거나, 안내한 Space를 사용자가 방문했을 때만 호출한다.
@@ -94,16 +98,16 @@ final class RestoreSession {
         resolved: [String: ResolvedProfile],
         screens: [ScreenInfo],
         options: RestoreOptions
-    ) async -> Update? {
+    ) async -> [RestoreResult]? {
         guard !pending.isEmpty else { return nil }
         let startedGeneration = generation
         await observation.drain()
         guard startedGeneration == generation, !pending.isEmpty else { return nil }
         let sample = await observation.sample()
         guard startedGeneration == generation, !pending.isEmpty else { return nil }
-        guard let snapshot = sample.snapshot else {
+        guard case .some(.available(let snapshot)) = sample.spaceAvailability else {
             for id in pending.keys { pending[id]?.recovery.step = .unavailable }
-            return Update(results: [], recoveries: recoveries)
+            return []
         }
 
         var currentIDs: [RecoveryID] = []
@@ -135,7 +139,7 @@ final class RestoreSession {
         }
 
         guard !currentIDs.isEmpty else {
-            return Update(results: [], recoveries: recoveries)
+            return []
         }
         let results = await RestoreEngine.restore(
             resolved: resolved,
@@ -157,7 +161,7 @@ final class RestoreSession {
                 pending[id] = item
             }
         }
-        return Update(results: results, recoveries: recoveries)
+        return results
     }
 
     func cancel() {

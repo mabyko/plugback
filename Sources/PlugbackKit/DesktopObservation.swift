@@ -5,12 +5,17 @@ import Foundation
 @MainActor
 final class DesktopObservation {
     struct Sample {
+        /// 이 observation 안에서 관찰을 시작한 순서. 늦게 끝난 예전 sample을 버릴 때 쓴다.
+        let sequence: Int
         let windows: [WindowInfo]
-        let snapshot: SpaceSnapshot?
+        /// nil은 Space를 관찰하지 않은 유효한 flat 경로다.
+        /// reader가 있는데 관찰하지 못한 경우는 `.unavailable`로 보존한다.
+        let spaceAvailability: SpaceSnapshotAvailability?
     }
 
     private let gateway: WindowGateway
     private let spaceReader: SpaceReading?
+    private var nextSequence = 0
     private var readsInFlight = 0
     private var readWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -20,6 +25,8 @@ final class DesktopObservation {
     }
 
     func sample(of bundleIDs: [String]? = nil, includeSpaces: Bool = true) async -> Sample {
+        nextSequence += 1
+        let sequence = nextSequence
         readsInFlight += 1
         defer {
             readsInFlight -= 1
@@ -31,14 +38,14 @@ final class DesktopObservation {
         }
         let windows = await gateway.standardWindows(of: bundleIDs)
         guard includeSpaces, let spaceReader else {
-            return Sample(windows: windows, snapshot: nil)
+            return Sample(sequence: sequence, windows: windows, spaceAvailability: nil)
         }
         let ids = Array(Set(windows.compactMap(\.windowServerID))).sorted()
-        let availability = await spaceReader.stableSnapshot(windowServerIDs: ids)
-        guard case .available(let snapshot) = availability else {
-            return Sample(windows: windows, snapshot: nil)
-        }
-        return Sample(windows: windows, snapshot: snapshot)
+        return Sample(
+            sequence: sequence,
+            windows: windows,
+            spaceAvailability: await spaceReader.stableSnapshot(windowServerIDs: ids)
+        )
     }
 
     func drain() async {

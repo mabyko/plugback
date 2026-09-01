@@ -24,28 +24,37 @@ final class RestoreSessionTests: XCTestCase {
         let resolved = resolvedProfile()
 
         reader.availability = .available(strandedSnapshot())
-        let started = await session.restore(
+        _ = await session.restore(
             resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
         XCTAssertTrue(gateway.moveCalls.isEmpty)
-        XCTAssertEqual(started.recoveries.map(\.spaceNumber), [1])
-        XCTAssertEqual(started.recoveries.first?.step, .move(sourceScreenID: builtin.id))
+        XCTAssertEqual(session.recoveries.map(\.spaceNumber), [1])
+        XCTAssertEqual(session.recoveries.first?.step, .move(sourceScreenID: builtin.id))
+
+        reader.availability = .unavailable
+        _ = await session.recheck(
+            resolved: resolved, screens: [external], options: RestoreOptions()
+        )
+
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+        XCTAssertEqual(session.recoveries.first?.step, .unavailable)
+        XCTAssertTrue(session.hasPendingRecovery)
 
         reader.availability = .available(movedSnapshot(isCurrent: false))
-        let moved = await session.recheck(
+        _ = await session.recheck(
             resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
         XCTAssertTrue(gateway.moveCalls.isEmpty)
-        XCTAssertEqual(moved?.recoveries.first?.step, .visit)
+        XCTAssertEqual(session.recoveries.first?.step, .visit)
 
         reader.availability = .available(movedSnapshot(isCurrent: true))
         let visited = await session.recheck(
             resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
-        XCTAssertEqual(visited?.results.first?.entries.first?.outcome, .moved)
+        XCTAssertEqual(visited?.first?.entries.first?.outcome, .moved)
         XCTAssertEqual(gateway.moveCalls.map(\.target), [
             CGRect(x: 1000, y: 0, width: 500, height: 1000),
         ])
@@ -57,11 +66,11 @@ final class RestoreSessionTests: XCTestCase {
         let resolved = resolvedProfile()
         reader.availability = .available(movedSnapshot(isCurrent: false))
 
-        let started = await session.restore(
+        _ = await session.restore(
             resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
-        XCTAssertTrue(started.recoveries.isEmpty)
+        XCTAssertTrue(session.recoveries.isEmpty)
         XCTAssertFalse(session.hasPendingRecovery)
         reader.availability = .available(movedSnapshot(isCurrent: true))
         let rechecked = await session.recheck(
@@ -83,11 +92,11 @@ final class RestoreSessionTests: XCTestCase {
         )]
         reader.availability = .available(strandedSnapshot())
 
-        let started = await session.restore(
+        _ = await session.restore(
             resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
-        XCTAssertEqual(started.recoveries.first?.bundleIDs, ["com.app"])
+        XCTAssertEqual(session.recoveries.first?.bundleIDs, ["com.app"])
     }
 
     func testCancelDuringObservationCannotReviveARecovery() async {
@@ -103,9 +112,9 @@ final class RestoreSessionTests: XCTestCase {
         }
         while gateway.standardWindowsCalls == 0 { await Task.yield() }
         session.cancel()
-        let update = await restore.value
+        _ = await restore.value
 
-        XCTAssertTrue(update.recoveries.isEmpty)
+        XCTAssertTrue(session.recoveries.isEmpty)
         XCTAssertFalse(session.hasPendingRecovery)
     }
 
@@ -117,11 +126,11 @@ final class RestoreSessionTests: XCTestCase {
             overlay: SlotSpaceOverlay(regularSpaces: [hint])
         )]
 
-        let update = await session.restore(
+        _ = await session.restore(
             resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
-        XCTAssertTrue(update.recoveries.isEmpty)
+        XCTAssertTrue(session.recoveries.isEmpty)
         XCTAssertFalse(session.hasPendingRecovery)
     }
 
@@ -133,7 +142,7 @@ final class RestoreSessionTests: XCTestCase {
             resolved: resolvedProfile(), screens: [external], options: RestoreOptions()
         )
 
-        XCTAssertTrue(update.results.first?.entries.isEmpty == true)
+        XCTAssertTrue(update.first?.entries.isEmpty == true)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
@@ -163,7 +172,7 @@ final class RestoreSessionTests: XCTestCase {
             options: RestoreOptions()
         )
 
-        XCTAssertEqual(update.results.first?.entries.first?.outcome, .moved)
+        XCTAssertEqual(update.first?.entries.first?.outcome, .moved)
     }
 
     private func makeSession() -> (

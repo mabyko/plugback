@@ -98,7 +98,7 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 
 **쓰는 곳** — `SpaceReader`. 모두 조회만 하며 Space·창을 변경하는 SkyLight 함수는 로드하지 않는다. type `4`는 일반 Space로 오인하지 않기 위해 구분할 뿐, 앱 후보를 찾거나 복원하지 않는다.
 
-**깨졌을 때의 동작** — 심볼 하나라도 없거나 dictionary 형식·화면 ID·현재 Space가 예상과 다르거나 연속 두 snapshot이 다르면 `.unavailable`이다. Space overlay가 없는 legacy 프로필은 기존 복원을 유지하지만, binding이 있는 앱은 평면 복원으로 강등하지 않고 건너뛴다. raw Space ID·CGWindowID는 메모리 밖으로 나가지 않는다.
+**깨졌을 때의 동작** — 심볼 하나라도 없거나 dictionary 형식·화면 ID·현재 Space가 예상과 다르거나 연속 두 snapshot이 다르면 `.unavailable`이다. 이 값은 reader 부재나 의도적인 Space 생략과 구별된다. 명시적 저장·대상 추가·자동 수집은 기존 프로필·Space overlay·후보를 보존하고, 카드는 저장된 Space 행의 현재 상태만 확인 불가로 표시한다. Space overlay가 없는 legacy 프로필은 기존 복원을 유지하지만, binding이 있는 앱은 평면 복원으로 강등하지 않고 건너뛴다. raw Space ID·CGWindowID는 메모리 밖으로 나가지 않는다.
 
 **공개 대체재** — 화면별 Space topology·type·membership을 함께 제공하는 공개 API는 없다.
 

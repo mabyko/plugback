@@ -81,6 +81,199 @@ final class SpaceAwareRestoreTests: XCTestCase {
         ])
     }
 
+    func testDesktopObservationPreservesEverySpaceAvailability() async {
+        let gateway = FakeWindowGateway()
+        gateway.runningBundleIDs = ["com.app"]
+        gateway.windowsList = [
+            window(1, bundleID: "com.app", windowServerID: 11),
+            window(2, bundleID: "com.app", windowServerID: 7),
+            window(3, bundleID: "com.app", windowServerID: 11),
+            window(4, bundleID: "com.app", windowServerID: nil),
+        ]
+
+        let flat = await DesktopObservation(gateway: gateway, spaceReader: nil).sample()
+        XCTAssertNil(flat.spaceAvailability)
+
+        let reader = FakeSpaceReader()
+        let observation = DesktopObservation(gateway: gateway, spaceReader: reader)
+        let omitted = await observation.sample(includeSpaces: false)
+        XCTAssertNil(omitted.spaceAvailability)
+        XCTAssertTrue(reader.requests.isEmpty)
+
+        reader.availability = .unavailable
+        let unavailable = await observation.sample()
+        XCTAssertEqual(unavailable.spaceAvailability, .unavailable)
+        XCTAssertEqual(reader.requests.last, [7, 11])
+
+        let snapshot = makeSnapshot(
+            externalSpaces: [space(SpaceRuntimeID(1), "saved", order: 1, current: true)],
+            memberships: [7: [SpaceRuntimeID(1)], 11: [SpaceRuntimeID(1)]]
+        )
+        reader.availability = .available(snapshot)
+        let available = await observation.sample()
+        XCTAssertEqual(available.spaceAvailability, .available(snapshot))
+    }
+
+    func testUnavailableCaptureAndTargetAddPreserveTheSpaceProfile() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, external]
+        let reader = FakeSpaceReader()
+        let controller = makeController(
+            gateway: gateway, screens: screens, reader: reader, directory: directory
+        )
+        let savedID = SpaceRuntimeID(1)
+        let savedFrame = CGRect(x: 1000, y: 0, width: 500, height: 1000)
+        let changedFrame = CGRect(x: 1500, y: 100, width: 400, height: 800)
+        let snapshot = makeSnapshot(
+            externalSpaces: [space(savedID, "saved", order: 1, current: true)],
+            memberships: [11: [savedID], 12: [savedID]]
+        )
+
+        gateway.runningBundleIDs = ["com.app"]
+        gateway.windowsList = [window(
+            1, bundleID: "com.app", frame: savedFrame, windowServerID: 11
+        )]
+        reader.availability = .available(snapshot)
+        let captured = await controller.captureNow()
+        XCTAssertEqual(captured, .captured(appCount: 1))
+        XCTAssertEqual(controller.captureNotice, .captured(appCount: 1))
+        let savedProfile = try XCTUnwrap(controller.sections.first?.profile)
+
+        gateway.runningBundleIDs.insert("com.new")
+        gateway.windowsList = [
+            window(1, bundleID: "com.app", frame: changedFrame, windowServerID: 11),
+            window(2, bundleID: "com.new", frame: changedFrame, windowServerID: 12),
+        ]
+        reader.availability = .unavailable
+
+        let unavailable = await controller.captureNow()
+        XCTAssertEqual(unavailable, .spaceObservationUnavailable)
+        XCTAssertEqual(controller.captureNotice, .spaceObservationUnavailable)
+        XCTAssertNil(controller.lastCaptureCount)
+        XCTAssertEqual(controller.sections.first?.profile, savedProfile)
+        XCTAssertEqual(
+            controller.sections.first?.spaceGroups.first?.kind,
+            .regular(number: 1, state: .unknown)
+        )
+        XCTAssertEqual(controller.sections.first?.untrackedApps.map(\.bundleID), ["com.new"])
+
+        await controller.setTracked("com.new", true, on: external.id)
+        XCTAssertEqual(controller.sections.first?.profile, savedProfile)
+        XCTAssertEqual(controller.captureNotice, .spaceObservationUnavailable)
+        XCTAssertEqual(controller.sections.first?.untrackedApps.map(\.bundleID), ["com.new"])
+
+        reader.availability = .available(snapshot)
+        await controller.setTracked("com.new", true, on: external.id)
+        XCTAssertEqual(
+            Set(controller.sections.first?.profile?.apps.map(\.bundleID) ?? []),
+            ["com.app", "com.new"]
+        )
+        XCTAssertNil(controller.captureNotice)
+    }
+
+    func testUnavailableCollectionKeepsTheCandidateAndItsTimestamp() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, external]
+        let reader = FakeSpaceReader()
+        let controller = makeController(
+            gateway: gateway,
+            screens: screens,
+            reader: reader,
+            directory: directory,
+            labAutoSlot: true,
+            updateMode: .liveUntilDisconnect
+        )
+        let savedID = SpaceRuntimeID(1)
+        let snapshot = makeSnapshot(
+            externalSpaces: [space(savedID, "saved", order: 1, current: true)],
+            memberships: [11: [savedID]]
+        )
+        gateway.runningBundleIDs = ["com.app"]
+        gateway.windowsList = [window(
+            1, bundleID: "com.app",
+            frame: CGRect(x: 1000, y: 0, width: 500, height: 1000),
+            windowServerID: 11
+        )]
+        reader.availability = .available(snapshot)
+        _ = await controller.captureNow()
+
+        gateway.windowsList = [window(
+            1, bundleID: "com.app",
+            frame: CGRect(x: 1200, y: 0, width: 500, height: 1000),
+            windowServerID: 11
+        )]
+        await controller.collectCandidate()
+        let collectedAt = try XCTUnwrap(controller.lastCollectedAt)
+        let candidate = try XCTUnwrap(controller.sections.first?.profile)
+        XCTAssertTrue(controller.hasPendingCollect)
+
+        gateway.windowsList = [window(
+            1, bundleID: "com.app",
+            frame: CGRect(x: 1500, y: 0, width: 400, height: 1000),
+            windowServerID: 11
+        )]
+        reader.availability = .unavailable
+        await controller.collectCandidate()
+
+        XCTAssertEqual(controller.lastCollectedAt, collectedAt)
+        XCTAssertEqual(controller.sections.first?.profile, candidate)
+        XCTAssertTrue(controller.hasPendingCollect)
+        XCTAssertEqual(
+            controller.sections.first?.spaceGroups.first?.kind,
+            .regular(number: 1, state: .unknown)
+        )
+    }
+
+    func testOlderProjectionCannotOverwriteANewerObservation() async {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, external]
+        let reader = FakeSpaceReader()
+        let controller = makeController(
+            gateway: gateway, screens: screens, reader: reader, directory: directory
+        )
+        controller.restoreMode = .manual
+        let savedID = SpaceRuntimeID(1)
+        let snapshot = makeSnapshot(
+            externalSpaces: [space(savedID, "saved", order: 1, current: true)],
+            memberships: [11: [savedID]]
+        )
+        gateway.runningBundleIDs = ["com.app"]
+        gateway.windowsList = [window(1, bundleID: "com.app", windowServerID: 11)]
+        reader.availability = .available(snapshot)
+        _ = await controller.captureNow()
+        XCTAssertEqual(
+            controller.sections.first?.spaceGroups.first?.kind,
+            .regular(number: 1, state: .current)
+        )
+
+        reader.queuedResponses = [
+            (availability: .available(snapshot), delay: 0.03),
+            (availability: .unavailable, delay: 0),
+        ]
+        let requestCount = reader.requests.count
+        let olderRefresh = Task { await controller.externalScreensAppeared() }
+        while reader.requests.count == requestCount { await Task.yield() }
+
+        let newerCapture = await controller.captureNow()
+        XCTAssertEqual(newerCapture, .spaceObservationUnavailable)
+        await olderRefresh.value
+
+        XCTAssertEqual(
+            controller.sections.first?.spaceGroups.first?.kind,
+            .regular(number: 1, state: .unknown)
+        )
+        XCTAssertEqual(controller.captureNotice, .spaceObservationUnavailable)
+    }
+
     func testProjectionShowsMoveThenOnlyAnActiveRecoveryShowsVisit() {
         let hint = SpaceHint(opaqueName: "saved", localOrderHint: 2)
         let app = TargetApp(
@@ -317,15 +510,20 @@ final class SpaceAwareRestoreTests: XCTestCase {
         gateway: FakeWindowGateway,
         screens: FakeScreenProvider,
         reader: FakeSpaceReader,
-        directory: URL
+        directory: URL,
+        labAutoSlot: Bool = false,
+        updateMode: AutoSlotUpdateMode = .onDisconnect
     ) -> PlugbackController {
-        PlugbackController(
+        let defaults = UserDefaults(
+            suiteName: "guided-space-restore-\(UUID().uuidString)"
+        )!
+        defaults.set(labAutoSlot, forKey: "labAutoSlot")
+        defaults.set(updateMode.rawValue, forKey: "autoSlotUpdateMode")
+        return PlugbackController(
             gateway: gateway,
             screenProvider: screens,
             store: ProfileStore(directory: directory),
-            defaults: UserDefaults(
-                suiteName: "guided-space-restore-\(UUID().uuidString)"
-            )!,
+            defaults: defaults,
             spaceReader: reader,
             activeSpaceDebounceInterval: 0
         )
@@ -335,10 +533,23 @@ final class SpaceAwareRestoreTests: XCTestCase {
 @MainActor
 private final class FakeSpaceReader: SpaceReading {
     var availability: SpaceSnapshotAvailability = .unavailable
+    var queuedResponses: [(
+        availability: SpaceSnapshotAvailability, delay: TimeInterval
+    )] = []
+    private(set) var requests: [[CGWindowID]] = []
 
     func stableSnapshot(
         windowServerIDs: [CGWindowID]
     ) async -> SpaceSnapshotAvailability {
-        availability
+        requests.append(windowServerIDs)
+        let response = queuedResponses.isEmpty
+            ? (availability: availability, delay: 0)
+            : queuedResponses.removeFirst()
+        if response.delay > 0 {
+            try? await Task.sleep(
+                nanoseconds: UInt64(response.delay * 1_000_000_000)
+            )
+        }
+        return response.availability
     }
 }

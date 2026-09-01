@@ -69,8 +69,8 @@ WindowGateway를 주입받되, 복원 세션이 한 번 열거한 값을 받는�
 
 ### DesktopObservation
 
-- **인터페이스**: `sample(of:includeSpaces:) -> (windows, snapshot)` / `drain()`.
-- **숨기는 것**: 마지막 AX 창 열거의 window ID만 유효하다는 계약과, 복원 전에 먼저 시작한 저장·수집·카드 열거를 모두 끝내는 순서. Space snapshot은 반드시 같은 sample의 window ID들로 만든다. 창과 snapshot을 따로 요청하는 인터페이스는 없다.
+- **인터페이스**: `sample(of:includeSpaces:) -> (sequence, windows, spaceAvailability?)` / `drain()`. 바깥 optional의 `nil`은 reader가 없거나 호출자가 Space를 생략한 유효한 flat 관찰이고, 안쪽 `.unavailable`은 reader가 stable snapshot을 만들지 못했다는 뜻이다. sequence는 MainActor의 async 관찰들이 시작된 순서다.
+- **숨기는 것**: 마지막 AX 창 열거의 window ID만 유효하다는 계약과, 복원 전에 먼저 시작한 저장·수집·카드 열거를 모두 끝내는 순서. Space snapshot은 반드시 같은 sample의 window ID들로 만든다. 창과 snapshot을 따로 요청하거나 관찰 실패를 flat snapshot 부재로 축약하는 인터페이스는 없다.
 - MainActor 내부 타입이며 별도 프로토콜을 만들지 않는다. 컨트롤러와 RestoreSession이 같은 객체를 쓴다.
 
 ### SpacePlacement
@@ -81,7 +81,7 @@ WindowGateway를 주입받되, 복원 세션이 한 번 열거한 값을 받는�
 
 ### RestoreSession
 
-- **인터페이스**: `restore`(새 연결·수동 복원) / `recheck`(Mission Control 닫힘·활성 Space 변화) / `cancel` + 읽기 전용 안내 목록.
+- **인터페이스**: `restore`(새 연결·수동 복원) / `recheck`(Mission Control 닫힘·활성 Space 변화) / `cancel` + 읽기 전용 안내 목록. 두 async 명령은 복원 결과만 반환하고, recovery는 반환값에 복제하지 않고 세션의 읽기 전용 상태로만 제공한다.
 - **숨기는 것**: 새 복원 시 이전 안내 폐기, 처음 관찰에서 실제 잔류했고 대상 앱이 묶인 일반 Space만 recovery로 만드는 판정, `move(source) → visit → 완료` 전이, 완료된 대상 제거, authoritative `(windows, snapshot)` 한 sample → RestoreEngine 순서. 처음부터 목적 화면에 있던 비활성 Space와 대상 앱이 없는 Space는 recovery로 만들지 않는다.
 - ProfileSlots를 소유하지 않는다. 컨트롤러가 고른 최신 `ResolvedProfile` 값만 받아 프로필과 Space overlay의 복원 소스를 섞지 않는다.
 - 카드 상태를 소유하지 않는 MainActor 내부 타입이다. 결과는 컨트롤러에 돌려주고, 결과 수명·복원 중 게이트·새 화면 재요청·복원 뒤 수집과 카드 갱신은 컨트롤러가 맡는다.
@@ -141,10 +141,10 @@ WindowGateway를 주입받되, 복원 세션이 한 번 열거한 값을 받는�
 
 ### PlugbackController
 
-- **인터페이스**: 관찰 가능한 상태(화면 상태, 프로필 유무, 안내가 붙은 Space별 카드 그룹, 마지막 복원 결과, 복원 진행 중, 권한, 복원 모드, 복원 옵션 2종, 실험실 자동 슬롯 토글·반영 방식, 저장 확인, 저장소 문제) + 저장·복원·화면별 대상 편집·프로필 삭제 명령. **복원 진행 중은 계약이다**: 저장·재복원은 거부되고, 새 화면 연결은 종료 직후 1회 재복원으로 보류된다. 명령은 화면 상태를 스스로 동기화한다.
+- **인터페이스**: 관찰 가능한 상태(화면 상태, 프로필 유무, 안내가 붙은 Space별 카드 그룹, 마지막 복원 결과, 복원 진행 중, 권한, 복원 모드, 복원 옵션 2종, 실험실 자동 슬롯 토글·반영 방식, 일회성 저장 결과, 저장소 문제) + 저장·복원·화면별 대상 편집·프로필 삭제 명령. **복원 진행 중은 계약이다**: 저장·재복원은 거부되고, 새 화면 연결은 종료 직후 1회 재복원으로 보류된다. 명령은 화면 상태를 스스로 동기화한다.
 - **숨기는 것**: 배선 전부. DisplayWatcher 이벤트 → 자동 모드면 `RestoreSession.restore`, 수동 명령 → 같은 경로, 활성 Space·Mission Control 닫힘 → recovery가 있으면 `recheck`, 없으면 자동 슬롯 수집, 설정 → 옵션, 마지막 결과 보관. 안내가 남아 있는 동안 수집하지 않는다. **권한 게이트는 창을 만지는 명령과 카드 열림 내부에 있다.**
 - **슬롯은 여기서 다루지 않는다** (F-08). 규칙 전부가 ProfileSlots에 있고, 컨트롤러는 「이 화면의 프로필」만 묻는다. **RestoreEngine과 CaptureEngine도 슬롯의 존재를 모른다.**
-- 한 번의 창·Space 관찰에서 나온 Space 그룹·Space 구성 차이·저장하지 않는 앱은 화면별 projection 한 값으로 교체한다. 프로필·복원 소스·마지막 결과는 각자의 수명에서 파생해 `ScreenSection`을 만들 때 붙이며 projection에 복사하지 않는다.
+- 한 번의 창·Space 관찰에서 나온 Space 그룹·Space 구성 차이·저장하지 않는 앱은 화면별 projection 한 값으로 교체한다. async 완료 순서가 뒤집혀도 이미 게시한 sequence보다 오래된 sample은 버린다. stable snapshot을 얻지 못하면 같은 sample로 저장된 Space 그룹은 유지하고 현재 상태만 unknown으로 바꾼다. 프로필·복원 소스·마지막 결과는 각자의 수명에서 파생해 `ScreenSection`을 만들 때 붙이며 projection에 복사하지 않는다.
 - UI 없이 완결되는 헤드리스 파사드다. UI는 이 상태의 표현일 뿐이며, 어떤 UI든 여기에 바인딩만 하면 된다.
 
 ### MenuBarUI

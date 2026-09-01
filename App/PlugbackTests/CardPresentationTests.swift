@@ -9,6 +9,17 @@ final class CardPresentationTests: XCTestCase {
     private let screen = ScreenInfo(id: "ext-1", name: "LG UltraFine 27",
                                     frame: CGRect(x: 1512, y: 0, width: 2560, height: 1440), isBuiltin: false)
 
+    func testCaptureNoticeDistinguishesSuccessFromObservationFailure() {
+        XCTAssertEqual(
+            CardPresentation.captureNotice(.captured(appCount: 2)),
+            "저장됨 · 대상 앱 2개"
+        )
+        XCTAssertEqual(
+            CardPresentation.captureNotice(.spaceObservationUnavailable),
+            "Space 상태를 확인하지 못해 저장하지 않았습니다.\n잠시 후 다시 시도해 주세요."
+        )
+    }
+
     func testSkipReasonWordingCoversEveryOutcome() {
         // US-008: "왜 안 옮겨졌지?"의 답 전부 — 이전엔 컴파일러의 exhaustive switch만 방어했다
         XCTAssertEqual(CardPresentation.describe(.moved), "이동")
