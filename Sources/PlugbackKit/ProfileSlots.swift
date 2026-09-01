@@ -20,17 +20,8 @@ enum SpaceBlockReason: Equatable, Sendable {
 }
 
 enum SpaceBinding: Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
-        case regular
-        case fullscreen
-    }
-
     case regular(SpaceHint)
-    /// 이 화면에서 single native fullscreen으로 다시 만들 의도.
-    /// 화면은 슬롯이 이미 정하므로 별도 식별자를 중복 저장하지 않는다.
-    case fullscreen
-    /// binding을 확정하지 못해도 어느 복원 범위의 의도인지는 잃지 않는다.
-    case unresolved(kind: Kind, reason: SpaceBlockReason)
+    case unresolved(reason: SpaceBlockReason)
 }
 
 struct SlotSpaceOverlay: Equatable, Sendable {
@@ -283,11 +274,10 @@ final class ProfileSlots: ObservableObject {
 
     /// 수집 — 지금 배치를 메모리 후보에 담는다. **파일에는 닿지 않는다.**
     /// 자동 슬롯이 켜진 동안 방문한 외장 Space의 새 앱도 candidate에 등록한다.
-    /// 체크 해제된 앱과 방문 대기 앱은 갱신하지 않는다. 방문 대기는 현재 복원 세션의
-    /// 저장값을 지키므로, 대상 화면 밖에서 보이더라도 제거 대상으로도 낮추지 않는다.
+    /// 체크 해제된 앱은 갱신하지 않는다. 안내형 복원이 진행 중일 때는 컨트롤러가 이 호출을
+    /// 통째로 미뤄, 사용자가 Space를 옮기는 중간 배치가 저장 후보가 되지 않게 한다.
     func collect(
-        windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil,
-        excluding excludedBundleIDs: Set<String> = []
+        windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil
     ) {
         guard !isSaveBlocked else { return }
         let bases = spaceBases(for: screens)
@@ -298,8 +288,7 @@ final class ProfileSlots: ObservableObject {
                 overlay: SlotSpaceOverlay()
             )
             var next = CaptureEngine.collect(
-                windows: windows, on: screen, merging: base, snapshot: snapshot,
-                excluding: excludedBundleIDs
+                windows: windows, on: screen, merging: base, snapshot: snapshot
             )
             next.profile.fingerprint = screen.fingerprint
             candidates[screen.id] = next

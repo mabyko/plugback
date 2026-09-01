@@ -1,168 +1,241 @@
 import Foundation
 
-struct SpaceRestoreScope: Equatable, Sendable {
-    let regular: Bool
-    let fullscreen: Bool
-
-    static let none = Self(regular: false, fullscreen: false)
-    static let all = Self(regular: true, fullscreen: true)
-
-    var isEnabled: Bool { regular || fullscreen }
-
-    func restores(_ binding: SpaceBinding) -> Bool {
-        switch binding {
-        case .regular, .unresolved(.regular, _): regular
-        case .fullscreen, .unresolved(.fullscreen, _): fullscreen
-        }
-    }
-}
-
-/// 외장 화면이 연결된 동안 여러 복원 회차와 방문 대기를 이어가는 실행 단위.
-/// 슬롯 선택과 UI 상태는 바깥에 두고, 선택이 끝난 값만 받아 복원 순서를 완결한다.
+/// 명시적으로 시작한 한 복원에서, 다른 화면에 남은 일반 Space만 끝까지 추적한다.
+/// 처음부터 목표 화면에 있던 비활성 Space는 다루지 않는다.
 @MainActor
 final class RestoreSession {
-    private let scope: SpaceRestoreScope
+    struct RecoveryID: Hashable, Sendable {
+        let targetScreenID: String
+        let opaqueName: String
+    }
+
+    struct Recovery: Equatable, Sendable {
+        enum Step: Equatable, Sendable {
+            case move(sourceScreenID: String)
+            case visit
+            case unavailable
+        }
+
+        let id: RecoveryID
+        let spaceNumber: Int
+        var bundleIDs: Set<String>
+        var step: Step
+    }
+
+    struct Update: Equatable, Sendable {
+        let results: [RestoreResult]
+        let recoveries: [Recovery]
+    }
+
+    private struct Pending {
+        let hint: SpaceHint
+        var recovery: Recovery
+    }
 
     private let observation: DesktopObservation
     private let gateway: WindowGateway
-    private var awaitingVisitByScreen: [String: Set<String>] = [:]
+    private var pending: [RecoveryID: Pending] = [:]
+    private var generation = 0
 
-    init(
-        scope: SpaceRestoreScope,
-        observation: DesktopObservation,
-        gateway: WindowGateway
-    ) {
-        self.scope = scope
+    init(observation: DesktopObservation, gateway: WindowGateway) {
         self.observation = observation
         self.gateway = gateway
     }
 
-    func restoreAll(
-        resolved: [String: ResolvedProfile],
-        screens: [ScreenInfo],
-        options: RestoreOptions
-    ) async -> [RestoreResult] {
-        await observation.drain()
-        awaitingVisitByScreen.removeAll()
-        if scope.isEnabled {
-            addAwaitingVisits(from: resolved, screens: screens)
+    var recoveries: [Recovery] {
+        pending.values.map(\.recovery).sorted {
+            ($0.id.targetScreenID, $0.spaceNumber, $0.id.opaqueName)
+                < ($1.id.targetScreenID, $1.spaceNumber, $1.id.opaqueName)
         }
-        return await restoreSpacePass(
-            resolved: resolved, screens: screens, onlyBundles: nil, options: options
-        )
     }
 
-    func restoreVisited(
+    var hasPendingRecovery: Bool { !pending.isEmpty }
+
+    /// 새 복원 요청. 이전 안내는 폐기하고, 이번 관찰에서 실제로 잘못된 화면에 있는
+    /// 일반 Space만 회복 대상으로 잡는다.
+    func restore(
         resolved: [String: ResolvedProfile],
         screens: [ScreenInfo],
         options: RestoreOptions
-    ) async -> [RestoreResult] {
-        guard scope.isEnabled else { return [] }
+    ) async -> Update {
+        generation &+= 1
+        let startedGeneration = generation
+        pending.removeAll()
         await observation.drain()
-        let awaitingVisit = currentAwaitingVisits(in: resolved)
-        guard !awaitingVisit.isEmpty else { return [] }
-        return await restoreSpacePass(
-            resolved: resolved, screens: screens,
-            onlyBundles: awaitingVisit, options: options
-        )
-    }
-
-    func invalidate(screens screenIDs: Set<String>) {
-        for screenID in screenIDs { awaitingVisitByScreen.removeValue(forKey: screenID) }
-    }
-
-    /// 명부에서 완전히 삭제한 앱만 잊는다. 체크 해제한 앱의 방문 대기는 그대로 둔다.
-    func invalidate(bundleID: String, on screenID: String) {
-        removeCompleted([screenID: [bundleID]])
-    }
-
-    func hasAwaitingVisit(in resolved: [String: ResolvedProfile]) -> Bool {
-        !currentAwaitingVisits(in: resolved).isEmpty
-    }
-
-    func awaitingBundleIDs(in resolved: [String: ResolvedProfile]) -> Set<String> {
-        Set(currentAwaitingVisits(in: resolved).values.flatMap { $0 })
-    }
-
-    private func restoreSpacePass(
-        resolved: [String: ResolvedProfile],
-        screens: [ScreenInfo],
-        onlyBundles: [String: Set<String>]?,
-        options: RestoreOptions
-    ) async -> [RestoreResult] {
-        await reopenLegacyWindowless(
-            in: resolved, screens: screens, only: onlyBundles, options: options
-        )
-        let windows = await observation.windows(of: nil)
-        let snapshot = scope.isEnabled
-            ? await observation.stableSnapshot(for: windows)
-            : nil
-        let pass = await RestoreEngine.restore(
+        guard startedGeneration == generation else {
+            return Update(results: [], recoveries: [])
+        }
+        await reopenLegacyWindowless(in: resolved, screens: screens, options: options)
+        guard startedGeneration == generation else {
+            return Update(results: [], recoveries: [])
+        }
+        let sample = await observation.sample()
+        guard startedGeneration == generation else {
+            return Update(results: [], recoveries: [])
+        }
+        addRecoveries(from: resolved, screens: screens, snapshot: sample.snapshot)
+        let results = await RestoreEngine.restore(
             resolved: resolved,
             screens: screens,
-            windows: windows,
-            snapshot: snapshot,
-            onlyBundles: onlyBundles,
-            scope: scope,
+            windows: sample.windows,
+            snapshot: sample.snapshot,
             using: gateway,
             options: options
         )
-        removeCompleted(pass.completedByScreen)
-        return pass.results
-    }
-
-    private func addAwaitingVisits(
-        from resolved: [String: ResolvedProfile], screens: [ScreenInfo]
-    ) {
-        for item in RestoreEngine.claimedApps(in: resolved, screens: screens)
-        where item.pair.overlay?.byBundle[item.app.bundleID].map(scope.restores) == true {
-            awaitingVisitByScreen[item.screenID, default: []].insert(item.app.bundleID)
+        guard startedGeneration == generation else {
+            return Update(results: results, recoveries: [])
         }
+        return Update(results: results, recoveries: recoveries)
     }
 
-    private func currentAwaitingVisits(
-        in resolved: [String: ResolvedProfile]
-    ) -> [String: Set<String>] {
-        awaitingVisitByScreen.reduce(into: [:]) { result, entry in
-            guard let pair = resolved[entry.key] else { return }
-            let enabled = Set(pair.profile.apps.compactMap { app -> String? in
-                guard app.isEnabled,
-                      pair.overlay?.byBundle[app.bundleID].map(scope.restores) == true
-                else { return nil }
-                return app.bundleID
-            })
-            let current = entry.value.intersection(enabled)
-            if !current.isEmpty { result[entry.key] = current }
+    /// Mission Control이 닫히거나, 안내한 Space를 사용자가 방문했을 때만 호출한다.
+    /// 진행 중인 안내가 없으면 창과 Space를 다시 읽지 않는다.
+    func recheck(
+        resolved: [String: ResolvedProfile],
+        screens: [ScreenInfo],
+        options: RestoreOptions
+    ) async -> Update? {
+        guard !pending.isEmpty else { return nil }
+        let startedGeneration = generation
+        await observation.drain()
+        guard startedGeneration == generation, !pending.isEmpty else { return nil }
+        let sample = await observation.sample()
+        guard startedGeneration == generation, !pending.isEmpty else { return nil }
+        guard let snapshot = sample.snapshot else {
+            for id in pending.keys { pending[id]?.recovery.step = .unavailable }
+            return Update(results: [], recoveries: recoveries)
+        }
+
+        var currentIDs: [RecoveryID] = []
+        var onlyBundles: [String: Set<String>] = [:]
+        for id in Array(pending.keys) {
+            guard var item = pending[id] else { continue }
+            switch SpacePlacement.of(item.hint, on: id.targetScreenID, in: snapshot) {
+            case .stranded(let found):
+                item.recovery.step = .move(sourceScreenID: found.screenID)
+            case .inactive:
+                if item.recovery.bundleIDs.isEmpty {
+                    pending.removeValue(forKey: id)
+                    continue
+                }
+                item.recovery.step = .visit
+            case .current:
+                if item.recovery.bundleIDs.isEmpty {
+                    pending.removeValue(forKey: id)
+                    continue
+                }
+                item.recovery.step = .visit
+                currentIDs.append(id)
+                onlyBundles[id.targetScreenID, default: []]
+                    .formUnion(item.recovery.bundleIDs)
+            case .fullscreen, .unsupported, .missing, .unknown:
+                item.recovery.step = .unavailable
+            }
+            pending[id] = item
+        }
+
+        guard !currentIDs.isEmpty else {
+            return Update(results: [], recoveries: recoveries)
+        }
+        let results = await RestoreEngine.restore(
+            resolved: resolved,
+            screens: screens,
+            windows: sample.windows,
+            snapshot: snapshot,
+            onlyBundles: onlyBundles,
+            using: gateway,
+            options: options
+        )
+        let attempted = Set(results.flatMap(\.entries).map(\.bundleID))
+        for id in currentIDs {
+            guard var item = pending[id] else { continue }
+            item.recovery.bundleIDs.subtract(attempted)
+            if item.recovery.bundleIDs.isEmpty {
+                pending.removeValue(forKey: id)
+            } else {
+                item.recovery.step = .unavailable
+                pending[id] = item
+            }
+        }
+        return Update(results: results, recoveries: recoveries)
+    }
+
+    func cancel() {
+        generation &+= 1
+        pending.removeAll()
+    }
+
+    private func addRecoveries(
+        from resolved: [String: ResolvedProfile],
+        screens: [ScreenInfo],
+        snapshot: SpaceSnapshot?
+    ) {
+        guard let snapshot else { return }
+        let claimed = RestoreEngine.claimedApps(in: resolved, screens: screens)
+        for screen in screens.sorted(by: { $0.id < $1.id }) {
+            guard let pair = resolved[screen.id],
+                  RestoreEngine.isEligible(pair, on: screen),
+                  let overlay = pair.overlay else { continue }
+
+            var hintsByName: [String: SpaceHint] = [:]
+            for hint in overlay.regularSpaces {
+                hintsByName[hint.opaqueName] = hintsByName[hint.opaqueName] ?? hint
+            }
+            for binding in overlay.byBundle.values {
+                if case .regular(let hint) = binding {
+                    hintsByName[hint.opaqueName] = hintsByName[hint.opaqueName] ?? hint
+                }
+            }
+            let ordered = hintsByName.values.sorted {
+                ($0.localOrderHint, $0.opaqueName) < ($1.localOrderHint, $1.opaqueName)
+            }
+            for (index, hint) in ordered.enumerated() {
+                guard case .stranded(let found) = SpacePlacement.of(
+                    hint, on: screen.id, in: snapshot
+                ) else { continue }
+                let bundleIDs = Set(claimed.compactMap { item -> String? in
+                    guard item.screenID == screen.id,
+                          case .regular(let appHint) = item.pair.overlay?
+                            .byBundle[item.app.bundleID],
+                          appHint.opaqueName == hint.opaqueName else { return nil }
+                    return item.app.bundleID
+                })
+                guard !bundleIDs.isEmpty else { continue }
+                let id = RecoveryID(
+                    targetScreenID: screen.id,
+                    opaqueName: hint.opaqueName
+                )
+                pending[id] = Pending(
+                    hint: hint,
+                    recovery: Recovery(
+                        id: id,
+                        spaceNumber: index + 1,
+                        bundleIDs: bundleIDs,
+                        step: .move(sourceScreenID: found.screenID)
+                    )
+                )
+            }
         }
     }
 
     private func reopenLegacyWindowless(
         in resolved: [String: ResolvedProfile],
         screens: [ScreenInfo],
-        only: [String: Set<String>]?,
         options: RestoreOptions
     ) async {
         guard options.reopenWindowless else { return }
         var windowless: [String] = []
         for item in RestoreEngine.claimedApps(in: resolved, screens: screens) {
-            guard only == nil || only?[item.screenID]?.contains(item.app.bundleID) == true,
-                  item.pair.overlay?.byBundle[item.app.bundleID].map(scope.restores) != true,
+            guard item.pair.overlay?.byBundle[item.app.bundleID] == nil,
                   await gateway.isRunning(bundleID: item.app.bundleID),
-                  await observation.windows(of: [item.app.bundleID]).isEmpty else { continue }
+                  await observation.sample(
+                    of: [item.app.bundleID], includeSpaces: false
+                  ).windows.isEmpty else { continue }
             windowless.append(item.app.bundleID)
         }
         await withTaskGroup(of: Void.self) { group in
             for bundleID in windowless {
                 group.addTask { _ = await self.gateway.openWindow(bundleID: bundleID) }
-            }
-        }
-    }
-
-    private func removeCompleted(_ completed: [String: Set<String>]) {
-        for (screenID, bundleIDs) in completed {
-            awaitingVisitByScreen[screenID]?.subtract(bundleIDs)
-            if awaitingVisitByScreen[screenID]?.isEmpty == true {
-                awaitingVisitByScreen.removeValue(forKey: screenID)
             }
         }
     }

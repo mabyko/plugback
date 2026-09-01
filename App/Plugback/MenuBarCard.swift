@@ -246,7 +246,7 @@ private struct Card: View {
                     .monospacedDigit()
                 Spacer()
                 if let status = CardPresentation.spaceGroupStatus(
-                    for: group.kind, hasAwaitingVisit: group.hasAwaitingVisit
+                    for: group.kind, guide: group.guide
                 ) {
                     Text(status)
                         .font(.system(size: 10))
@@ -254,6 +254,12 @@ private struct Card: View {
                 }
             }
             .foregroundStyle(.secondary)
+
+            if let guide = group.guide {
+                Text(CardPresentation.spaceGuide(guide))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
 
             if group.apps.isEmpty {
                 Text("저장된 앱 없음")

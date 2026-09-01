@@ -24,8 +24,6 @@ final class FakeWindowGateway: WindowGateway, WindowMoveSource {
     var perWindowBehavior: [Int: MoveBehavior] = [:]
     private(set) var moveCalls: [(windowID: Int, target: CGRect)] = []
     private(set) var standardWindowsCallsAtMove: [Int] = []
-    var fullscreenSucceeds = true
-    private(set) var fullscreenCalls: [(windowID: Int, fullscreen: Bool)] = []
 
     func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
         standardWindowsCalls += 1
@@ -63,20 +61,6 @@ final class FakeWindowGateway: WindowGateway, WindowMoveSource {
         case .unresponsive:
             return nil
         }
-    }
-
-    func setFullscreen(windowID: Int, _ fullscreen: Bool) async -> Bool {
-        fullscreenCalls.append((windowID, fullscreen))
-        guard fullscreenSucceeds,
-              let i = windowsList.firstIndex(where: { $0.id == windowID }) else { return false }
-        let old = windowsList[i]
-        windowsList[i] = WindowInfo(
-            id: old.id, appBundleID: old.appBundleID, appName: old.appName,
-            frame: old.frame,
-            fullscreenState: fullscreen ? .fullscreen : .windowed,
-            isMinimized: old.isMinimized, windowServerID: old.windowServerID
-        )
-        return true
     }
 
     func isRunning(bundleID: String) async -> Bool { runningBundleIDs.contains(bundleID) }

@@ -4,283 +4,182 @@ import XCTest
 
 @MainActor
 final class RestoreSessionTests: XCTestCase {
-    private let screen = ScreenInfo(
+    private let builtin = ScreenInfo(
+        id: "builtin", name: "Built-in",
+        frame: CGRect(x: 0, y: 0, width: 1000, height: 1000),
+        isBuiltin: true
+    )
+    private let external = ScreenInfo(
         id: "external", name: "External",
         frame: CGRect(x: 1000, y: 0, width: 1000, height: 1000),
         isBuiltin: false
     )
-    private let hint = SpaceHint(opaqueName: "saved-space", localOrderHint: 1)
+    private let hint = SpaceHint(opaqueName: "saved-space", localOrderHint: 2)
+    private let savedID = SpaceRuntimeID(1)
+    private let builtinID = SpaceRuntimeID(2)
+    private let externalID = SpaceRuntimeID(3)
 
-    func testRestoreAllWaitsForTheSavedSpaceThenCompletesOnVisit() async {
+    func testStrandedSpaceMovesThenWaitsForVisitThenRestores() async {
+        let (session, reader, gateway) = makeSession()
+        let resolved = resolvedProfile()
+
+        reader.availability = .available(strandedSnapshot())
+        let started = await session.restore(
+            resolved: resolved, screens: [external], options: RestoreOptions()
+        )
+
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+        XCTAssertEqual(started.recoveries.map(\.spaceNumber), [1])
+        XCTAssertEqual(started.recoveries.first?.step, .move(sourceScreenID: builtin.id))
+
+        reader.availability = .available(movedSnapshot(isCurrent: false))
+        let moved = await session.recheck(
+            resolved: resolved, screens: [external], options: RestoreOptions()
+        )
+
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+        XCTAssertEqual(moved?.recoveries.first?.step, .visit)
+
+        reader.availability = .available(movedSnapshot(isCurrent: true))
+        let visited = await session.recheck(
+            resolved: resolved, screens: [external], options: RestoreOptions()
+        )
+
+        XCTAssertEqual(visited?.results.first?.entries.first?.outcome, .moved)
+        XCTAssertEqual(gateway.moveCalls.map(\.target), [
+            CGRect(x: 1000, y: 0, width: 500, height: 1000),
+        ])
+        XCTAssertFalse(session.hasPendingRecovery)
+    }
+
+    func testInitiallyInactiveSpaceNeverBecomesAGeneralVisitRestore() async {
+        let (session, reader, gateway) = makeSession()
+        let resolved = resolvedProfile()
+        reader.availability = .available(movedSnapshot(isCurrent: false))
+
+        let started = await session.restore(
+            resolved: resolved, screens: [external], options: RestoreOptions()
+        )
+
+        XCTAssertTrue(started.recoveries.isEmpty)
+        XCTAssertFalse(session.hasPendingRecovery)
+        reader.availability = .available(movedSnapshot(isCurrent: true))
+        let rechecked = await session.recheck(
+            resolved: resolved, screens: [external], options: RestoreOptions()
+        )
+        XCTAssertNil(rechecked)
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testRecoveryMatchesAppsByOpaqueIdentityNotOldOrderHint() async {
         let (session, reader, _) = makeSession()
-        let resolved = resolvedProfile()
-
-        reader.availability = .available(snapshot(savedSpaceIsCurrent: false))
-        _ = await session.restoreAll(
-            resolved: resolved, screens: [screen], options: RestoreOptions()
-        )
-        XCTAssertTrue(session.hasAwaitingVisit(in: resolved))
-
-        reader.availability = .available(snapshot(savedSpaceIsCurrent: true))
-        let results = await session.restoreVisited(
-            resolved: resolved, screens: [screen], options: RestoreOptions()
-        )
-
-        XCTAssertEqual(results.first?.entries.first?.outcome, .skipped(.alreadyInPlace))
-        XCTAssertFalse(session.hasAwaitingVisit(in: resolved))
-    }
-
-    func testInvalidateDropsOnlyTheNamedScreensAwaitingVisit() async {
-        let (session, reader, _) = makeSession()
-        let resolved = resolvedProfile()
-        reader.availability = .available(snapshot(savedSpaceIsCurrent: false))
-        _ = await session.restoreAll(
-            resolved: resolved, screens: [screen], options: RestoreOptions()
-        )
-
-        session.invalidate(screens: [screen.id])
-
-        XCTAssertFalse(session.hasAwaitingVisit(in: resolved))
-    }
-
-    func testDisabledAppIsDerivedOutWithoutDestroyingItsAwaitingVisit() async {
-        let (session, reader, _) = makeSession()
-        let resolved = resolvedProfile()
-        reader.availability = .available(snapshot(savedSpaceIsCurrent: false))
-        _ = await session.restoreAll(
-            resolved: resolved, screens: [screen], options: RestoreOptions()
-        )
-
-        var disabled = resolved
-        disabled[screen.id]?.profile.apps[0].isEnabled = false
-        XCTAssertFalse(session.hasAwaitingVisit(in: disabled))
-        XCTAssertTrue(session.awaitingBundleIDs(in: disabled).isEmpty)
-        _ = await session.restoreVisited(
-            resolved: disabled, screens: [screen], options: RestoreOptions()
-        )
-
-        XCTAssertTrue(session.hasAwaitingVisit(in: resolved))
-    }
-
-    func testDisabledScopeUsesLegacyRestoreWithoutAwaitingVisit() async {
-        let (session, reader, gateway) = makeSession(scope: .none)
-        let displaced = CGRect(x: 1200, y: 100, width: 400, height: 400)
-        gateway.windowsList[0] = WindowInfo(
-            id: 1, appBundleID: "com.app", appName: "App",
-            frame: displaced, windowServerID: 11
-        )
-        let resolved = resolvedProfile()
-
-        _ = await session.restoreAll(
-            resolved: resolved, screens: [screen], options: RestoreOptions()
-        )
-
-        XCTAssertEqual(gateway.moveCalls.map(\.windowID), [1])
-        XCTAssertFalse(session.hasAwaitingVisit(in: resolved))
-        XCTAssertEqual(reader.snapshotCallCount, 0)
-    }
-
-    func testExistingProfileWithoutEnabledAppsStillReturnsAnEmptyResult() async {
-        let (session, reader, _) = makeSession(scope: .none)
-        var resolved = resolvedProfile()
-        resolved[screen.id]?.profile.apps[0].isEnabled = false
-
-        let results = await session.restoreAll(
-            resolved: resolved, screens: [screen], options: RestoreOptions()
-        )
-
-        XCTAssertEqual(results.map(\.screenID), [screen.id])
-        XCTAssertTrue(results[0].entries.isEmpty)
-        XCTAssertEqual(reader.snapshotCallCount, 0)
-    }
-
-    func testVisitedPassDoesNotEmitEmptyResultsForOtherScreens() async {
-        let other = ScreenInfo(
-            id: "other", name: "Other",
-            frame: CGRect(x: 2000, y: 0, width: 1000, height: 1000),
-            isBuiltin: false
-        )
-        let gateway = FakeWindowGateway()
-        gateway.runningBundleIDs = ["com.app", "com.other"]
-        gateway.windowsList = [
-            WindowInfo(
-                id: 1, appBundleID: "com.app", appName: "App",
-                frame: CGRect(x: 1000, y: 0, width: 500, height: 500),
-                windowServerID: 11
-            ),
-            WindowInfo(
-                id: 2, appBundleID: "com.other", appName: "Other",
-                frame: CGRect(x: 2000, y: 0, width: 500, height: 500),
-                windowServerID: 22
-            ),
-        ]
-        let reader = RestoreSessionSpaceReader()
-        let session = RestoreSession(
-            scope: SpaceRestoreScope(regular: true, fullscreen: false),
-            observation: DesktopObservation(gateway: gateway, spaceReader: reader),
-            gateway: gateway
-        )
-        var resolved = resolvedProfile()
-        resolved[other.id] = ResolvedProfile(profile: Profile(
-            screenID: other.id,
-            screenName: other.name,
-            apps: [TargetApp(
-                bundleID: "com.other", displayName: "Other",
-                unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5)
-            )]
-        ))
-        reader.availability = .available(snapshot(savedSpaceIsCurrent: false))
-        let initial = await session.restoreAll(
-            resolved: resolved, screens: [screen, other], options: RestoreOptions()
-        )
-        XCTAssertEqual(initial.first(where: { $0.screenID == other.id })?.entries.count, 1)
-
-        reader.availability = .available(snapshot(savedSpaceIsCurrent: true))
-        let visited = await session.restoreVisited(
-            resolved: resolved, screens: [screen, other], options: RestoreOptions()
-        )
-
-        XCTAssertEqual(visited.map(\.screenID), [screen.id])
-    }
-
-    func testFingerprintMismatchDoesNotClaimAnAwaitingVisit() async {
-        let staleFingerprint = ScreenFingerprint(vendor: 1, model: 1, serial: 1)
-        let liveFingerprint = ScreenFingerprint(vendor: 2, model: 2, serial: 2)
-        let first = ScreenInfo(
-            id: "a-mismatch", name: "Mismatch",
-            frame: CGRect(x: 1000, y: 0, width: 1000, height: 1000),
-            isBuiltin: false, fingerprint: liveFingerprint
-        )
-        let second = ScreenInfo(
-            id: "b-valid", name: "Valid",
-            frame: CGRect(x: 2000, y: 0, width: 1000, height: 1000),
-            isBuiltin: false, fingerprint: liveFingerprint
-        )
-        let firstHint = SpaceHint(opaqueName: "first-space", localOrderHint: 1)
-        let secondHint = SpaceHint(opaqueName: "second-space", localOrderHint: 1)
-        let app = TargetApp(
-            bundleID: "com.app", displayName: "App",
-            unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5)
-        )
-        let resolved = [
-            first.id: ResolvedProfile(
-                profile: Profile(
-                    screenID: first.id, screenName: first.name, apps: [app],
-                    fingerprint: staleFingerprint
-                ),
-                overlay: SlotSpaceOverlay(byBundle: [app.bundleID: .regular(firstHint)])
-            ),
-            second.id: ResolvedProfile(
-                profile: Profile(
-                    screenID: second.id, screenName: second.name, apps: [app],
-                    fingerprint: liveFingerprint
-                ),
-                overlay: SlotSpaceOverlay(byBundle: [app.bundleID: .regular(secondHint)])
-            ),
-        ]
-        let gateway = FakeWindowGateway()
-        gateway.runningBundleIDs = [app.bundleID]
-        gateway.windowsList = [WindowInfo(
-            id: 1, appBundleID: app.bundleID, appName: app.displayName,
-            frame: CGRect(x: 2000, y: 0, width: 500, height: 500), windowServerID: 11
+        let oldHint = SpaceHint(opaqueName: hint.opaqueName, localOrderHint: 1)
+        let resolved = [external.id: ResolvedProfile(
+            profile: resolvedProfile()[external.id]!.profile,
+            overlay: SlotSpaceOverlay(
+                byBundle: ["com.app": .regular(oldHint)],
+                regularSpaces: [hint]
+            )
         )]
-        let reader = RestoreSessionSpaceReader()
-        let firstSpace = SpaceRuntimeID(1)
-        let secondSpace = SpaceRuntimeID(2)
-        reader.availability = .available(SpaceSnapshot(
-            displays: [
-                .init(screenID: first.id, spaces: [
-                    .init(
-                        runtimeID: firstSpace, opaqueName: firstHint.opaqueName,
-                        localOrder: 1, kind: .regular, isCurrent: true
-                    ),
-                ]),
-                .init(screenID: second.id, spaces: [
-                    .init(
-                        runtimeID: secondSpace, opaqueName: secondHint.opaqueName,
-                        localOrder: 1, kind: .regular, isCurrent: true
-                    ),
-                ]),
-            ],
-            membershipsByWindowServerID: [11: [secondSpace]]
-        ))
-        let session = RestoreSession(
-            scope: SpaceRestoreScope(regular: true, fullscreen: false),
-            observation: DesktopObservation(gateway: gateway, spaceReader: reader),
-            gateway: gateway
+        reader.availability = .available(strandedSnapshot())
+
+        let started = await session.restore(
+            resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
-        let results = await session.restoreAll(
-            resolved: resolved, screens: [second, first], options: RestoreOptions()
-        )
-
-        XCTAssertEqual(
-            results.first(where: { $0.screenID == first.id })?.screenSkipReason,
-            .fingerprintMismatch
-        )
-        XCTAssertEqual(
-            results.first(where: { $0.screenID == second.id })?.entries.first?.outcome,
-            .skipped(.alreadyInPlace)
-        )
-        XCTAssertFalse(
-            session.hasAwaitingVisit(in: resolved),
-            "건너뛴 화면이 먼저 선점한 방문 대기를 남기면 안 된다"
-        )
+        XCTAssertEqual(started.recoveries.first?.bundleIDs, ["com.app"])
     }
 
-    func testUnresolvedBindingUsesOnlyItsOwnRestoreScope() {
-        let regularOnly = SpaceRestoreScope(regular: true, fullscreen: false)
-        let fullscreenOnly = SpaceRestoreScope(regular: false, fullscreen: true)
-        let regular = SpaceBinding.unresolved(kind: .regular, reason: .spaceMissing)
-        let fullscreen = SpaceBinding.unresolved(
-            kind: .fullscreen, reason: .unsupportedSpace
-        )
+    func testCancelDuringObservationCannotReviveARecovery() async {
+        let (session, reader, gateway) = makeSession()
+        reader.availability = .available(strandedSnapshot())
+        gateway.standardWindowsDelay = 0.02
 
-        XCTAssertTrue(regularOnly.restores(regular))
-        XCTAssertFalse(regularOnly.restores(fullscreen))
-        XCTAssertFalse(fullscreenOnly.restores(regular))
-        XCTAssertTrue(fullscreenOnly.restores(fullscreen))
+        let restore = Task {
+            await session.restore(
+                resolved: resolvedProfile(), screens: [external],
+                options: RestoreOptions()
+            )
+        }
+        while gateway.standardWindowsCalls == 0 { await Task.yield() }
+        session.cancel()
+        let update = await restore.value
+
+        XCTAssertTrue(update.recoveries.isEmpty)
+        XCTAssertFalse(session.hasPendingRecovery)
     }
 
-    func testDisabledBindingUsesLegacyReopenWhileAnotherScopeIsEnabled() async {
-        let (session, _, gateway) = makeSession(
-            scope: SpaceRestoreScope(regular: true, fullscreen: false)
-        )
-        gateway.windowsList = []
-        gateway.windowOnReopen["com.app"] = WindowInfo(
-            id: 2, appBundleID: "com.app", appName: "App",
-            frame: CGRect(x: 100, y: 100, width: 400, height: 400),
-            windowServerID: 22
-        )
-        var resolved = resolvedProfile()
-        resolved[screen.id]?.overlay?.byBundle["com.app"] = .fullscreen
+    func testStrandedSpaceWithoutTargetAppsDoesNotBlockTheSession() async {
+        let (session, reader, _) = makeSession()
+        reader.availability = .available(strandedSnapshot())
+        let resolved = [external.id: ResolvedProfile(
+            profile: Profile(screenID: external.id, screenName: external.name),
+            overlay: SlotSpaceOverlay(regularSpaces: [hint])
+        )]
 
-        let results = await session.restoreAll(
-            resolved: resolved, screens: [screen],
-            options: RestoreOptions(reopenWindowless: true)
+        let update = await session.restore(
+            resolved: resolved, screens: [external], options: RestoreOptions()
         )
 
-        XCTAssertEqual(gateway.openWindowCalls, ["com.app"])
-        XCTAssertEqual(results.first?.entries.first?.outcome, .moved)
-        XCTAssertFalse(session.hasAwaitingVisit(in: resolved))
+        XCTAssertTrue(update.recoveries.isEmpty)
+        XCTAssertFalse(session.hasPendingRecovery)
     }
 
-    private func makeSession(
-        scope: SpaceRestoreScope = SpaceRestoreScope(regular: true, fullscreen: false)
-    ) -> (RestoreSession, RestoreSessionSpaceReader, FakeWindowGateway) {
+    func testUncertainObservationNeverFallsBackToFlatRestore() async {
+        let (session, reader, gateway) = makeSession()
+        reader.availability = .unavailable
+
+        let update = await session.restore(
+            resolved: resolvedProfile(), screens: [external], options: RestoreOptions()
+        )
+
+        XCTAssertTrue(update.results.first?.entries.isEmpty == true)
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testLegacyProfileStillUsesTheOrdinaryRestorePath() async {
         let gateway = FakeWindowGateway()
         gateway.runningBundleIDs = ["com.app"]
         gateway.windowsList = [WindowInfo(
             id: 1, appBundleID: "com.app", appName: "App",
-            frame: CGRect(x: 1000, y: 0, width: 500, height: 500),
+            frame: CGRect(x: 100, y: 100, width: 300, height: 300)
+        )]
+        let session = RestoreSession(
+            observation: DesktopObservation(gateway: gateway, spaceReader: nil),
+            gateway: gateway
+        )
+        let profile = Profile(
+            screenID: external.id,
+            screenName: external.name,
+            apps: [TargetApp(
+                bundleID: "com.app", displayName: "App",
+                unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 1)
+            )]
+        )
+
+        let update = await session.restore(
+            resolved: [external.id: ResolvedProfile(profile: profile, overlay: nil)],
+            screens: [external],
+            options: RestoreOptions()
+        )
+
+        XCTAssertEqual(update.results.first?.entries.first?.outcome, .moved)
+    }
+
+    private func makeSession() -> (
+        RestoreSession, RestoreSessionSpaceReader, FakeWindowGateway
+    ) {
+        let gateway = FakeWindowGateway()
+        gateway.runningBundleIDs = ["com.app"]
+        gateway.windowsList = [WindowInfo(
+            id: 1, appBundleID: "com.app", appName: "App",
+            frame: CGRect(x: 100, y: 100, width: 300, height: 300),
             windowServerID: 11
         )]
         let reader = RestoreSessionSpaceReader()
-        let observation = DesktopObservation(gateway: gateway, spaceReader: reader)
         return (
             RestoreSession(
-                scope: scope,
-                observation: observation,
+                observation: DesktopObservation(gateway: gateway, spaceReader: reader),
                 gateway: gateway
             ),
             reader,
@@ -289,13 +188,13 @@ final class RestoreSessionTests: XCTestCase {
     }
 
     private func resolvedProfile() -> [String: ResolvedProfile] {
-        [screen.id: ResolvedProfile(
+        [external.id: ResolvedProfile(
             profile: Profile(
-                screenID: screen.id,
-                screenName: screen.name,
+                screenID: external.id,
+                screenName: external.name,
                 apps: [TargetApp(
                     bundleID: "com.app", displayName: "App",
-                    unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5)
+                    unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 1)
                 )]
             ),
             overlay: SlotSpaceOverlay(
@@ -304,21 +203,42 @@ final class RestoreSessionTests: XCTestCase {
         )]
     }
 
-    private func snapshot(savedSpaceIsCurrent: Bool) -> SpaceSnapshot {
-        let saved = SpaceRuntimeID(1)
-        let other = SpaceRuntimeID(2)
-        return SpaceSnapshot(
-            displays: [.init(screenID: screen.id, spaces: [
-                .init(
-                    runtimeID: saved, opaqueName: hint.opaqueName, localOrder: 1,
-                    kind: .regular, isCurrent: savedSpaceIsCurrent
-                ),
-                .init(
-                    runtimeID: other, opaqueName: "other-space", localOrder: 2,
-                    kind: .regular, isCurrent: !savedSpaceIsCurrent
-                ),
-            ])],
-            membershipsByWindowServerID: [11: [saved]]
+    private func strandedSnapshot() -> SpaceSnapshot {
+        SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(builtinID, "builtin-current", order: 1, current: true),
+                    space(savedID, hint.opaqueName, order: 2),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(externalID, "external-current", order: 1, current: true),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [savedID]]
+        )
+    }
+
+    private func movedSnapshot(isCurrent: Bool) -> SpaceSnapshot {
+        SpaceSnapshot(
+            displays: [
+                .init(screenID: builtin.id, spaces: [
+                    space(builtinID, "builtin-current", order: 1, current: true),
+                ]),
+                .init(screenID: external.id, spaces: [
+                    space(externalID, "external-current", order: 1, current: !isCurrent),
+                    space(savedID, hint.opaqueName, order: 2, current: isCurrent),
+                ]),
+            ],
+            membershipsByWindowServerID: [11: [savedID]]
+        )
+    }
+
+    private func space(
+        _ id: SpaceRuntimeID, _ name: String, order: Int, current: Bool = false
+    ) -> SpaceSnapshot.Space {
+        .init(
+            runtimeID: id, opaqueName: name, localOrder: order,
+            kind: .regular, isCurrent: current
         )
     }
 }
@@ -326,12 +246,10 @@ final class RestoreSessionTests: XCTestCase {
 @MainActor
 private final class RestoreSessionSpaceReader: SpaceReading {
     var availability: SpaceSnapshotAvailability = .unavailable
-    private(set) var snapshotCallCount = 0
 
     func stableSnapshot(
         windowServerIDs: [CGWindowID]
     ) async -> SpaceSnapshotAvailability {
-        snapshotCallCount += 1
-        return availability
+        availability
     }
 }

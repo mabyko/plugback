@@ -115,16 +115,14 @@ final class RestoreEngineTests: XCTestCase {
         options: RestoreOptions = RestoreOptions()
     ) async -> [RestoreResult] {
         let observation = DesktopObservation(gateway: gateway, spaceReader: nil)
-        let session = RestoreSession(
-            scope: .none, observation: observation, gateway: gateway
-        )
-        return await session.restoreAll(
+        let session = RestoreSession(observation: observation, gateway: gateway)
+        return await session.restore(
             resolved: profiles.mapValues {
                 ResolvedProfile(profile: $0, overlay: nil)
             },
             screens: screens,
             options: options
-        )
+        ).results
     }
 
     func testClosedAppIsSkippedAndNotLaunched() async {

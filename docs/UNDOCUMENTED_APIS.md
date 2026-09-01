@@ -61,13 +61,13 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 
 | | |
 |---|---|
-| **쓰는 곳** | `AXWindowGateway.standardWindows()`, `AXWindowGateway.setFullscreen()` |
-| **무엇을 판정·변경** | 대상 앱 표준 창의 native fullscreen 상태를 읽고, 확인된 single fullscreen 복원에서만 상태를 변경 |
+| **쓰는 곳** | `AXWindowGateway.standardWindows()` |
+| **무엇을 판정** | 대상 앱 표준 창의 native fullscreen 상태를 읽어 저장·이동 대상에서 제외 |
 | **공개 여부** | 현재 SDK의 공개 AX attribute 상수에 없는 raw 문자열이다 |
 
-**깨졌을 때의 동작** — 읽기 attribute 부재·타임아웃·타입 불일치는 `unknown`이 된다. 기존 flat 경로의 `isFullscreen` 호환값은 종전처럼 `false`지만, Space-aware 경로는 3상태 값을 직접 보고 `unknown` 창을 움직이지 않는다. 쓰기는 별도 「전체 화면 복원」이 ON일 때만 한다. settable이 아니거나 값 설정·8초 안의 상태 확인이 실패하면 fullscreen 복원 결과를 실패로 남기고 pending을 유지한다. raw 값 변경만으로 성공 처리하지 않으며, 다음 stable Space snapshot에서 목표 화면의 단일 type `4` membership까지 확인해야 완료한다.
+**깨졌을 때의 동작** — attribute 부재·타임아웃·타입 불일치는 `unknown`이 된다. Space binding 경로는 `unknown` 창을 움직이지 않는다. 제품은 이 attribute를 쓰지 않으며 settable 여부도 확인하지 않는다.
 
-**공개 대체재** — 다른 앱의 현재 native fullscreen 상태를 직접 주는 공개 AX attribute는 확인되지 않았다. 공개 `kAXFullScreenButtonAttribute` 요소에 `AXPress`를 수행하는 대안은 있지만, 버튼 존재는 현재 상태가 아니고 앱별 동작과 목표 화면을 보장하지 않는다. 현재 실험실 경로는 상태를 명시할 수 있는 raw attribute 한 경로만 검증한다.
+**공개 대체재** — 다른 앱의 현재 native fullscreen 상태를 직접 주는 공개 AX attribute는 확인되지 않았다. 공개 `kAXFullScreenButtonAttribute` 요소의 존재는 현재 상태가 아니므로 판정 대체재가 아니다.
 
 ---
 
@@ -96,24 +96,24 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 | `SLSSpaceCopyName` | 같은 세션에서 Space를 대응할 opaque name |
 | `SLSManagedDisplayGetCurrentSpace` | 화면별 현재 활성 Space |
 
-**쓰는 곳** — `SpaceReader`. 모두 조회만 하며 Space·창을 변경하는 SkyLight 함수는 로드하지 않는다. 비활성 type `4`는 공개 `CGWindowListCopyWindowInfo`의 owner PID·layer·alpha·bounds를 membership과 합친다. regular 앱의 불투명 layer `0` 창이 해당 화면 전체를 채우고 그 Space에 정확히 하나일 때만 자동 수집 후보가 된다. 반쪽 bounds인 Split View, 투명 보조창, 복수 후보는 버린다.
+**쓰는 곳** — `SpaceReader`. 모두 조회만 하며 Space·창을 변경하는 SkyLight 함수는 로드하지 않는다. type `4`는 일반 Space로 오인하지 않기 위해 구분할 뿐, 앱 후보를 찾거나 복원하지 않는다.
 
-**깨졌을 때의 동작** — 심볼 하나라도 없거나 dictionary 형식·화면 ID·현재 Space가 예상과 다르거나 연속 두 snapshot이 다르면 `.unavailable`이다. CG window metadata가 없거나 두 read 사이 후보가 달라도 잘못 낮추지 않고 snapshot 또는 후보를 버린다. 기존 flat 복원은 그대로이고 Space-aware 경로만 꺼진다. raw Space ID·CGWindowID는 메모리 밖으로 나가지 않는다.
+**깨졌을 때의 동작** — 심볼 하나라도 없거나 dictionary 형식·화면 ID·현재 Space가 예상과 다르거나 연속 두 snapshot이 다르면 `.unavailable`이다. Space overlay가 없는 legacy 프로필은 기존 복원을 유지하지만, binding이 있는 앱은 평면 복원으로 강등하지 않고 건너뛴다. raw Space ID·CGWindowID는 메모리 밖으로 나가지 않는다.
 
 **공개 대체재** — 화면별 Space topology·type·membership을 함께 제공하는 공개 API는 없다.
 
 ---
 
-## 6. Mission Control Dock AX tree — 자동 수집
+## 6. Mission Control Dock AX tree — 안내 재확인과 자동 수집
 
 | 이름 | 쓰는 것 |
 |---|---|
 | `mc` | Mission Control 회차가 열리고 닫혔는지 확인 |
 | `AXSelectedChildrenChanged`, `AXUIElementDestroyed` | `mc` tree를 본 Mission Control 회차가 닫힌 시점 감지 |
 
-**쓰는 곳** — `MissionControlWatcher`. 자동 슬롯이 켜진 동안 `CollectTrigger` 안에서 Mission Control 닫힘을 수집 1회로 압축한다. 두 notification 이름 자체는 공개 AX 상수지만 Dock의 `mc` identifier와 tree 수명은 공개 계약이 아니다.
+**쓰는 곳** — `MissionControlWatcher`. `PlugbackController`가 인스턴스 하나를 소유해 Mission Control 닫힘을 한 번으로 압축한다. 진행 중 안내형 recovery를 먼저 재확인하고, recovery가 없을 때만 자동 슬롯을 수집한다. 두 notification 이름 자체는 공개 AX 상수지만 Dock의 `mc` identifier와 tree 수명은 공개 계약이 아니다.
 
-**깨졌을 때의 동작** — `mc` tree를 보지 못하거나 닫힘 notification이 오지 않으면 Mission Control 직후 수집만 빠진다. 다음 Space 방문·창 이동·앱 전환 수집은 남는다.
+**깨졌을 때의 동작** — `mc` tree를 보지 못하거나 닫힘 notification이 오지 않으면 이동 직후 안내 갱신과 자동 수집이 빠진다. 사용자가 옮긴 Space를 열면 공개 활성 Space 이벤트가 같은 recovery를 다시 확인하므로 창 복원은 이어질 수 있다. 창 이동·앱 전환 수집도 남는다.
 
 **공개 대체재** — Mission Control 닫힘을 직접 알려주는 공개 notification은 없다. 사용자가 Space를 방문하거나 창·앱을 움직이는 다른 수집 신호는 남는다.
 

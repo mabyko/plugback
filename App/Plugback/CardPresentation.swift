@@ -24,23 +24,37 @@ enum CardPresentation {
         switch kind {
         case .regular(let number, _):
             return "Space \(number)"
-        case .fullscreen:
-            return "전체 화면"
         case .unresolved:
             return "Space 확인 필요"
         }
     }
 
     static func spaceGroupStatus(
-        for kind: PlugbackController.SpaceGroup.Kind, hasAwaitingVisit: Bool
+        for kind: PlugbackController.SpaceGroup.Kind,
+        guide: PlugbackController.SpaceGroup.Guide?
     ) -> String? {
         guard case .regular(_, let state) = kind else { return nil }
         switch state {
         case .current: return "현재"
-        case .inactive: return hasAwaitingVisit ? "방문 시 복원" : nil
-        case .otherDisplay: return hasAwaitingVisit ? "다른 화면 · 복원 대기" : "다른 화면"
+        case .inactive:
+            if case .visit = guide { return "열면 복원" }
+            return nil
+        case .otherDisplay:
+            if case .move = guide { return "이동 필요" }
+            return "다른 화면"
         case .missing: return "현재 없음"
         case .unknown: return "현재 상태 확인 불가"
+        }
+    }
+
+    static func spaceGuide(_ guide: PlugbackController.SpaceGroup.Guide) -> String {
+        switch guide {
+        case .move(let source, let destination):
+            return "\(source) → \(destination)\nMission Control에서 이 Space를 옮겨 주세요."
+        case .visit(let screen):
+            return "\(screen)에서 이 Space를 열면 창 위치를 자동 복원합니다."
+        case .unavailable:
+            return "현재 상태를 확실히 확인할 수 없어 창을 옮기지 않았습니다."
         }
     }
 

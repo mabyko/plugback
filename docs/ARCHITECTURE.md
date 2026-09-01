@@ -17,7 +17,7 @@
 1. **연결 이벤트의 노이즈** — 디바운스, 위상 게이트, 잠자기 억제 → DisplayWatcher
 2. **접근성 API의 함정** — 좌표계 2개, 조용한 실패, 응답 없는 앱 → WindowGateway
 3. **저장·복원 정책** — 병합, 건너뜀, 검증·재시도 → CaptureEngine / RestoreEngine
-4. **Space 복원의 시간축** — 연결 직후 복원, 방문 대기, Space별 1회 완료 → RestoreSession
+4. **안내형 복원의 시간축** — 잔류 감지, 이동 확인, 한 번의 방문 뒤 완료 → RestoreSession
 
 ## 2. 모듈 맵
 
@@ -25,6 +25,7 @@
 DisplayWatcher ──이벤트──▶ PlugbackController ◀──조작── MenuBarUI
 CollectTrigger ──이벤트──▶      │
 ActiveSpaceWatcher ──────▶      ├─▶ ProfileSlots ─▶ CaptureEngine · ProfileStore
+MissionControlWatcher ───▶      │
                                ├─▶ RestoreSession ─▶ RestoreEngine
                                │         │
                                └─────────┴─▶ DesktopObservation
@@ -36,7 +37,7 @@ PlugbackController ─▶ ScreenProvider (ScreenID 내장)
 
 CaptureEngine은 게이트웨이를 모른다 — 이미 열거된 창 스냅샷을 받는 거의 순수 함수다.
 저장·수집·카드 갱신과 모든 복원 회차의 창 열거는 같은 DesktopObservation을 통한다. RestoreEngine은
-WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션이 한 번 열거한 값을 받는다.
+WindowGateway를 주입받되, 복원 세션이 한 번 열거한 값을 받는다.
 
 ### DisplayWatcher
 
@@ -48,11 +49,16 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 ### CollectTrigger (실험실 · 자동 슬롯 전용)
 
 - **인터페이스**: `start()` / `stop()` / `retarget(_:)` + 콜백 둘 — `onCollect()`(수집할 시점) / `onTerminating()`(마지막 확정 기회).
-- **숨기는 것**: **신호원이 셋이라는 사실 전부.** 창 이동(직접 옮긴 것), 앱 전환(옵저버가 못 받는 앱·나중에 켠 앱), Mission Control 닫힘(비활성 Space의 화면 간 이동)이 서로를 메우지만, 컨트롤러가 아는 것은 「수집할 때가 됐다」 하나다. 전환 스로틀·이동 디바운스·Mission Control 닫힘 정착과 등록 대상 갱신이 여기 산다.
-- 어댑터가 실제로 셋이라 이 seam은 지어낸 것이 아니다. 신호원이 더 생겨도 컨트롤러 쪽은 바뀌지 않는다.
+- **숨기는 것**: 창 이동(직접 옮긴 것)과 앱 전환(옵저버가 못 받는 앱·나중에 켠 앱)이 서로를 메우는 사실. 컨트롤러가 아는 것은 「수집할 때가 됐다」 하나다. 전환 스로틀·이동 디바운스와 등록 대상 갱신이 여기 산다.
 - 주기 타이머가 아니다 — 사용자 이벤트에만 발화하므로 자리를 비우면 조용하다(F-07).
 - 자동 슬롯이 꺼져 있으면 컨트롤러가 아예 만들지 않는다. 꺼진 수집 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
-- **ActivityWatcher**(앱 전환 압축)와 **MissionControlWatcher**(Mission Control 닫힘 압축)는 이 모듈의 구현 세부다 — 인터페이스에 나오지 않는다. 활성 Space 알림은 Space-aware 컨트롤러가 같은 수집 경로로 합친다.
+- **ActivityWatcher**(앱 전환 압축)는 이 모듈의 구현 세부다. 활성 Space와 Mission Control 닫힘은 컨트롤러가 안내형 복원을 먼저 이어간 뒤, 안내가 없을 때만 수집으로 보낸다.
+
+### MissionControlWatcher
+
+- **인터페이스**: Mission Control이 열린 뒤 닫힌 전이를 압축한 콜백 하나.
+- PlugbackController가 인스턴스 하나를 소유한다. 같은 이벤트를 안내형 복원과 자동 슬롯이 따로 구독하면 순서와 snapshot이 갈라지므로, 컨트롤러가 `RestoreSession.recheck`를 먼저 호출하고 진행 중 안내가 없을 때만 수집한다.
+- Mission Control을 열거나 조작하지 않는다. Dock AX tree는 닫힘을 읽는 데만 쓴다.
 
 ### ProfileSlots
 
@@ -63,8 +69,8 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 ### DesktopObservation
 
-- **인터페이스**: `windows(of:)` / `drain()` / `stableSnapshot(for:)`.
-- **숨기는 것**: 마지막 AX 창 열거의 window ID만 유효하다는 계약과, 복원 전에 먼저 시작한 저장·수집·카드 열거를 모두 끝내는 순서. Space snapshot은 반드시 같은 열거가 돌려준 window ID들로 만든다.
+- **인터페이스**: `sample(of:includeSpaces:) -> (windows, snapshot)` / `drain()`.
+- **숨기는 것**: 마지막 AX 창 열거의 window ID만 유효하다는 계약과, 복원 전에 먼저 시작한 저장·수집·카드 열거를 모두 끝내는 순서. Space snapshot은 반드시 같은 sample의 window ID들로 만든다. 창과 snapshot을 따로 요청하는 인터페이스는 없다.
 - MainActor 내부 타입이며 별도 프로토콜을 만들지 않는다. 컨트롤러와 RestoreSession이 같은 객체를 쓴다.
 
 ### SpacePlacement
@@ -75,8 +81,8 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 ### RestoreSession
 
-- **인터페이스**: `restoreAll`(연결·수동 복원) / `restoreVisited`(Space 방문) / 화면·완전 삭제 앱의 방문 대기 무효화 + 읽기 전용 방문 대기 조회.
-- **숨기는 것**: 일반 Space·전체 화면 복원 범위, binding 확정 실패에도 저장된 의도만 따르는 범위 판정, 연결 직후 방문 대기 생성, 현재 Space만 복원, 완료된 대상 제거, 새 창 열기 뒤 authoritative 창 열거 → 필요할 때만 stable snapshot → RestoreEngine 순서. 방문 대기와 창 없는 앱 재열기도 RestoreEngine의 같은 화면 적격성·앱 선점 결과를 쓴다. Space 복원 범위가 모두 꺼져도 같은 복원 회차를 쓰되 private snapshot은 읽지 않는다.
+- **인터페이스**: `restore`(새 연결·수동 복원) / `recheck`(Mission Control 닫힘·활성 Space 변화) / `cancel` + 읽기 전용 안내 목록.
+- **숨기는 것**: 새 복원 시 이전 안내 폐기, 처음 관찰에서 실제 잔류했고 대상 앱이 묶인 일반 Space만 recovery로 만드는 판정, `move(source) → visit → 완료` 전이, 완료된 대상 제거, authoritative `(windows, snapshot)` 한 sample → RestoreEngine 순서. 처음부터 목적 화면에 있던 비활성 Space와 대상 앱이 없는 Space는 recovery로 만들지 않는다.
 - ProfileSlots를 소유하지 않는다. 컨트롤러가 고른 최신 `ResolvedProfile` 값만 받아 프로필과 Space overlay의 복원 소스를 섞지 않는다.
 - 카드 상태를 소유하지 않는 MainActor 내부 타입이다. 결과는 컨트롤러에 돌려주고, 결과 수명·복원 중 게이트·새 화면 재요청·복원 뒤 수집과 카드 갱신은 컨트롤러가 맡는다.
 
@@ -114,15 +120,15 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 ### RestoreEngine
 
-- **인터페이스**: 내부 `restore(선택된 프로필+Space overlay들, 화면들, 한 번 열거한 창들, Space snapshot?, 복원 범위, 옵션) -> 복원 회차 결과`. 복원의 외부 진입점은 RestoreSession 하나다.
-- **숨기는 것**: 복원 정책 전부. legacy와 Space-aware 창 선택, 건너뜀·방문 대기·판정 불가 판정(F-02.2), 예외 옵션(최소화 꺼내기·새 창 열기), 이동·검증·재시도(F-02.3), 다중 화면 중복 제거(F-01.6), 지문 검증(F-01.4 — 불일치는 앱 선점 전에 제외하고 화면 단위 건너뜀 사유로 결과에 실린다), 이동·건너뜀·실패 사유 기록. 적격 화면의 식별자 순 앱 선점은 RestoreSession도 같은 판정을 쓴다.
+- **인터페이스**: 내부 `restore(선택된 프로필+Space overlay들, 화면들, 한 번 열거한 창들, Space snapshot?, 대상 bundle 제한?, 옵션) -> 복원 회차 결과`. 복원의 외부 진입점은 RestoreSession 하나다.
+- **숨기는 것**: legacy와 Space-aware 창 선택, 건너뜀·판정 불가 판정(F-02.2), 예외 옵션(최소화 꺼내기), 이동·검증·재시도(F-02.3), 다중 화면 중복 제거(F-01.6), 지문 검증(F-01.4), 이동·건너뜀·실패 사유 기록. 전체화면은 읽어 건너뛸 뿐 상태를 쓰지 않는다.
 - WindowGateway를 주입받는다. 페이크 어댑터로 실기기 없이 정책 전부를 테스트한다 — 대기·타이밍은 심 뒤라 정책 테스트에 벽시계 대기가 없다(인터리빙 검증용 서스펜션 노브 제외).
 - **격리 자유** — 어느 액터에도 묶이지 않는 순수 정책 모듈. 내부 호출자가 MainActor 홉 없이 쓸 수 있다.
 
 ### CaptureEngine
 
-- **인터페이스**: 저장은 `(현재 창들, 기존 프로필) -> 병합된 새 프로필`, 수집은 `(현재 창들, 기존 프로필+Space overlay, Space snapshot?, 제외 앱들) -> 다음 후보 pair`.
-- **숨기는 것**: 중심점 판정(F-03.2), 병합 규칙(F-03.3), 비율 좌표 변환(F-03.4), 드리프트 방지(F-08.4), 다른 화면으로 명확히 떠난 앱 제거와 비활성 single fullscreen 보충(F-08.3).
+- **인터페이스**: 저장은 `(현재 창들, 기존 프로필) -> 병합된 새 프로필`, 수집은 `(현재 창들, 기존 프로필+Space overlay, Space snapshot?) -> 다음 후보 pair`.
+- **숨기는 것**: 중심점 판정(F-03.2), 병합 규칙(F-03.3), 비율 좌표 변환(F-03.4), 드리프트 방지(F-08.4), 일반 Space binding과 다른 화면으로 명확히 떠난 앱 제거(F-08.3). 전체화면·Split View는 기록하지 않는다.
 - 거의 순수 함수다. 비율 좌표 변환은 값 타입으로 분리해 RestoreEngine과 공유한다.
 - **허용 오차 판정도 RestoreEngine과 공유한다.** 복원이 "제자리"로 본 차이를 저장이 "옮겨졌다"고 보면 두 엔진이 어긋나고, 그 틈으로 창이 회차마다 밀린다.
 
@@ -135,8 +141,8 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 ### PlugbackController
 
-- **인터페이스**: 관찰 가능한 상태(화면 상태 — 연결됨(화면)·기억만(이름)·없음의 3상태 enum, 프로필 유무, Space별 카드 표시 그룹, 마지막 복원 결과(결과 수명 = 프로필 수명), 복원 진행 중, 권한 상태, 복원 모드, 복원 옵션 2종(최소화 복원·새 창 열기), 실험실 토글 3종(자동 슬롯·일반 Space 복원·전체 화면 복원)과 자동 슬롯 반영 방식, 일회성 저장 확인, 저장소 문제 알림) + 명령(저장(async — 창 열거가 본체, 반환값 = 실행/거부/쓰기 실패 사유 — 확인 표시는 진짜 저장됐을 때만), 복원(async — 반환 시점 = 완료 시점, 반환값 = 실행/거부 사유), 화면별 대상 앱 토글·삭제, 모드 변경, 프로필 통째 삭제, 저장소 알림 확인). 대상 앱 명령은 지정한 화면만 바꾸고 그 명령 안에서 수집 대상과 카드 projection을 갱신한다. **복원 진행 중은 계약이다**: 저장·재복원은 명시적으로 거부되고, 진행 중 연결 이벤트는 종료 직후 1회 재복원으로 보류되며(소실 없음), 진행 중 삭제된 프로필의 결과는 기록되지 않는다 + 카드 열림 통지(`cardOpened` — 상태 동기화와 일회성 저장 확인 만료). **명령은 화면 상태를 스스로 동기화한다** — 호출 순서 의식이 없다.
-- **숨기는 것**: 배선 전부 — 복원 세션의 정책은 없다. DisplayWatcher 이벤트 → (자동 모드면) RestoreSession, Space 방문 → 방문 대기가 있으면 RestoreSession(첫 회차 뒤에도 대기가 남으면 같은 정착 간격 뒤 1회 재시도), 명령 → CaptureEngine/RestoreSession, 설정 → 복원 범위·옵션, 마지막 복원 결과 보관. 자동 슬롯은 collect/confirm과 복원 소스 pool만 제어하고, 일반 Space·전체 화면 토글은 RestoreSession이 허용할 binding 종류만 제어한다. 수동 저장은 자동 슬롯과 무관하게 관련 실험실 토글이 켜져 있으면 Space overlay를 함께 잡는다. 세 실험실 토글이 모두 OFF이면 private Space snapshot을 읽지 않는다. **권한 게이트는 창을 만지는 명령(저장·복원)과 카드 열림 내부에 있다** (US-010 AC-2 — 프로필 편집·모드 변경은 AX를 쓰지 않으므로 게이트가 없다). 판정 어댑터는 앱이 주입하고, UI는 published 권한 상태에 바인딩한다(시스템 API를 직접 읽지 않는다).
+- **인터페이스**: 관찰 가능한 상태(화면 상태, 프로필 유무, 안내가 붙은 Space별 카드 그룹, 마지막 복원 결과, 복원 진행 중, 권한, 복원 모드, 복원 옵션 2종, 실험실 자동 슬롯 토글·반영 방식, 저장 확인, 저장소 문제) + 저장·복원·화면별 대상 편집·프로필 삭제 명령. **복원 진행 중은 계약이다**: 저장·재복원은 거부되고, 새 화면 연결은 종료 직후 1회 재복원으로 보류된다. 명령은 화면 상태를 스스로 동기화한다.
+- **숨기는 것**: 배선 전부. DisplayWatcher 이벤트 → 자동 모드면 `RestoreSession.restore`, 수동 명령 → 같은 경로, 활성 Space·Mission Control 닫힘 → recovery가 있으면 `recheck`, 없으면 자동 슬롯 수집, 설정 → 옵션, 마지막 결과 보관. 안내가 남아 있는 동안 수집하지 않는다. **권한 게이트는 창을 만지는 명령과 카드 열림 내부에 있다.**
 - **슬롯은 여기서 다루지 않는다** (F-08). 규칙 전부가 ProfileSlots에 있고, 컨트롤러는 「이 화면의 프로필」만 묻는다. **RestoreEngine과 CaptureEngine도 슬롯의 존재를 모른다.**
 - 한 번의 창·Space 관찰에서 나온 Space 그룹·Space 구성 차이·저장하지 않는 앱은 화면별 projection 한 값으로 교체한다. 프로필·복원 소스·마지막 결과는 각자의 수명에서 파생해 `ScreenSection`을 만들 때 붙이며 projection에 복사하지 않는다.
 - UI 없이 완결되는 헤드리스 파사드다. UI는 이 상태의 표현일 뿐이며, 어떤 UI든 여기에 바인딩만 하면 된다.

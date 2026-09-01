@@ -1,9 +1,14 @@
 import Foundation
 
 /// AX 창 열거와 그 열거에 대응하는 Space snapshot의 단일 입구.
-/// 마지막 열거의 window ID만 유효하므로 복원은 먼저 진행 중인 열거를 비운다.
+/// 둘을 한 값으로 돌려줘 서로 다른 열거의 임시 window ID를 섞을 수 없게 한다.
 @MainActor
 final class DesktopObservation {
+    struct Sample {
+        let windows: [WindowInfo]
+        let snapshot: SpaceSnapshot?
+    }
+
     private let gateway: WindowGateway
     private let spaceReader: SpaceReading?
     private var readsInFlight = 0
@@ -14,7 +19,7 @@ final class DesktopObservation {
         self.spaceReader = spaceReader
     }
 
-    func windows(of bundleIDs: [String]?) async -> [WindowInfo] {
+    func sample(of bundleIDs: [String]? = nil, includeSpaces: Bool = true) async -> Sample {
         readsInFlight += 1
         defer {
             readsInFlight -= 1
@@ -24,19 +29,20 @@ final class DesktopObservation {
                 waiters.forEach { $0.resume() }
             }
         }
-        return await gateway.standardWindows(of: bundleIDs)
+        let windows = await gateway.standardWindows(of: bundleIDs)
+        guard includeSpaces, let spaceReader else {
+            return Sample(windows: windows, snapshot: nil)
+        }
+        let ids = Array(Set(windows.compactMap(\.windowServerID))).sorted()
+        let availability = await spaceReader.stableSnapshot(windowServerIDs: ids)
+        guard case .available(let snapshot) = availability else {
+            return Sample(windows: windows, snapshot: nil)
+        }
+        return Sample(windows: windows, snapshot: snapshot)
     }
 
     func drain() async {
         guard readsInFlight > 0 else { return }
         await withCheckedContinuation { readWaiters.append($0) }
-    }
-
-    func stableSnapshot(for windows: [WindowInfo]) async -> SpaceSnapshot? {
-        guard let spaceReader else { return nil }
-        let ids = Array(Set(windows.compactMap(\.windowServerID))).sorted()
-        let availability = await spaceReader.stableSnapshot(windowServerIDs: ids)
-        guard case .available(let snapshot) = availability else { return nil }
-        return snapshot
     }
 }

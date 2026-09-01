@@ -18,10 +18,6 @@ public protocol WindowGateway: Sendable {
     /// nil은 창이 사라졌거나 앱이 응답하지 않는 경우다.
     func move(windowID: Int, to frame: CGRect) async -> CGRect?
 
-    /// native fullscreen 상태를 바꾸고 AX가 실제 상태 변화를 보고할 때까지 기다린다.
-    /// 타사 앱 지원 여부는 창마다 다르므로 false면 호출자가 실패로 남기고 멈춘다.
-    func setFullscreen(windowID: Int, _ fullscreen: Bool) async -> Bool
-
     /// 앱 실행 여부 — 건너뜀 사유(꺼짐 vs 이 화면에 창 없음) 구분용.
     /// 창 열거와 같은 앱 집합을 봐야 한다. 화면 열거는 여기가 아니라 ScreenProvider의 일이다.
     func isRunning(bundleID: String) async -> Bool

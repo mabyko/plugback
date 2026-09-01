@@ -4,17 +4,12 @@ import Foundation
 
 /// 언제 자동 슬롯이 움직여야 하는지를 답하는 모듈 (실험실, F-08.3).
 ///
-/// 신호원은 **창 이동**, **앱 전환**, **Mission Control 닫힘**이다.
-/// 서로를 메우므로 모두 필요하지만, 컨트롤러가 알아야 할 것은 「수집할 때가 됐다」 하나다.
-/// 세 수명주기·압축 정책·등록 대상 갱신은 전부 이 안에 있다.
-///
-/// 어댑터가 실제로 셋이라 이 seam은 지어낸 것이 아니다.
-/// 신호원이 더 생겨도 컨트롤러 쪽은 바뀌지 않는다.
+/// 신호원은 **창 이동**과 **앱 전환**이다. Mission Control 닫힘은 안내형 복원과
+/// 순서를 공유하므로 컨트롤러가 watcher 하나를 소유한다.
 @MainActor
 public final class CollectTrigger {
     private let moveSource: WindowMoveSource?
     private let activity: ActivityWatcher
-    private let missionControl: MissionControlWatcher
     /// 창 이동 경로가 쓰는 참조. ActivityWatcher도 같은 클로저를 들지만 둘 다 불변이라 어긋날 수 없다 —
     /// 하나로 합치려면 ActivityWatcher의 콜백을 var로 열어야 해서, 그 대가가 이 중복보다 크다.
     private let onCollect: () -> Void
@@ -31,7 +26,6 @@ public final class CollectTrigger {
         self.activity = ActivityWatcher(minimumInterval: minimumInterval,
                                         onTerminating: onTerminating,
                                         onCollect: onCollect)
-        self.missionControl = MissionControlWatcher(onClosed: onCollect)
     }
 
     /// 앱 전환 구독을 시작한다. 창 이동은 대상이 정해져야 하므로 `retarget`이 켠다.
@@ -39,14 +33,12 @@ public final class CollectTrigger {
         guard !started else { return }
         started = true
         activity.start()
-        missionControl.start()
     }
 
-    /// 세 신호원을 모두 끊는다. 꺼진 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
+    /// 두 신호원을 모두 끊는다. 꺼진 기능이 알림을 받고 있으면 "꺼짐"이 아니다.
     public func stop() async {
         started = false
         activity.stop()
-        missionControl.stop()
         await moveSource?.observeWindowMoves(of: [], onSettled: {})
     }
 
@@ -60,7 +52,7 @@ public final class CollectTrigger {
     }
 }
 
-/// Dock의 Mission Control AX tree가 사라지는 순간만 기존 수집 신호로 압축한다.
+/// Dock의 Mission Control AX tree가 사라지는 순간만 한 번의 desktop 변화로 압축한다.
 /// 비활성 Space의 화면 간 drag는 Workspace Space/app 알림을 내지 않으므로 이 신호가 필요하다.
 @MainActor
 final class MissionControlWatcher {

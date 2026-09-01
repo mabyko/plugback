@@ -95,10 +95,9 @@ public final class PlugbackController: ObservableObject {
             guard labAutoSlot != oldValue else { return }
             defaults.set(labAutoSlot, forKey: Keys.labAutoSlot)
             slots.isLabEnabled = labAutoSlot // 씨앗 복사·후보 폐기는 슬롯 모듈의 일이다
-            resetRestoreSession() // 복원 소스가 manual ↔ auto로 바뀌었으므로 방문 대기 폐기
+            resetRestoreSession() // 복원 소스가 manual ↔ auto로 바뀌었으므로 진행 중 안내 폐기
             pendingSpaceRefresh = false
             syncCollectTrigger()
-            syncSpaceWatcher()
             refreshProjectionAfterStateChange()
         }
     }
@@ -111,31 +110,6 @@ public final class PlugbackController: ObservableObject {
             slots.updateMode = autoSlotUpdateMode
             resetRestoreSession()
             pendingSpaceRefresh = false
-            refreshProjectionAfterStateChange()
-        }
-    }
-
-    /// 실험실 · 목표 화면에서 활성화된 일반 Space의 창 위치만 복원한다.
-    /// 자동 슬롯과 독립이므로 수동 슬롯만으로도 동작한다.
-    @Published public var labRegularSpaceRestore: Bool {
-        didSet {
-            guard labRegularSpaceRestore != oldValue else { return }
-            defaults.set(labRegularSpaceRestore, forKey: Keys.labRegularSpaceRestore)
-            resetRestoreSession()
-            pendingSpaceRefresh = false
-            syncSpaceWatcher()
-            refreshProjectionAfterStateChange()
-        }
-    }
-
-    /// 실험실 · 확인된 single native fullscreen 복원. 일반 Space 복원과 독립이다.
-    @Published public var labFullscreenRestore: Bool {
-        didSet {
-            guard labFullscreenRestore != oldValue else { return }
-            defaults.set(labFullscreenRestore, forKey: Keys.labFullscreenRestore)
-            resetRestoreSession()
-            pendingSpaceRefresh = false
-            syncSpaceWatcher()
             refreshProjectionAfterStateChange()
         }
     }
@@ -184,14 +158,19 @@ public final class PlugbackController: ObservableObject {
 
         public enum Kind: Equatable, Sendable {
             case regular(number: Int, state: RegularState)
-            case fullscreen
             case unresolved
+        }
+
+        public enum Guide: Equatable, Sendable {
+            case move(sourceScreenName: String, destinationScreenName: String)
+            case visit(screenName: String)
+            case unavailable
         }
 
         public let id: String
         public let kind: Kind
         public let apps: [TargetApp]
-        public let hasAwaitingVisit: Bool
+        public let guide: Guide?
     }
 
     public struct ScreenSection: Identifiable, Equatable, Sendable {
@@ -236,7 +215,8 @@ public final class PlugbackController: ObservableObject {
     /// live snapshot은 저장 행을 늘리거나 지우지 않고 현재 위치 상태만 붙인다.
     static func spaceGroups(
         in resolved: ResolvedProfile, snapshot: SpaceSnapshot?, targetConnected: Bool = true,
-        awaitingVisitBundleIDs: Set<String> = []
+        recoveries: [RestoreSession.Recovery] = [],
+        screenNamesByID: [String: String] = [:]
     ) -> [SpaceGroup] {
         guard let overlay = resolved.overlay else { return [] }
 
@@ -245,35 +225,61 @@ public final class PlugbackController: ObservableObject {
             hintsByName[hint.opaqueName] = hint
         }
         var appsByName: [String: [TargetApp]] = [:]
-        var fullscreenApps: [TargetApp] = []
         var unresolvedApps: [TargetApp] = []
         for app in resolved.profile.apps where app.isEnabled {
             switch overlay.byBundle[app.bundleID] {
             case .regular(let hint):
                 if hintsByName[hint.opaqueName] == nil { hintsByName[hint.opaqueName] = hint }
                 appsByName[hint.opaqueName, default: []].append(app)
-            case .fullscreen:
-                fullscreenApps.append(app)
             case .unresolved, nil:
                 unresolvedApps.append(app)
             }
         }
 
+        let recoveriesByID = Dictionary(uniqueKeysWithValues: recoveries.map { ($0.id, $0) })
+        let destinationName = screenNamesByID[resolved.profile.screenID]
+            ?? resolved.profile.screenName
+
         var groups = hintsByName.values.sorted {
             ($0.localOrderHint, $0.opaqueName) < ($1.localOrderHint, $1.opaqueName)
         }.enumerated().map { index, hint in
             let state: SpaceGroup.RegularState
+            let guide: SpaceGroup.Guide?
             if !targetConnected {
                 state = .unknown
+                guide = nil
             } else {
-                state = switch SpacePlacement.of(
+                let placement = SpacePlacement.of(
                     hint, on: resolved.profile.screenID, in: snapshot
-                ) {
-                case .current: .current
-                case .inactive: .inactive
-                case .stranded: .otherDisplay
-                case .missing: .missing
-                case .fullscreen, .unsupported, .unknown: .unknown
+                )
+                let recovery = recoveriesByID[RestoreSession.RecoveryID(
+                    targetScreenID: resolved.profile.screenID,
+                    opaqueName: hint.opaqueName
+                )]
+                switch placement {
+                case .current:
+                    state = .current
+                    guide = recovery?.step == .unavailable ? .unavailable : nil
+                case .inactive:
+                    state = .inactive
+                    guide = recovery?.step == .visit
+                        ? .visit(screenName: destinationName) : nil
+                case .stranded(let found):
+                    state = .otherDisplay
+                    if recovery == nil {
+                        guide = nil
+                    } else {
+                        guide = .move(
+                            sourceScreenName: screenNamesByID[found.screenID] ?? "다른 화면",
+                            destinationScreenName: destinationName
+                        )
+                    }
+                case .missing:
+                    state = .missing
+                    guide = recovery?.step == .unavailable ? .unavailable : nil
+                case .fullscreen, .unsupported, .unknown:
+                    state = .unknown
+                    guide = recovery?.step == .unavailable ? .unavailable : nil
                 }
             }
             let apps = appsByName[hint.opaqueName] ?? []
@@ -281,25 +287,13 @@ public final class PlugbackController: ObservableObject {
                 id: "regular:\(hint.opaqueName)",
                 kind: .regular(number: index + 1, state: state),
                 apps: apps,
-                hasAwaitingVisit: apps.contains {
-                    awaitingVisitBundleIDs.contains($0.bundleID)
-                }
+                guide: guide
             )
-        }
-        if !fullscreenApps.isEmpty {
-            groups.append(SpaceGroup(
-                id: "fullscreen", kind: .fullscreen, apps: fullscreenApps,
-                hasAwaitingVisit: fullscreenApps.contains {
-                    awaitingVisitBundleIDs.contains($0.bundleID)
-                }
-            ))
         }
         if !unresolvedApps.isEmpty {
             groups.append(SpaceGroup(
                 id: "unresolved", kind: .unresolved, apps: unresolvedApps,
-                hasAwaitingVisit: unresolvedApps.contains {
-                    awaitingVisitBundleIDs.contains($0.bundleID)
-                }
+                guide: nil
             ))
         }
         return groups
@@ -349,19 +343,26 @@ public final class PlugbackController: ObservableObject {
 
     private let gateway: WindowGateway
     private let observation: DesktopObservation
-    private lazy var restoreSession = makeRestoreSession()
+    private lazy var restoreSession = RestoreSession(
+        observation: observation, gateway: gateway
+    )
     private let screenProvider: ScreenProvider
     private let defaults: UserDefaults
     private var externalScreens: [ScreenInfo] = []
+    private var screenNamesByID: [String: String] = [:]
     private var watcher: DisplayWatcher?
     /// 수집 신호는 이 모듈 하나로 들어온다 — 신호원들의 차이는 그 뒤에 있다.
     private var collectTrigger: CollectTrigger?
     /// 창 이동 관찰의 어댑터. 게이트웨이와 같은 seam이지만 다른 인터페이스다 (WindowMoveSource).
     private let moveSource: WindowMoveSource?
-    /// 실험실용 read-only Space adapter. nil이거나 관련 토글이 모두 OFF면 기존 제품 경로 그대로다.
+    /// 안내형 복원과 자동 슬롯이 공유하는 read-only Space adapter.
     private let spaceReader: SpaceReading?
     private let activeSpaceDebounceInterval: TimeInterval
     private var activeSpaceWatcher: ActiveSpaceWatcher?
+    private lazy var missionControlWatcher = MissionControlWatcher { [weak self] in
+        guard let self else { return }
+        Task { await self.missionControlClosed() }
+    }
     private var pendingSpaceRefresh = false
 
     /// 수집 최소 간격 — 실기기 측정 후 조정하는 보정 노브 (테스트는 0을 준다).
@@ -387,13 +388,6 @@ public final class PlugbackController: ObservableObject {
         let updateMode = defaults.string(forKey: Keys.autoSlotUpdateMode)
             .flatMap(AutoSlotUpdateMode.init(rawValue:)) ?? .onDisconnect
         autoSlotUpdateMode = updateMode
-        // 기존 실험실 사용자는 업그레이드 뒤 동작이 갑자기 꺼지지 않게 한 번 이어받는다.
-        let savedRegularRestore = defaults.object(forKey: Keys.labRegularSpaceRestore) as? Bool
-        labRegularSpaceRestore = savedRegularRestore ?? lab
-        if savedRegularRestore == nil { defaults.set(lab, forKey: Keys.labRegularSpaceRestore) }
-        let savedFullscreenRestore = defaults.object(forKey: Keys.labFullscreenRestore) as? Bool
-        labFullscreenRestore = savedFullscreenRestore ?? lab
-        if savedFullscreenRestore == nil { defaults.set(lab, forKey: Keys.labFullscreenRestore) }
         slots = ProfileSlots(store: store, isLabEnabled: lab, updateMode: updateMode)
         // 시작 직후의 빈 상태에서도 마지막 화면 이름·프로필 유무를 보여준다 (이름순 첫 프로필).
         if let stored = slots.firstByName {
@@ -442,46 +436,26 @@ public final class PlugbackController: ObservableObject {
             trigger.start()
             collectTrigger = trigger
         }
-        // 시작·ON 전환 직후 한 번 읽어야, 이미 비활성인 fullscreen도 방문 없이 후보가 된다.
+        // 시작·ON 전환 직후 한 번 읽어 이미 열린 배치를 후보에 담는다.
         Task { await collectCandidate() }
     }
 
-    /// 공개 Space 알림이 필요한 경우. 자동 슬롯은 수집에, 두 복원 토글은 방문 복원에 쓴다.
-    private var spaceObservationEnabled: Bool {
-        spaceReader != nil && (
-            (labAutoSlot && !isSaveBlocked) || labRegularSpaceRestore || labFullscreenRestore
-        )
-    }
-
-    /// Space-aware 복원 범위가 하나라도 켜졌는가. 자동 슬롯은 복원 기능이 아니다.
-    private var restoreScope: SpaceRestoreScope {
-        SpaceRestoreScope(
-            regular: spaceReader != nil && labRegularSpaceRestore,
-            fullscreen: spaceReader != nil && labFullscreenRestore
-        )
-    }
-
-    private func makeRestoreSession() -> RestoreSession {
-        RestoreSession(
-            scope: restoreScope,
-            observation: observation,
-            gateway: gateway
-        )
-    }
+    /// 안내형 복원과 자동 슬롯이 공유하는 read-only Space 관찰 capability.
+    private var spaceObservationEnabled: Bool { spaceReader != nil }
 
     private func resetRestoreSession() {
-        restoreSession = makeRestoreSession()
+        restoreSession.cancel()
     }
 
-    /// Space 관찰 기능이 모두 꺼져 있으면 private read뿐 아니라 공개 Space 알림 구독도 존재하지 않는다.
+    /// reader가 없으면 기존 flat 복원만 남고 공개 Space 알림도 구독하지 않는다.
     private func syncSpaceWatcher() {
         guard spaceObservationEnabled else {
+            missionControlWatcher.stop()
             activeSpaceWatcher?.stop()
             activeSpaceWatcher = nil
-            resetRestoreSession()
-            pendingSpaceRefresh = false
             return
         }
+        missionControlWatcher.start()
         guard activeSpaceWatcher == nil else { return }
         let watcher = ActiveSpaceWatcher(
             debounceInterval: activeSpaceDebounceInterval
@@ -515,6 +489,7 @@ public final class PlugbackController: ObservableObject {
     /// async — 실행 상태 갱신이 게이트웨이 왕복이라서다. 메인은 막히지 않는다.
     public func cardOpened() async {
         checkAuthorization()
+        syncSpaceWatcher() // 권한을 방금 허용한 첫 실행도 재시작 없이 붙인다
         lastCaptureCount = nil
         syncScreens()
         await refreshProjection()
@@ -524,7 +499,9 @@ public final class PlugbackController: ObservableObject {
     private func syncScreens() {
         // 식별자 정렬 — 카드와 복원의 중복 제거(F-01.6)가 같은 화면 순서를 쓴다.
         // NSScreen 열거 순서는 불안정하므로 그대로 노출하지 않는다.
-        externalScreens = screenProvider.screens().filter { !$0.isBuiltin }.sorted { $0.id < $1.id }
+        let screens = screenProvider.screens()
+        screenNamesByID = Dictionary(uniqueKeysWithValues: screens.map { ($0.id, $0.name) })
+        externalScreens = screens.filter { !$0.isBuiltin }.sorted { $0.id < $1.id }
         if let first = externalScreens.first {
             screenPresence = .connected(first, count: externalScreens.count)
         } else if case .connected(let last, _) = screenPresence {
@@ -543,15 +520,14 @@ public final class PlugbackController: ObservableObject {
         guard !slots.isSaveBlocked else { return .saveBlocked }
         syncScreens()
         guard isConnected else { return .notConnected }
-        let windows = await observation.windows(of: nil)
-        let snapshot = spaceObservationEnabled
-            ? await observation.stableSnapshot(for: windows)
-            : nil
-        guard slots.capture(windows: windows, on: externalScreens, snapshot: snapshot) else {
+        let sample = await observation.sample(includeSpaces: spaceObservationEnabled)
+        guard slots.capture(
+            windows: sample.windows, on: externalScreens, snapshot: sample.snapshot
+        ) else {
             return .saveFailed
         }
-        // 사람이 지금 배치를 다시 선언했으므로 이전 복원 세션의 방문 대기는 더 이상 유효하지 않다.
-        restoreSession.invalidate(screens: Set(externalScreens.map(\.id)))
+        // 사람이 지금 배치를 다시 선언했으므로 이전 복원 세션의 안내는 더 이상 유효하지 않다.
+        restoreSession.cancel()
         // 연결된 모든 화면의 합이다 — 저장이 모든 화면에 썼는데 첫 화면만 세면 「저장됨 · n개」가 거짓이다.
         // 체크된 앱만 센다 — 해제한 앱은 저장 대상이 아니므로 세면 역시 거짓이다.
         let count = externalScreens
@@ -568,25 +544,22 @@ public final class PlugbackController: ObservableObject {
     /// internal — 테스트가 알림 없이 직접 호출한다.
     ///
     /// 자동 슬롯이 켜져 있으면 방문한 외장 Space의 새 앱도 candidate에 등록한다.
-    /// Space 경로는 Split View 판별까지 같은 snapshot에서 끝내도록 전체 표준 창을 한 번 열거한다.
+    /// Space binding도 같은 snapshot에서 끝내도록 전체 표준 창을 한 번 열거한다.
     func collectCandidate() async {
-        guard labAutoSlot, !isSaveBlocked, !isRestoring else { return }
+        guard labAutoSlot, !isSaveBlocked, !isRestoring,
+              !restoreSession.hasPendingRecovery else { return }
         syncScreens()
         guard isConnected else { return }
-        let windows = await observation.windows(of: nil)
-        guard labAutoSlot, !isSaveBlocked, !isRestoring else { return }
+        let sample = await observation.sample()
+        guard labAutoSlot, !isSaveBlocked, !isRestoring,
+              !restoreSession.hasPendingRecovery else { return }
         if spaceReader != nil {
-            guard let snapshot = await observation.stableSnapshot(for: windows) else { return }
-            guard labAutoSlot, !isSaveBlocked, !isRestoring else { return }
-            let awaitingVisit = restoreSession.awaitingBundleIDs(
-                in: slots.resolvedWithSpaces(for: externalScreens)
-            )
+            guard let snapshot = sample.snapshot else { return }
             slots.collect(
-                windows: windows, on: externalScreens, snapshot: snapshot,
-                excluding: awaitingVisit
+                windows: sample.windows, on: externalScreens, snapshot: snapshot
             )
         } else {
-            slots.collect(windows: windows, on: externalScreens)
+            slots.collect(windows: sample.windows, on: externalScreens)
         }
         await refreshCollectTargets() // 이번에 켜진 앱을 다음 이동부터 따라간다 (등록은 멱등)
     }
@@ -607,9 +580,10 @@ public final class PlugbackController: ObservableObject {
     /// 확정 — 사라진 화면의 후보를 자동 슬롯에 쓴다. internal — 테스트가 직접 호출한다.
     /// 이 시점에 창을 읽지 않는다는 것이 이 경로의 핵심이며, 그 이유는 슬롯 모듈에 적혀 있다.
     func confirmCandidates(for screenIDs: Set<String>) {
-        guard slots.confirm(screenIDs) else { return }
-        restoreSession.invalidate(screens: screenIDs)
-        Task { await refreshProjection() }
+        restoreSession.cancel()
+        if slots.confirm(screenIDs) {
+            Task { await refreshProjection() }
+        }
     }
 
     /// 종료 직전 — 남은 후보를 전부 확정한다. 화면을 뽑기 전에 앱을 끄면 여기가 마지막 기회다.
@@ -633,6 +607,16 @@ public final class PlugbackController: ObservableObject {
     /// ActiveSpaceWatcher의 무페이로드 이벤트가 들어오는 단일 지점. 복원 중이면 새 열거를
     /// 시작하지 않고, 현재 pass가 끝난 뒤 최신 Space를 한 번만 다시 읽는다.
     func activeSpaceChanged() async {
+        await desktopStateChanged()
+    }
+
+    /// 비활성 Space의 화면 간 이동은 activeSpace 알림을 내지 않는다. Mission Control이
+    /// 닫힌 뒤 같은 재평가 경로를 타고, 복원이 끝난 다음에만 자동 슬롯을 수집한다.
+    func missionControlClosed() async {
+        await desktopStateChanged()
+    }
+
+    private func desktopStateChanged() async {
         guard spaceObservationEnabled else { return }
         if isRestoring {
             pendingSpaceRefresh = true
@@ -640,9 +624,7 @@ public final class PlugbackController: ObservableObject {
         }
         syncScreens()
         guard isConnected, checkAuthorization() else { return }
-        let resolved = slots.resolvedWithSpaces(for: externalScreens)
-        if restoreMode == .automatic,
-           restoreSession.hasAwaitingVisit(in: resolved) {
+        if restoreSession.hasPendingRecovery {
             for attempt in 0..<2 {
                 if attempt == 1 {
                     // Space 알림 뒤 첫 snapshot이 직전 Space로 안정돼 보일 수 있다.
@@ -655,24 +637,22 @@ public final class PlugbackController: ObservableObject {
                         return
                     }
                     syncScreens()
-                    guard isConnected, restoreMode == .automatic,
-                          checkAuthorization() else { return }
+                    guard isConnected, checkAuthorization() else { return }
                 }
-                let current = slots.resolvedWithSpaces(for: externalScreens)
-                guard restoreSession.hasAwaitingVisit(in: current) else { return }
+                guard restoreSession.hasPendingRecovery else { return }
                 _ = await performRestore(startingWithAll: false)
             }
-        } else if labAutoSlot {
+        } else {
             await collectCandidate()
+            await refreshProjection()
         }
     }
 
     private func performRestore(startingWithAll: Bool) async -> [RestoreResult] {
         isRestoring = true
 
-        // 설정 변경은 다음 회차용 세션을 새로 만들고, 이미 시작한 회차는 이 인스턴스로 끝낸다.
+        // 설정 변경은 안내를 취소하고, 이미 시작한 회차는 이 인스턴스로 끝낸다.
         let session = restoreSession
-        let spaceAware = restoreScope.isEnabled
         var runAll = startingWithAll
         var latest: [RestoreResult] = []
         repeat {
@@ -684,15 +664,16 @@ public final class PlugbackController: ObservableObject {
                 restoreMinimized: restoreMinimized,
                 reopenWindowless: reopenWindowless
             )
-            latest = if runAll {
-                await session.restoreAll(
+            let update = if runAll {
+                await session.restore(
                     resolved: resolved, screens: screens, options: options
                 )
             } else {
-                await session.restoreVisited(
+                await session.recheck(
                     resolved: resolved, screens: screens, options: options
                 )
             }
+            latest = update?.results ?? []
             record(latest)
             if pendingRestore {
                 syncScreens()
@@ -700,10 +681,12 @@ public final class PlugbackController: ObservableObject {
             } else {
                 runAll = false
             }
-        } while isConnected && (pendingRestore || (spaceAware && pendingSpaceRefresh))
+        } while isConnected && (
+            pendingRestore || (session.hasPendingRecovery && pendingSpaceRefresh)
+        )
 
         isRestoring = false // 수집·카드 갱신 전에 해제 — 둘 다 복원 중엔 양보한다
-        await collectCandidate() // 방문 대기는 제외하고, 복원으로 정착한 현재 Space만 후보에 담는다
+        await collectCandidate() // 안내가 남아 있으면 collectCandidate 자체가 저장값 보호를 위해 양보한다
         await refreshProjection()
         return latest
     }
@@ -721,7 +704,7 @@ public final class PlugbackController: ObservableObject {
     /// 프로필 통째 삭제 (F-05.6). 그 화면을 다시 연결하면 프로필 없는 화면이다 (US-012 AC-3).
     public func removeProfile(_ screenID: String) {
         guard slots.remove(screenID: screenID) else { return }
-        restoreSession.invalidate(screens: [screenID])
+        restoreSession.cancel()
         resultsByScreen.removeValue(forKey: screenID) // 결과 수명 = 프로필 수명 — 전생의 결과를 남기지 않는다
         projectionsByScreen.removeValue(forKey: screenID)
     }
@@ -732,10 +715,7 @@ public final class PlugbackController: ObservableObject {
         guard !isRestoring else { return }
         // 화면별로 계산하되 열거는 한 번이다 — 카드가 「그 화면에 뭐가 있나」도 답하기 때문이다(대상 아님 행).
         // 게이트웨이가 actor라 메인은 막히지 않고, 카드 값은 비동기로 채워진다.
-        let windows = await observation.windows(of: nil)
-        let snapshot = spaceObservationEnabled
-            ? await observation.stableSnapshot(for: windows)
-            : nil
+        let sample = await observation.sample(includeSpaces: spaceObservationEnabled)
         // (화면, 실제 ScreenInfo?) 쌍 — 기억만 상태에서는 화면이 없어 제자리 판정이 생략된다.
         let targets: [(screenID: String, screen: ScreenInfo?)] = if isConnected {
             externalScreens.map { ($0.id, $0) }
@@ -753,15 +733,16 @@ public final class PlugbackController: ObservableObject {
             var spaceGroups: [SpaceGroup] = []
             var spaceConfigurationDiffers = false
             if spaceObservationEnabled, let resolved {
-                let awaitingVisitBundleIDs = restoreSession.awaitingBundleIDs(
-                    in: [screenID: resolved]
-                )
                 spaceGroups = Self.spaceGroups(
-                    in: resolved, snapshot: snapshot, targetConnected: screen != nil,
-                    awaitingVisitBundleIDs: awaitingVisitBundleIDs
+                    in: resolved,
+                    snapshot: sample.snapshot,
+                    targetConnected: screen != nil,
+                    recoveries: restoreSession.recoveries,
+                    screenNamesByID: screenNamesByID
                 )
                 spaceConfigurationDiffers = Self.spaceConfigurationDiffers(
-                    in: resolved, snapshot: snapshot, targetConnected: screen != nil
+                    in: resolved, snapshot: sample.snapshot,
+                    targetConnected: screen != nil
                 )
             }
             // 껐던 대상 앱이 먼저다 — 좌표가 남아 있어 되돌리기 쉬운 쪽을 위에 둔다.
@@ -771,7 +752,7 @@ public final class PlugbackController: ObservableObject {
                 spaceGroups: spaceGroups,
                 spaceConfigurationDiffers: spaceConfigurationDiffers,
                 untrackedApps: disabled + Self.untracked(
-                    in: windows, on: screen, excluding: Set(bundleIDs)
+                    in: sample.windows, on: screen, excluding: Set(bundleIDs)
                 )
             )
         }
@@ -801,6 +782,7 @@ public final class PlugbackController: ObservableObject {
     public func setTracked(_ bundleID: String, _ tracked: Bool, on screenID: String) async {
         switch slots.setTargetEnabled(bundleID, tracked, on: screenID) {
         case .applied:
+            restoreSession.cancel()
             await refreshCollectTargets()
             await refreshProjection() // 켜고 끈 행이 곧바로 제 묶음으로 간다
         case .missing:
@@ -814,7 +796,7 @@ public final class PlugbackController: ObservableObject {
     /// 즉시 다시 보이고, 화면에도 없으면 행이 사라진다.
     public func remove(_ bundleID: String, on screenID: String) async {
         guard slots.removeTarget(bundleID, on: screenID) else { return }
-        restoreSession.invalidate(bundleID: bundleID, on: screenID)
+        restoreSession.cancel()
         await refreshCollectTargets()
         await refreshProjection()
     }
@@ -829,13 +811,15 @@ public final class PlugbackController: ObservableObject {
         syncScreens()
         guard let screen = externalScreens.first(where: { $0.id == screenID })
         else { return .notConnected }
-        let windows = await observation.windows(of: [bundleID])
-        let snapshot = spaceObservationEnabled
-            ? await observation.stableSnapshot(for: windows)
-            : nil
-        guard slots.addTarget(windows: windows, on: [screen], snapshot: snapshot) else {
+        let sample = await observation.sample(
+            of: [bundleID], includeSpaces: spaceObservationEnabled
+        )
+        guard slots.addTarget(
+            windows: sample.windows, on: [screen], snapshot: sample.snapshot
+        ) else {
             return .saveFailed
         }
+        restoreSession.cancel()
         await refreshCollectTargets() // 새 대상 앱을 이동 관찰에도 넣는다
         await refreshProjection()
         let count = slots.source(for: screenID)?.profile.apps.filter(\.isEnabled).count ?? 0
@@ -853,9 +837,6 @@ public final class PlugbackController: ObservableObject {
         static let reopenWindowless = "reopenWindowless"
         static let labAutoSlot = "labAutoSlot"
         static let autoSlotUpdateMode = "autoSlotUpdateMode"
-        // 기존 defaults key를 유지해 현재 실험 설정을 마이그레이션 없이 이어간다.
-        static let labRegularSpaceRestore = "labSpaceRelocation"
-        static let labFullscreenRestore = "labFullscreenRestore"
     }
 
 }

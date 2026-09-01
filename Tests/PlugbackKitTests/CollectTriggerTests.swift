@@ -140,9 +140,9 @@ final class CollectTriggerTests: XCTestCase {
         await trigger.stop()
     }
 
-    func testMissionControlCloseReachesTheCollectCallbackOnce() async {
-        var collects = 0
-        let watcher = MissionControlWatcher(settleDelay: 0) { collects += 1 }
+    func testMissionControlWatcherReportsOneCloseTransition() async {
+        var closes = 0
+        let watcher = MissionControlWatcher(settleDelay: 0) { closes += 1 }
 
         watcher.treeChanged(isOpen: false)
         watcher.treeChanged(isOpen: true)
@@ -151,6 +151,6 @@ final class CollectTriggerTests: XCTestCase {
         watcher.treeChanged(isOpen: false)
         await wait()
 
-        XCTAssertEqual(collects, 1)
+        XCTAssertEqual(closes, 1)
     }
 }

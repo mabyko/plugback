@@ -73,41 +73,43 @@ final class CardPresentationTests: XCTestCase {
         )
     }
 
-    func testSpaceGroupLabelsUseStableLocalSpaceNumberAndActualPendingState() {
+    func testSpaceGroupLabelsAndGuidanceDescribeTheAssistedFlow() {
         let current = PlugbackController.SpaceGroup.Kind.regular(number: 1, state: .current)
         let inactive = PlugbackController.SpaceGroup.Kind.regular(number: 2, state: .inactive)
         let other = PlugbackController.SpaceGroup.Kind.regular(number: 3, state: .otherDisplay)
         let missing = PlugbackController.SpaceGroup.Kind.regular(number: 4, state: .missing)
         let unknown = PlugbackController.SpaceGroup.Kind.regular(number: 5, state: .unknown)
+        let visit = PlugbackController.SpaceGroup.Guide.visit(screenName: "LG UltraFine 27")
 
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: current), "Space 1")
-        XCTAssertEqual(
-            CardPresentation.spaceGroupStatus(for: current, hasAwaitingVisit: false), "현재"
-        )
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: current, guide: nil), "현재")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: inactive), "Space 2")
-        XCTAssertNil(CardPresentation.spaceGroupStatus(for: inactive, hasAwaitingVisit: false))
+        XCTAssertNil(CardPresentation.spaceGroupStatus(for: inactive, guide: nil))
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: inactive, guide: visit), "열면 복원")
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: other, guide: nil), "다른 화면")
         XCTAssertEqual(
-            CardPresentation.spaceGroupStatus(for: inactive, hasAwaitingVisit: true),
-            "방문 시 복원"
+            CardPresentation.spaceGroupStatus(
+                for: other,
+                guide: .move(sourceScreenName: "내장 화면", destinationScreenName: screen.name)
+            ),
+            "이동 필요"
         )
-        XCTAssertEqual(
-            CardPresentation.spaceGroupStatus(for: other, hasAwaitingVisit: false), "다른 화면"
-        )
-        XCTAssertEqual(
-            CardPresentation.spaceGroupStatus(for: other, hasAwaitingVisit: true),
-            "다른 화면 · 복원 대기"
-        )
-        XCTAssertEqual(
-            CardPresentation.spaceGroupStatus(for: missing, hasAwaitingVisit: false), "현재 없음"
-        )
+        XCTAssertEqual(CardPresentation.spaceGroupStatus(for: missing, guide: nil), "현재 없음")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: unknown), "Space 5")
         XCTAssertEqual(
-            CardPresentation.spaceGroupStatus(for: unknown, hasAwaitingVisit: false),
-            "현재 상태 확인 불가"
+            CardPresentation.spaceGroupStatus(for: unknown, guide: nil), "현재 상태 확인 불가"
         )
-        XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .fullscreen), "전체 화면")
         XCTAssertEqual(CardPresentation.spaceGroupTitle(for: .unresolved), "Space 확인 필요")
-
+        XCTAssertEqual(
+            CardPresentation.spaceGuide(.move(
+                sourceScreenName: "내장 화면", destinationScreenName: "LG UltraFine 27"
+            )),
+            "내장 화면 → LG UltraFine 27\nMission Control에서 이 Space를 옮겨 주세요."
+        )
+        XCTAssertEqual(
+            CardPresentation.spaceGuide(visit),
+            "LG UltraFine 27에서 이 Space를 열면 창 위치를 자동 복원합니다."
+        )
     }
 
     func testHeaderTitleForThreePresences() {

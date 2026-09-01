@@ -5,6 +5,8 @@
 > 전제: **Displays have separate Spaces** 켬
 > 범위: 일반 Space(type `0`)만. native fullscreen·Split View(type `4`)는 쓰기 대상에서 제외한다.
 
+> **현재 제품 결정:** 이 문서는 실패·제약의 조사 기록이다. 제품은 Space를 쓰지 않고, 잔류 Space의 출발·목적 화면을 안내해 사용자가 한 번 옮기면 대상 표준 창 위치만 복원한다. 일반 Space 자동 복원과 전체 화면 복원 기능·메뉴는 제거했다.
+
 ## 결론
 
 | 작업 | 공개 API | SIP를 켠 실험 경로 | 판정 |
@@ -27,7 +29,7 @@
 
 ### fullscreen 경로 판정
 
-현재 Plugback의 single fullscreen 복원은 Mission Control이나 pointer drag를 쓰지 않는다. [`RestoreEngine.restoreFullscreen`](../../Sources/PlugbackKit/RestoreEngine.swift#L303-L322)은 기존 fullscreen을 해제하고 일반 창을 목표 화면으로 옮긴 뒤 다시 진입시키며, [`AXWindowGateway.setFullscreen`](../../Sources/PlugbackKit/AXWindowGateway.swift#L109-L126)은 raw `AXFullScreen` write와 상태 polling만 수행한다. 따라서 **일반 Space의 합성 drag 제거와 별개로 이 경로는 유지**한다. 다만 fullscreen Space의 정확한 순서와 Split View 복원은 계속 범위 밖이다. 자세한 경계는 [native fullscreen 조사](./native-fullscreen-space-restore-and-ordering.md)에 따른다.
+조사 당시에는 single fullscreen 재생성을 일반 Space 이동과 별개인 실험 경로로 유지했다. 이후 제품 범위를 다시 줄여 raw `AXFullScreen` write, fullscreen binding·후보·복원 코드와 설정 메뉴를 모두 제거했다. 현재는 fullscreen type과 창 상태를 읽어 일반 Space나 이동 가능한 표준 창으로 오인하지 않는 데만 쓴다. 자세한 기술적 한계는 [native fullscreen 조사](./native-fullscreen-space-restore-and-ordering.md)에 남아 있다.
 
 OS 내부 구현은 구분해서 읽어야 한다. 25G83 Dock disassembly에서 native fullscreen Space의 display 배치와 Mission Control drag/reorder가 모두 `_CGSMoveManagedSpaceToDisplayIndex`를 호출한다. 즉 whole-Space primitive는 type `0`/`4`에 공통일 가능성이 높다. 하지만 이는 Dock 내부 semantics의 근거일 뿐, 외부 일반 프로세스의 SIP-on 성공 근거도 아니고 Plugback의 현재 fullscreen 경로가 그 primitive를 쓴다는 뜻도 아니다.
 

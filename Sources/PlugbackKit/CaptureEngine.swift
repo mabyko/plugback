@@ -54,23 +54,21 @@ public enum CaptureEngine {
             overlay.regularSpaces = regularSpaces
         }
         var seen = Set<String>()
-        for selected in windows where !selected.isMinimized && screen.contains(selected) {
+        for selected in windows
+        where !selected.isMinimized
+            && selected.fullscreenState == .windowed
+            && screen.contains(selected) {
             let bundleID = selected.appBundleID
             guard bundleIDs?.contains(bundleID) ?? true else { continue }
             guard seen.insert(bundleID).inserted else { continue }
             let bundleWindows = windows.filter { $0.appBundleID == bundleID }
             let binding = binding(
-                for: selected, bundleWindows: bundleWindows, allWindows: windows,
-                on: screen, snapshot: snapshot
+                bundleWindows: bundleWindows, on: screen, snapshot: snapshot
             )
             overlay.byBundle[bundleID] = binding
             switch binding {
             case .regular:
                 merge(selected, bundleID: bundleID, on: screen, into: &result.profile)
-            case .fullscreen:
-                registerFullscreen(
-                    selected, bundleID: bundleID, on: screen, into: &result.profile
-                )
             case .unresolved:
                 continue
             }
@@ -80,27 +78,25 @@ public enum CaptureEngine {
         return result
     }
 
-    /// 자동 슬롯의 수집 정책. 현재 외장 화면에서 갱신할 앱, 다른 화면으로 명확히 떠난 앱,
-    /// 비활성 single fullscreen 보충을 한 pair 안에서 끝낸다.
+    /// 자동 슬롯의 수집 정책. 현재 외장 화면에서 갱신할 앱과 다른 화면으로 명확히
+    /// 떠난 앱을 한 pair 안에서 처리한다.
     static func collect(
         windows: [WindowInfo],
         on screen: ScreenInfo,
         merging existing: ResolvedProfile,
-        snapshot: SpaceSnapshot?,
-        excluding excludedBundleIDs: Set<String>
+        snapshot: SpaceSnapshot?
     ) -> ResolvedProfile {
         let disabled = Set(
             existing.profile.apps.filter { !$0.isEnabled }.map(\.bundleID)
         )
-        let blocked = disabled.union(excludedBundleIDs)
-        let updating = Set(windows.map(\.appBundleID)).subtracting(blocked)
+        let updating = Set(windows.map(\.appBundleID)).subtracting(disabled)
         let presentElsewhere = Set(windows.lazy
             .filter { !$0.isMinimized }
             .map(\.appBundleID))
             .subtracting(Set(windows.lazy
                 .filter { screen.contains($0) }
                 .map(\.appBundleID)))
-            .subtracting(blocked)
+            .subtracting(disabled)
 
         var result: ResolvedProfile
         if let snapshot {
@@ -122,26 +118,6 @@ public enum CaptureEngine {
         var overlay = result.overlay ?? SlotSpaceOverlay()
         overlay.keepOnly(Set(result.profile.apps.map(\.bundleID)))
 
-        // 비활성 native fullscreen은 AX 표준 창 열거에 없으므로 WindowServer가 확실히
-        // 식별한 후보로 보충한다. 같은 앱의 fullscreen이 둘이면 앱 단위 프로필로는 모호하다.
-        let fullscreen = snapshot?.fullscreenCandidates.filter {
-            $0.screenID == screen.id && !blocked.contains($0.bundleID)
-        } ?? []
-        let counts = Dictionary(grouping: fullscreen, by: \.bundleID)
-        for candidate in fullscreen where counts[candidate.bundleID]?.count == 1 {
-            if let index = result.profile.apps.firstIndex(where: {
-                $0.bundleID == candidate.bundleID
-            }) {
-                result.profile.apps[index].displayName = candidate.displayName
-            } else {
-                result.profile.apps.append(TargetApp(
-                    bundleID: candidate.bundleID,
-                    displayName: candidate.displayName,
-                    unitRect: UnitRect(screen.frame, in: screen.frame)
-                ))
-            }
-            overlay.byBundle[candidate.bundleID] = .fullscreen
-        }
         result.overlay = overlay.isEmpty ? nil : overlay
         return result
     }
@@ -159,23 +135,15 @@ public enum CaptureEngine {
     }
 
     private static func binding(
-        for selected: WindowInfo,
         bundleWindows: [WindowInfo],
-        allWindows: [WindowInfo],
         on screen: ScreenInfo,
         snapshot: SpaceSnapshot
     ) -> SpaceBinding {
         if bundleWindows.contains(where: { $0.fullscreenState == .unknown }) {
-            return .unresolved(kind: .fullscreen, reason: .fullscreenUnknown)
-        }
-        if selected.fullscreenState == .fullscreen {
-            return fullscreenBinding(
-                for: selected, bundleWindows: bundleWindows, allWindows: allWindows,
-                on: screen, snapshot: snapshot
-            )
+            return .unresolved(reason: .fullscreenUnknown)
         }
         if bundleWindows.contains(where: { $0.fullscreenState == .fullscreen }) {
-            return .unresolved(kind: .fullscreen, reason: .fullscreen)
+            return .unresolved(reason: .fullscreen)
         }
 
         let placement = SpacePlacement.of(
@@ -184,76 +152,27 @@ public enum CaptureEngine {
             in: snapshot
         )
         if let found = placement.found, found.screenID != screen.id {
-            return .unresolved(kind: .regular, reason: .stranded)
+            return .unresolved(reason: .stranded)
         }
         switch placement {
         case .current(let found):
             guard let identity = found.identity else {
-                return .unresolved(kind: .regular, reason: .nameUnavailable)
+                return .unresolved(reason: .nameUnavailable)
             }
             return .regular(identity)
         case .inactive:
-            return .unresolved(kind: .regular, reason: .inactive)
+            return .unresolved(reason: .inactive)
         case .stranded:
-            return .unresolved(kind: .regular, reason: .stranded)
+            return .unresolved(reason: .stranded)
         case .fullscreen:
-            return .unresolved(kind: .fullscreen, reason: .fullscreen)
+            return .unresolved(reason: .fullscreen)
         case .unsupported:
-            return .unresolved(kind: .regular, reason: .unsupportedSpace)
+            return .unresolved(reason: .unsupportedSpace)
         case .missing:
-            return .unresolved(kind: .regular, reason: .spaceMissing)
+            return .unresolved(reason: .spaceMissing)
         case .unknown(let ambiguity):
-            return .unresolved(
-                kind: .regular, reason: blockReason(for: ambiguity)
-            )
+            return .unresolved(reason: blockReason(for: ambiguity))
         }
-    }
-
-    private static func fullscreenBinding(
-        for selected: WindowInfo,
-        bundleWindows: [WindowInfo],
-        allWindows: [WindowInfo],
-        on screen: ScreenInfo,
-        snapshot: SpaceSnapshot
-    ) -> SpaceBinding {
-        guard bundleWindows.count == 1 else {
-            return .unresolved(kind: .fullscreen, reason: .multipleSpaces)
-        }
-        let placement = SpacePlacement.of(
-            windowServerIDs: [selected.windowServerID], on: screen.id, in: snapshot
-        )
-        guard let found = placement.found else {
-            if case .unknown(let ambiguity) = placement {
-                return .unresolved(
-                    kind: .fullscreen, reason: blockReason(for: ambiguity)
-                )
-            }
-            return .unresolved(kind: .fullscreen, reason: .spaceMissing)
-        }
-        guard found.screenID == screen.id else {
-            return .unresolved(kind: .fullscreen, reason: .stranded)
-        }
-        switch placement {
-        case .fullscreen: break
-        case .unsupported:
-            return .unresolved(kind: .fullscreen, reason: .unsupportedSpace)
-        default:
-            return .unresolved(kind: .fullscreen, reason: .fullscreen)
-        }
-        guard found.space.isCurrent else {
-            return .unresolved(kind: .fullscreen, reason: .inactive)
-        }
-
-        // type 4 하나에 AX 표준 창이 둘이면 Split View다. 자동 수집은 single만 기록한다.
-        let joined = allWindows.filter { window in
-            SpacePlacement.of(
-                windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot
-            ).found?.space.runtimeID == found.space.runtimeID
-        }
-        guard joined.count == 1, joined[0].id == selected.id else {
-            return .unresolved(kind: .fullscreen, reason: .unsupportedSpace)
-        }
-        return .fullscreen
     }
 
     private static func blockReason(
@@ -285,19 +204,4 @@ public enum CaptureEngine {
         }
     }
 
-    private static func registerFullscreen(
-        _ window: WindowInfo, bundleID: String, on screen: ScreenInfo,
-        into profile: inout Profile
-    ) {
-        if let index = profile.apps.firstIndex(where: { $0.bundleID == bundleID }) {
-            profile.apps[index].displayName = window.appName
-            return // 마지막 일반 frame은 fullscreen 복원 전 화면 이동에 다시 쓴다.
-        }
-        // ponytail: fullscreen-only 앱은 실제 일반 frame을 읽을 수 없다. 현재 화면 bounds를
-        // staging frame으로 쓰고, 실기기에서 이동 거부가 나오면 placement 모델을 분리한다.
-        profile.apps.append(TargetApp(
-            bundleID: bundleID, displayName: window.appName,
-            unitRect: UnitRect(window.frame, in: screen.frame)
-        ))
-    }
 }

@@ -14,20 +14,13 @@ struct RestoreOptions: Sendable {
     }
 }
 
-/// Space-aware 경로의 순수 선택 결과. 이동과 방문 대기 수명은 RestoreSession의 일이다.
+/// Space-aware 경로의 순수 선택 결과. 사용자 안내 수명은 RestoreSession의 일이다.
 enum SpaceWindowSelection: Equatable, Sendable {
     case legacy
     case window(WindowInfo)
-    case enterFullscreen(WindowInfo)
     case inactive
     case unavailable
     case fullscreen
-}
-
-/// 한 Space-aware pass의 결과와, 더는 다음 Space 방문을 기다릴 필요가 없는 binding들.
-struct SpaceRestorePass: Equatable, Sendable {
-    var results: [RestoreResult]
-    var completedByScreen: [String: Set<String>]
 }
 
 /// 선택 복원 엔진 (F-02). 프로필에 없는 앱과 내장 화면의 창은 존재 자체를 모른다.
@@ -68,23 +61,13 @@ enum RestoreEngine {
         in resolved: ResolvedProfile,
         on screen: ScreenInfo,
         windows: [WindowInfo],
-        snapshot: SpaceSnapshot?,
-        scope: SpaceRestoreScope = .all
+        snapshot: SpaceSnapshot?
     ) -> SpaceWindowSelection {
         guard let binding = resolved.overlay?.byBundle[bundleID] else { return .legacy }
-        guard scope.restores(binding) else { return .legacy }
         let hint: SpaceHint
         switch binding {
         case .regular(let value):
             hint = value
-        case .fullscreen:
-            return selectFullscreenWindow(
-                bundleID: bundleID, on: screen, windows: windows, snapshot: snapshot
-            )
-        case .unresolved(_, .fullscreen):
-            return .fullscreen
-        case .unresolved(_, .fullscreenUnknown):
-            return .unavailable
         case .unresolved:
             return .unavailable
         }
@@ -135,46 +118,6 @@ enum RestoreEngine {
         return .window(window)
     }
 
-    private static func selectFullscreenWindow(
-        bundleID: String,
-        on screen: ScreenInfo,
-        windows: [WindowInfo],
-        snapshot: SpaceSnapshot?
-    ) -> SpaceWindowSelection {
-        guard let snapshot else { return .unavailable }
-        let candidates = windows.filter { $0.appBundleID == bundleID }
-        guard candidates.count == 1, let window = candidates.first else { return .unavailable }
-        guard window.fullscreenState != .unknown else { return .unavailable }
-        let placement = SpacePlacement.of(
-            windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot
-        )
-        guard let found = placement.found else { return .unavailable }
-        guard found.space.isCurrent else { return .inactive }
-
-        switch placement {
-        case .unsupported:
-            return .unavailable
-        case .fullscreen:
-            // 두 표준 창이 같은 type 4에 있으면 Split View다. 감지만 하고 건드리지 않는다.
-            let joined = windows.filter { candidate in
-                SpacePlacement.of(
-                    windowServerIDs: [candidate.windowServerID],
-                    on: screen.id,
-                    in: snapshot
-                ).found?.space.runtimeID == found.space.runtimeID
-            }
-            guard joined.count == 1, window.fullscreenState == .fullscreen else {
-                return .fullscreen
-            }
-            return found.screenID == screen.id ? .fullscreen : .enterFullscreen(window)
-        case .current, .inactive, .stranded:
-            guard window.fullscreenState == .windowed else { return .unavailable }
-            return .enterFullscreen(window)
-        case .missing, .unknown:
-            return .unavailable
-        }
-    }
-
     /// 이미 한 번 열거한 창과 같은 회차의 Space snapshot만 쓴다. 이 함수 안에서는 창을
     /// 다시 열거하지 않으므로 선택에 쓴 gateway window ID가 move가 끝날 때까지 유효하다.
     static func restore(
@@ -183,20 +126,14 @@ enum RestoreEngine {
         windows: [WindowInfo],
         snapshot: SpaceSnapshot?,
         onlyBundles: [String: Set<String>]? = nil,
-        scope: SpaceRestoreScope = .all,
         using gateway: WindowGateway,
         options: RestoreOptions = RestoreOptions()
-    ) async -> SpaceRestorePass {
+    ) async -> [RestoreResult] {
         var results: [RestoreResult] = []
-        var completed: [String: Set<String>] = [:]
         let claimedByScreen = Dictionary(
             grouping: claimedApps(in: resolved, screens: screens),
             by: { $0.screenID }
         )
-        // fullscreen 전환은 current Space와 AX 가시성을 바꾼다. 한 stable snapshot에서
-        // 둘을 연달아 조작하지 않고 다음 Space 알림의 새 snapshot으로 이어간다.
-        var attemptedFullscreenTransition = false
-
         for screen in screens.sorted(by: { $0.id < $1.id }) {
             guard let pair = resolved[screen.id] else { continue }
             if !isEligible(pair, on: screen) {
@@ -224,10 +161,9 @@ enum RestoreEngine {
                 }
 
                 let outcome: RestoreResult.Outcome
-                var completesBinding = false
                 switch selectSpaceWindow(
                     bundleID: app.bundleID, in: pair, on: screen,
-                    windows: windows, snapshot: snapshot, scope: scope
+                    windows: windows, snapshot: snapshot
                 ) {
                 case .legacy:
                     let candidates = windows.filter { $0.appBundleID == app.bundleID }
@@ -248,16 +184,8 @@ enum RestoreEngine {
                     outcome = await restore(
                         app, window: window, on: screen, using: gateway, options: options
                     )
-                    completesBinding = outcome == .moved || outcome == .skipped(.alreadyInPlace)
-                case .enterFullscreen(let window):
-                    guard !attemptedFullscreenTransition else { continue }
-                    attemptedFullscreenTransition = true
-                    outcome = await restoreFullscreen(
-                        app, window: window, on: screen, using: gateway, options: options
-                    )
                 case .fullscreen:
                     outcome = .skipped(.fullscreen)
-                    completesBinding = true
                 case .inactive, .unavailable:
                     continue
                 }
@@ -265,13 +193,10 @@ enum RestoreEngine {
                 result.entries.append(.init(
                     bundleID: app.bundleID, displayName: app.displayName, outcome: outcome
                 ))
-                if completesBinding {
-                    completed[screen.id, default: []].insert(app.bundleID)
-                }
             }
             results.append(result)
         }
-        return SpaceRestorePass(results: results, completedByScreen: completed)
+        return results
     }
 
     private static func restore(
@@ -298,28 +223,6 @@ enum RestoreEngine {
             }
         }
         return .failed
-    }
-
-    private static func restoreFullscreen(
-        _ app: TargetApp, window: WindowInfo, on screen: ScreenInfo,
-        using gateway: WindowGateway, options: RestoreOptions
-    ) async -> RestoreResult.Outcome {
-        if window.fullscreenState == .fullscreen {
-            guard await gateway.setFullscreen(windowID: window.id, false) else {
-                return .failed
-            }
-        }
-
-        let placement = await restore(
-            app, window: window, on: screen, using: gateway, options: options
-        )
-        guard placement == .moved || placement == .skipped(.alreadyInPlace) else {
-            return placement
-        }
-        guard await gateway.setFullscreen(windowID: window.id, true) else { return .failed }
-        // AX 상태 변화만으로 pending을 끝내지 않는다. 다음 stable Space snapshot에서
-        // 목표 화면의 single type 4로 확인돼야 controller가 binding을 완료한다.
-        return .moved
     }
 
     // MARK: - 공유 코어

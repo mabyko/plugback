@@ -4,6 +4,8 @@
 > 확인 환경: macOS 26.6.2, Xcode 26.6, macOS SDK 26.5
 > 범위: Plugback이 임의의 타사 앱 창을 제어하는 경우. 자기 앱의 `NSWindow` 제어와 구분한다.
 
+> **현재 제품 결정(2026-09-01):** 아래 내용은 기술 조사 기록이다. 타사 fullscreen 복원이 best-effort에 머물고 Split View·순서를 보장할 수 없어, Plugback은 전체 화면 복원 기능·설정과 raw `AXFullScreen` write를 제거했다. fullscreen 상태는 건너뛰기 판정에만 읽는다.
+
 ## 결론
 
 | 기능 | 판정 | 이유 |

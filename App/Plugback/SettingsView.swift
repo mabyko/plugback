@@ -87,17 +87,11 @@ struct SettingsView: View {
                     .disabled(!controller.labAutoSlot)
                     Text(controller.autoSlotUpdateMode.detail)
                         .font(.caption).foregroundStyle(.secondary)
-                    Toggle("일반 Space 복원", isOn: $controller.labRegularSpaceRestore)
-                    Text("목표 외장 화면에서 연 일반 Space의 창 위치를 복원합니다. Space 자체는 화면 사이로 옮기지 않으며, 자동 슬롯을 꺼도 수동 저장·복원에 사용할 수 있습니다.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Toggle("전체 화면 복원", isOn: $controller.labFullscreenRestore)
-                    Text("실행 중인 앱의 확인된 단일 전체 화면만 외장 화면에서 다시 만듭니다. Split View와 전체 화면 순서는 건드리지 않습니다.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
         }
-        .frame(width: 440, height: 540)
+        .frame(width: 440, height: 450)
         .tint(.orange)
         .onAppear { launchAtLogin = LoginItem.isEnabled }
     }

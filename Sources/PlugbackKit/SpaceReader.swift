@@ -1,4 +1,3 @@
-import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
@@ -14,15 +13,6 @@ public enum SpaceKind: Equatable, Sendable {
     case regular
     case fullscreen
     case unknown(Int32)
-}
-
-/// AX가 비활성 native fullscreen의 표준 창을 숨길 때 쓰는 런타임 관찰값.
-/// Space ID와 함께 프로필에는 저장하지 않는다.
-struct FullscreenSpaceCandidate: Equatable, Sendable {
-    let bundleID: String
-    let displayName: String
-    let screenID: String
-    let runtimeID: SpaceRuntimeID
 }
 
 /// 한 번의 안정된 read-only WindowServer 관찰값. 모든 숫자 ID는 이 값의 수명에만 유효하다.
@@ -52,21 +42,11 @@ public struct SpaceSnapshot: Equatable, Sendable {
 
     public let displays: [Display]
     public let membershipsByWindowServerID: [CGWindowID: [SpaceRuntimeID]]
-    let fullscreenCandidates: [FullscreenSpaceCandidate]
 
     public init(displays: [Display],
                 membershipsByWindowServerID: [CGWindowID: [SpaceRuntimeID]]) {
         self.displays = displays
         self.membershipsByWindowServerID = membershipsByWindowServerID
-        fullscreenCandidates = []
-    }
-
-    init(displays: [Display],
-         membershipsByWindowServerID: [CGWindowID: [SpaceRuntimeID]],
-         fullscreenCandidates: [FullscreenSpaceCandidate]) {
-        self.displays = displays
-        self.membershipsByWindowServerID = membershipsByWindowServerID
-        self.fullscreenCandidates = fullscreenCandidates
     }
 }
 
@@ -89,20 +69,9 @@ public actor SpaceReader: SpaceReading {
         windowServerIDs: [CGWindowID]
     ) async -> SpaceSnapshotAvailability {
         guard let api else { return .unavailable }
-        let runningApps = await MainActor.run {
-            NSWorkspace.shared.runningApplications.reduce(
-                into: [pid_t: RunningAppIdentity]()
-            ) { result, app in
-                guard app.activationPolicy == .regular,
-                      let bundleID = app.bundleIdentifier else { return }
-                result[app.processIdentifier] = RunningAppIdentity(
-                    bundleID: bundleID, displayName: app.localizedName ?? bundleID
-                )
-            }
-        }
         return Self.settledSnapshot(
-            first: api.snapshot(windowServerIDs: windowServerIDs, runningApps: runningApps),
-            second: api.snapshot(windowServerIDs: windowServerIDs, runningApps: runningApps)
+            first: api.snapshot(windowServerIDs: windowServerIDs),
+            second: api.snapshot(windowServerIDs: windowServerIDs)
         )
     }
 
@@ -126,11 +95,6 @@ private typealias SLSSpaceCopyName = @convention(c) (
 private typealias SLSManagedDisplayGetCurrentSpace = @convention(c) (
     Int32, CFString
 ) -> UInt64
-
-private struct RunningAppIdentity: Sendable {
-    let bundleID: String
-    let displayName: String
-}
 
 private struct SkyLightAPI {
     let mainConnection: SLSMainConnectionID
@@ -177,9 +141,7 @@ private struct SkyLightAPI {
         self.currentSpace = currentSpace
     }
 
-    func snapshot(
-        windowServerIDs: [CGWindowID], runningApps: [pid_t: RunningAppIdentity]
-    ) -> SpaceSnapshot? {
+    func snapshot(windowServerIDs: [CGWindowID]) -> SpaceSnapshot? {
         let connection = mainConnection()
         guard let managed = copyManagedDisplaySpaces(connection)?.takeRetainedValue()
         else { return nil }
@@ -242,81 +204,8 @@ private struct SkyLightAPI {
         }
         return SpaceSnapshot(
             displays: displays,
-            membershipsByWindowServerID: memberships,
-            fullscreenCandidates: fullscreenCandidates(
-                connection: connection, displays: displays, runningApps: runningApps
-            )
+            membershipsByWindowServerID: memberships
         )
-    }
-
-    /// 비활성 type 4에서도 남는 WindowServer 메타데이터 중, 화면을 온전히 채우는
-    /// 불투명 표준 layer 창이 정확히 하나일 때만 single fullscreen으로 인정한다.
-    private func fullscreenCandidates(
-        connection: Int32, displays: [SpaceSnapshot.Display],
-        runningApps: [pid_t: RunningAppIdentity]
-    ) -> [FullscreenSpaceCandidate] {
-        let fullscreenLocations = displays.reduce(
-            into: [SpaceRuntimeID: String]()
-        ) { result, display in
-            for space in display.spaces where space.kind == .fullscreen {
-                result[space.runtimeID] = display.screenID
-            }
-        }
-        guard !fullscreenLocations.isEmpty,
-              let rows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)
-                as? [[String: Any]] else { return [] }
-
-        let boundsByScreenID = activeDisplayBounds()
-        var bySpace: [SpaceRuntimeID: [FullscreenSpaceCandidate]] = [:]
-        for row in rows {
-            guard let layer = row[kCGWindowLayer as String] as? NSNumber,
-                  layer.intValue == 0,
-                  let alpha = row[kCGWindowAlpha as String] as? NSNumber,
-                  alpha.doubleValue > 0,
-                  let rawBounds = row[kCGWindowBounds as String] as? NSDictionary,
-                  let bounds = CGRect(dictionaryRepresentation: rawBounds),
-                  let ownerPID = row[kCGWindowOwnerPID as String] as? NSNumber,
-                  let app = runningApps[ownerPID.int32Value],
-                  let rawWindowID = row[kCGWindowNumber as String] as? NSNumber,
-                  rawWindowID.uint64Value <= UInt64(CGWindowID.max) else { continue }
-
-            let matchingScreens = boundsByScreenID.filter {
-                RestoreEngine.approximatelyEqual(bounds, $0.value)
-            }.map(\.key)
-            guard matchingScreens.count == 1, let screenID = matchingScreens.first else {
-                continue
-            }
-
-            let input = [rawWindowID] as CFArray
-            guard let rawSpaces = copySpacesForWindows(connection, 0x7, input)?
-                    .takeRetainedValue() as NSArray?,
-                  rawSpaces.count == 1,
-                  let numericID = number(rawSpaces.firstObject) else { continue }
-            let runtimeID = SpaceRuntimeID(numericID)
-            guard fullscreenLocations[runtimeID] == screenID else { continue }
-            bySpace[runtimeID, default: []].append(FullscreenSpaceCandidate(
-                bundleID: app.bundleID, displayName: app.displayName,
-                screenID: screenID, runtimeID: runtimeID
-            ))
-        }
-
-        return bySpace.keys.sorted { $0.rawValue < $1.rawValue }.compactMap { runtimeID in
-            let candidates = bySpace[runtimeID] ?? []
-            return candidates.count == 1 ? candidates[0] : nil
-        }
-    }
-
-    private func activeDisplayBounds() -> [String: CGRect] {
-        var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [:] }
-        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetActiveDisplayList(count, &displayIDs, &count) == .success else { return [:] }
-        return displayIDs.reduce(into: [String: CGRect]()) { result, displayID in
-            guard let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue(),
-                  let screenID = canonicalScreenID(CFUUIDCreateString(nil, uuid) as String)
-            else { return }
-            result[screenID] = CGDisplayBounds(displayID)
-        }
     }
 
     private func canonicalScreenID(_ value: String) -> String? {
