@@ -72,9 +72,10 @@
                     │
         ◇ Space 복원 범위가 켜졌나?
           ├ 꺼짐 ──▶ private snapshot 없이 RestoreEngine
-          └ 켜짐 ──▶ 일반 Space 사전 재배치 → stable snapshot → RestoreEngine
-                       나머지는 방문 대기로 남긴다. Space 방문 때 restoreVisited가
-                       안전한 사전 재배치를 다시 시도한 뒤 각 대상을 1회 처리한다.
+          └ 켜짐 ──▶ stable snapshot → RestoreEngine
+                       목표 화면의 현재 Space만 복원하고 나머지는 방문 대기로 남긴다.
+                       다른 화면의 Space 자체는 옮기지 않으며, 목표 화면으로 돌아와
+                       방문됐을 때 restoreVisited가 각 대상을 1회 처리한다.
 ```
 
 ---

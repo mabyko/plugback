@@ -118,8 +118,7 @@ final class RestoreSessionTests: XCTestCase {
         let session = RestoreSession(
             scope: SpaceRestoreScope(regular: true, fullscreen: false),
             observation: DesktopObservation(gateway: gateway, spaceReader: reader),
-            gateway: gateway,
-            spaceRelocator: nil
+            gateway: gateway
         )
         var resolved = resolvedProfile()
         resolved[other.id] = ResolvedProfile(profile: Profile(
@@ -208,8 +207,7 @@ final class RestoreSessionTests: XCTestCase {
         let session = RestoreSession(
             scope: SpaceRestoreScope(regular: true, fullscreen: false),
             observation: DesktopObservation(gateway: gateway, spaceReader: reader),
-            gateway: gateway,
-            spaceRelocator: nil
+            gateway: gateway
         )
 
         let results = await session.restoreAll(
@@ -283,8 +281,7 @@ final class RestoreSessionTests: XCTestCase {
             RestoreSession(
                 scope: scope,
                 observation: observation,
-                gateway: gateway,
-                spaceRelocator: nil
+                gateway: gateway
             ),
             reader,
             gateway

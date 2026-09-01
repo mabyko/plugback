@@ -115,7 +115,7 @@ public final class PlugbackController: ObservableObject {
         }
     }
 
-    /// 실험실 · 일반 Space 복원. Space 자체의 화면 소속과 Space별 창 위치를 함께 복원한다.
+    /// 실험실 · 목표 화면에서 활성화된 일반 Space의 창 위치만 복원한다.
     /// 자동 슬롯과 독립이므로 수동 슬롯만으로도 동작한다.
     @Published public var labRegularSpaceRestore: Bool {
         didSet {
@@ -360,8 +360,6 @@ public final class PlugbackController: ObservableObject {
     private let moveSource: WindowMoveSource?
     /// 실험실용 read-only Space adapter. nil이거나 관련 토글이 모두 OFF면 기존 제품 경로 그대로다.
     private let spaceReader: SpaceReading?
-    /// 실험실용 visible Mission Control adapter. 「일반 Space 복원」이 ON일 때만 쓴다.
-    private let spaceRelocator: SpaceRelocating?
     private let activeSpaceDebounceInterval: TimeInterval
     private var activeSpaceWatcher: ActiveSpaceWatcher?
     private var pendingSpaceRefresh = false
@@ -372,7 +370,6 @@ public final class PlugbackController: ObservableObject {
                 defaults: UserDefaults = .standard, collectInterval: TimeInterval = 10,
                 moveSource: WindowMoveSource? = nil,
                 spaceReader: SpaceReading? = nil,
-                spaceRelocator: SpaceRelocating? = nil,
                 activeSpaceDebounceInterval: TimeInterval = 1.5) {
         self.gateway = gateway
         observation = DesktopObservation(gateway: gateway, spaceReader: spaceReader)
@@ -381,7 +378,6 @@ public final class PlugbackController: ObservableObject {
         self.collectInterval = collectInterval
         self.moveSource = moveSource
         self.spaceReader = spaceReader
-        self.spaceRelocator = spaceRelocator
         self.activeSpaceDebounceInterval = activeSpaceDebounceInterval
         restoreMode = defaults.string(forKey: Keys.restoreMode).flatMap(RestoreMode.init) ?? .automatic
         restoreMinimized = defaults.bool(forKey: Keys.restoreMinimized)
@@ -469,8 +465,7 @@ public final class PlugbackController: ObservableObject {
         RestoreSession(
             scope: restoreScope,
             observation: observation,
-            gateway: gateway,
-            spaceRelocator: spaceRelocator
+            gateway: gateway
         )
     }
 

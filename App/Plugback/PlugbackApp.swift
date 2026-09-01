@@ -19,10 +19,17 @@ struct PlugbackApp: App {
     }
 
     var body: some Scene {
+#if DEBUG
+        MenuBarExtra("Plugback Debug", image: "MenuBarGlyphDebug") {
+            MenuBarCard(controller: controller)
+        }
+        .menuBarExtraStyle(.window)
+#else
         MenuBarExtra("Plugback", image: "MenuBarGlyph") {
             MenuBarCard(controller: controller)
         }
         .menuBarExtraStyle(.window)
+#endif
 
         Settings {
             SettingsView(controller: controller)

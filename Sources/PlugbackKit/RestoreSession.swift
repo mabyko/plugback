@@ -25,19 +25,16 @@ final class RestoreSession {
 
     private let observation: DesktopObservation
     private let gateway: WindowGateway
-    private let spaceRelocator: SpaceRelocating?
     private var awaitingVisitByScreen: [String: Set<String>] = [:]
 
     init(
         scope: SpaceRestoreScope,
         observation: DesktopObservation,
-        gateway: WindowGateway,
-        spaceRelocator: SpaceRelocating?
+        gateway: WindowGateway
     ) {
         self.scope = scope
         self.observation = observation
         self.gateway = gateway
-        self.spaceRelocator = spaceRelocator
     }
 
     func restoreAll(
@@ -46,7 +43,6 @@ final class RestoreSession {
         options: RestoreOptions
     ) async -> [RestoreResult] {
         await observation.drain()
-        await relocateBoundRegularSpaces(resolved: resolved, screens: screens)
         awaitingVisitByScreen.removeAll()
         if scope.isEnabled {
             addAwaitingVisits(from: resolved, screens: screens)
@@ -65,7 +61,6 @@ final class RestoreSession {
         await observation.drain()
         let awaitingVisit = currentAwaitingVisits(in: resolved)
         guard !awaitingVisit.isEmpty else { return [] }
-        await relocateBoundRegularSpaces(resolved: resolved, screens: screens)
         return await restoreSpacePass(
             resolved: resolved, screens: screens,
             onlyBundles: awaitingVisit, options: options
@@ -87,31 +82,6 @@ final class RestoreSession {
 
     func awaitingBundleIDs(in resolved: [String: ResolvedProfile]) -> Set<String> {
         Set(currentAwaitingVisits(in: resolved).values.flatMap { $0 })
-    }
-
-    private func relocateBoundRegularSpaces(
-        resolved: [String: ResolvedProfile], screens: [ScreenInfo]
-    ) async {
-        guard scope.regular, let spaceRelocator else { return }
-        let moveLimit = SpaceRelocationPlanner.desiredCount(
-            resolved: resolved, screens: screens
-        )
-        for _ in 0..<moveLimit {
-            let windows = await observation.windows(of: nil)
-            guard let before = await observation.stableSnapshot(for: windows) else { return }
-            switch SpaceRelocationPlanner.next(
-                resolved: resolved, screens: screens, snapshot: before
-            ) {
-            case .complete, .blocked:
-                return
-            case .move(let planned):
-                guard await spaceRelocator.relocate(planned.request),
-                      let after = await observation.stableSnapshot(for: windows),
-                      SpaceRelocationPlanner.verifies(
-                        planned, before: before, after: after
-                      ) else { return }
-            }
-        }
     }
 
     private func restoreSpacePass(

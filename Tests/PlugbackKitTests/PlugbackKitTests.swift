@@ -116,8 +116,7 @@ final class RestoreEngineTests: XCTestCase {
     ) async -> [RestoreResult] {
         let observation = DesktopObservation(gateway: gateway, spaceReader: nil)
         let session = RestoreSession(
-            scope: .none, observation: observation, gateway: gateway,
-            spaceRelocator: nil
+            scope: .none, observation: observation, gateway: gateway
         )
         return await session.restoreAll(
             resolved: profiles.mapValues {

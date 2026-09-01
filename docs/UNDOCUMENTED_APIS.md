@@ -104,28 +104,27 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 
 ---
 
-## 6. Mission Control Dock AX tree — 자동 수집과 DEBUG regular Space relocation
+## 6. Mission Control Dock AX tree — 자동 수집
 
 | 이름 | 쓰는 것 |
 |---|---|
-| `mc` | Mission Control이 이미 열려 있는지 확인 |
-| `mc.display` | 화면별 AX group 찾기 |
-| `AXDisplayID` | AX group을 현재 `CGDirectDisplayID`와 대응 |
-| `mc.spaces.list` | 화면별 Space thumbnail 순서와 frame 읽기 |
-| `AXRemoveDesktop` | 이동 대상으로 고른 child가 실제로 제거 가능한 Space thumbnail인지 확인 |
+| `mc` | Mission Control 회차가 열리고 닫혔는지 확인 |
 | `AXSelectedChildrenChanged`, `AXUIElementDestroyed` | `mc` tree를 본 Mission Control 회차가 닫힌 시점 감지 |
 
-**쓰는 곳** — `MissionControlWatcher`, `MissionControlSpaceRelocator`. watcher는 자동 슬롯이 켜진 동안 `CollectTrigger` 안에서 Mission Control 닫힘을 수집 1회로 압축한다. relocator는 `AppServices`가 주입하고, 자동 슬롯과 독립된 「일반 Space 복원」 토글이 ON일 때만 호출한다. Space 생성·삭제 action을 실행하지 않고 stable snapshot이 고른 비활성 regular thumbnail 하나에 공개 `CGEvent` mouse drag를 합성한다. 두 notification 이름 자체는 공개 AX 상수지만 Dock의 `mc` identifier와 tree 수명은 공개 계약이 아니다.
+**쓰는 곳** — `MissionControlWatcher`. 자동 슬롯이 켜진 동안 `CollectTrigger` 안에서 Mission Control 닫힘을 수집 1회로 압축한다. 두 notification 이름 자체는 공개 AX 상수지만 Dock의 `mc` identifier와 tree 수명은 공개 계약이 아니다.
 
-**깨졌을 때의 동작** — watcher가 `mc` tree를 보지 못하거나 닫힘 notification이 오지 않으면 Mission Control 직후 수집만 빠진다. 다음 Space 방문·창 이동·앱 전환 수집은 남는다. relocator는 Mission Control이 이미 열려 있거나, raw identifier·display ID·child count·이동 대상 thumbnail action·frame 중 하나라도 snapshot과 맞지 않으면 drag 전에 `false`로 끝난다. 현재·마지막 Space처럼 제거할 수 없는 다른 thumbnail의 action은 요구하지 않는다. 입력 합성 뒤에도 성공 반환을 믿지 않는다. controller가 같은 runtime SID·kind·opaque name, 전체 Space 집합과 current 상태, 다른 regular Space의 화면 소속·상대 순서, 관찰한 window membership을 새 stable snapshot으로 검증한다. 하나라도 다르면 다음 Space를 움직이지 않고 기존 방문 기반 창 복원만 계속한다.
+**깨졌을 때의 동작** — `mc` tree를 보지 못하거나 닫힘 notification이 오지 않으면 Mission Control 직후 수집만 빠진다. 다음 Space 방문·창 이동·앱 전환 수집은 남는다.
 
-**공개 대체재** — Space 전체를 화면 사이로 옮기는 공개 API는 없다. Apple이 제공하는 사용자 Mission Control drag를 보이는 UI 자동화로 재현하는 실험실 경로다. SkyLight write, Dock 주입, SIP 변경은 사용하지 않는다.
+**공개 대체재** — Mission Control 닫힘을 직접 알려주는 공개 notification은 없다. 사용자가 Space를 방문하거나 창·앱을 움직이는 다른 수집 신호는 남는다.
 
 ---
 
-## 7. DEBUG 전용 Space 진단 프로브
+## 7. DEBUG 전용 Space 진단·왕복 프로브
 
-아래는 위 4·5절의 이름을 `App/Plugback/SpaceProbe.swift`가 독립적으로 다시 읽는 DEBUG 진단 경로다. 프로브 코드와 익명 JSON 출력은 Release binary에 들어가지 않는다.
+아래는 위 4·5절의 이름을 `App/Plugback/SpaceProbe.swift`가 독립적으로 다시 읽는 DEBUG
+진단 경로다. `--space-probe`와 `--space-reader-probe`는 조회만 한다. `--space-relocation-probe`는
+layer `0` 창이 없는 희생용 Space만 즉시 한 번 왕복한다. 앱 창 포함 실기기 실패 뒤 Debug 설정의
+write 패널은 제거했다. 프로브 코드·CLI 익명 JSON 출력은 Release binary에 들어가지 않는다.
 
 | 이름 | 진단하는 것 |
 |---|---|
@@ -136,10 +135,25 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 | `SLSSpaceCopyName` | Space의 opaque name 존재·유일성 |
 | `SLSManagedDisplayGetCurrentSpace` | 화면별 현재 활성 Space |
 | `_AXUIElementGetWindow` | AX 표준 창과 CGWindowID의 임시 join |
+| `SLSBridgedCopyManagedDisplaySpacesOperation` | AppKit WM bridge가 실제 read operation을 수행하는지 확인 |
+| `SLSBridgedMoveManagedSpaceToDisplayIndexOperation` | 선택한 희생용 Space의 destination 이동 1회와 source 역이동 1회 |
 
-**깨졌을 때의 동작** — 모든 이름은 `dlopen`/`dlsym`으로 optional하게 연다. 심볼이 없거나 snapshot 형식이 예상과 다르면 익명 JSON의 `symbols`·`errors`에 실패를 기록하고 프로브를 종료한다. 프로필·UserDefaults·창 위치는 건드리지 않는다.
+**write gate** — build `25G83`, Objective-C method encoding, read bridge, Mission Control 닫힘,
+Dock PID, stable topology 두 회, 별도 화면, 유일한 **빈** 비활성 type `0` tail Space를 모두 확인한다.
+CLI는 destination 끝으로 한 번 보낸 뒤 저장한 source index로 한 번 되돌린다.
+raw wrapper·retry·Space create/destroy는 없다.
 
-**공개 대체재** — Space topology·type·membership과 다른 앱 AX 창의 CGWindowID join을 함께 제공하는 공개 조합은 없다. 제품 경로로 승격된 이름과 달리 이 프로브의 익명 집계·진단 형식은 Release binary에 포함되지 않는다.
+**깨졌을 때의 동작** — read 이름은 `dlopen`/`dlsym`, bridged operation은 runtime class·typed
+`objc_msgSend`로 연다. write 전 조건이 하나라도 다르면 `rejected-before-write`로 끝난다.
+async write 뒤에는 최대 8초 동안 topology를 다시 읽는다. 예상 topology가 아니면 목적 화면에서
+대상 SID가 정확히 확인될 때만 원래 index로 한 번 복구하고, 그 밖에는 다른 위치를 추측하지 않는다.
+프로필·UserDefaults·창 위치는 건드리지 않는다. 앱 창 포함 회차에서는 transient baseline을 복귀
+성공으로 오판한 뒤 대상 SID가 지연 이동하고 Mission Control thumbnail에서 사라졌으므로 이 입력은
+validator가 항상 write 전에 거절한다.
+
+**공개 대체재** — Space topology·type·membership, 다른 앱 AX 창의 CGWindowID join, whole-Space
+화면 이동을 제공하는 공개 조합은 없다. 빈 Space 왕복 3/3과 무관하게 앱 창 포함 회차가 실패했으므로
+이 write를 제품 경로로 승격하지 않는다.
 
 ---
 

@@ -5,15 +5,23 @@
 > [ACTIVE_SPACE_RESTORE_PLAN.md](./ACTIVE_SPACE_RESTORE_PLAN.md)에 옮기고 이 파일은 삭제한다.
 
 - 시작일: 2026-08-31
-- 작업 브랜치: `feature/active-space-restore`
+- 작업 브랜치: `feature/active-space-restore-try-2`
 - 시작 HEAD: `2c3b1d1`
 - A 화면: `PHL 27E2F7901`
 - B 화면: `LG ULTRAFINE`
-- 현재 상태: 현재 worktree의 새 Release가 `/Applications/Plugback.app`에서 실행 중
+- 현재 상태: Release `/Applications/Plugback.app`은 유지하고, 서명된 probe 빌드를 `/Applications/Plugback Debug.app`으로 별도 설치함
+- Debug 표식: 앱 이름 `Plugback Debug` · Dock/Finder 아이콘 파란 `D` 배지 · 메뉴바 기존 glyph의 작은 벌레 배지
+- 구현 검증: Swift 패키지 179/179 · 앱 10/10 · Release build 통과, Release private-write marker 없음
+
+> 2026-09-01 재설정: 기존 체크·1/3 기록은 제거된 Mission Control 합성 drag 구현의
+> 역사적 근거일 뿐 새 경로의 통과 횟수로 세지 않는다. 제품에는 relocator seam과 구현이
+> 없다. 아래 게이트 A는 명시적 DEBUG 희생용 probe로만 수행하는 qualification이다.
+> 빈 Space 왕복은 통과했지만 앱 창 포함 회차에서 지연 이동과 orphan Space가 발생했다.
+> whole-Space write는 Release·자동 복원·Debug 설정 UI에 연결하지 않는다.
 
 ## 판정 원칙
 
-- 기존 자동 재배치 1/3은 복원 코어의 실측 증거로 유지한다. 남은 두 회차와 최종 smoke는
+- 기존 자동 재배치 1/3은 이전 복원 코어의 실측 증거로만 유지한다. 새 3회와 최종 smoke는
   **현재 worktree로 새로 빌드한 Release**에서만 기록한다.
 - `SlotSpaceOverlay`는 메모리 전용이다. Release를 교체하거나 Plugback·macOS를 재시작하면 A에서 일반 Space 두 곳을 다시 저장한다.
 - 한 A → B → A 회차가 끝날 때까지 Plugback을 종료하지 않는다.
@@ -25,21 +33,23 @@
 
 현재 소스의 최종 실기기 판정을 시작하기 전에 한 번만 수행한다.
 
-- [x] 전체 테스트 통과
-- [x] Release 빌드 성공
-- [x] `/Applications/Plugback.app` 교체
-- [x] 기존 Plugback 종료 후 새 Release 실행
-- [x] 실행 경로가 `/Applications/Plugback.app/Contents/MacOS/Plugback`인지 확인
-- [x] 손쉬운 사용 권한 정상
-- [x] 카드 앱 행에서 복원 예측 점·라벨이 사라졌는지 확인
-- [x] 저장된 Space 그룹, 체크박스, 실제 복원 결과 스트립은 그대로 보이는지 확인
+- [ ] 전체 테스트 통과
+- [ ] Release 빌드 성공
+- [ ] `/Applications/Plugback.app` 교체
+- [ ] 기존 Plugback 종료 후 새 Release 실행
+- [ ] 실행 경로가 `/Applications/Plugback.app/Contents/MacOS/Plugback`인지 확인
+- [ ] 제품 소스에 Space relocator와 Mission Control 입력 합성이 없는지 확인
+- [ ] 손쉬운 사용 권한 정상
+- [ ] 카드 앱 행에서 복원 예측 점·라벨이 사라졌는지 확인
+- [ ] 저장된 Space 그룹, 체크박스, 실제 복원 결과 스트립은 그대로 보이는지 확인
 
 기록:
 
-- 빌드한 commit/worktree: `e5f3d98 + unresolved binding 범위 보존 변경`
-- 빌드 시각: `2026-08-31 15:59 KST`
-- 실행 PID: `87031`
-- 테스트 결과: `Swift 패키지 180/180 · 앱 9/9 통과`
+- 이전 구현 빌드: `e5f3d98 + unresolved binding 범위 보존 변경`
+- 이전 빌드 시각: `2026-08-31 15:59 KST`
+- 이전 실행 PID: `87031`
+- 이전 테스트 결과: `Swift 패키지 180/180 · 앱 9/9 통과`
+- 새 빌드/실행 기록: `________________`
 
 ## 1. A 기준 배치 다시 만들기
 
@@ -80,7 +90,7 @@ Release 재실행 뒤 메모리 overlay를 다시 만드는 단계다.
 - [x] 화면 분리로 후보 확정 (`2026-08-31 16:38:08 KST`)
 - [ ] 내장 화면 교란 뒤 재연결 복원 확인
 
-관찰: 재연결 콜백은 실행됐지만 Space drag 호출은 0회였다. 재연결 직후에는 창 이동이
+이전 구현 관찰: 재연결 콜백은 실행됐지만 Space drag 호출은 0회였다. 재연결 직후에는 창 이동이
 없었고, 내장 화면에서 교란된 Space를 방문하자 Aside가 외장 화면으로 복원됐다. 저장된
 Space가 macOS에 의해 이미 외장 화면으로 돌아왔는지는 카드 상태로 판정한다.
 
@@ -90,49 +100,73 @@ Space가 macOS에 의해 이미 외장 화면으로 돌아왔는지는 카드 �
 
 새 회차 자동 슬롯 확정: `2026-08-31 17:51:51 KST` · 대상 앱 4개.
 
-단일 외장 최종 판정: 두 Space 모두 재연결·방문 시 처음부터 저장 위치였다. 방문 복원
+이전 구현의 단일 외장 최종 판정: 두 Space 모두 재연결·방문 시 처음부터 저장 위치였다. 방문 복원
 경로는 10회 진입했지만 `MissionControlSpaceRelocator.relocate`와
 `AXWindowGateway.move`는 모두 0회였다. macOS 자체 복구로 시각적 회귀는 없었으나,
 Plugback의 Space·창 이동 성공 횟수에는 포함하지 않는다. A → B → A 게이트는 보류한다.
 
-## 2. 게이트 A — 자동 regular Space 재배치 3/3
+## 2. 게이트 A1 — 빈 Space whole-Space bridge 3/3 (완료)
 
-기존 통과 기록은 1/3이다. 새 Release에서는 아래 두 회차를 통과해 합계 3/3을 만든다.
-첫 회차는 두 regular Space의 후보가 함께 확정되는지도 같이 확인한다.
+2026-09-01, build `25G83`의 서명된 Debug 앱에서 빈·비활성 source tail Space를 direct bridged
+operation으로 목적지 끝에 보냈다가 원래 source index로 되돌리는 왕복을 3회 수행했다. 매 회차
+`이동 확인 · 원위치 복귀 확인 · Dock 유지`였고 baseline이 정확히 복구됐다. Mission Control 표시,
+합성 입력, Space 생성·삭제, retry는 없었다.
+
+CLI 진단은 계속 빈 Space만 받는다. read-only `--space-probe` JSON의 `sidToken`·`displayToken`으로
+다음처럼 실행한다.
+
+```text
+Plugback --space-relocation-probe <sidToken> <displayToken> --confirm-empty-sacrificial-space
+```
+
+CLI는 `25G83` 외 빌드, 불안정 topology, layer `0` WindowServer 창 membership, 창 메타데이터 누락,
+ABI 불일치를 write 전에 거절한다. Dock·Finder desktop·WindowServer·알림 센터의 비표준 layer 창은
+빈 Space 판정에서 제외한다.
+
+실측은 exact-build에서 class·initializer encoding을 확인한
+`SLSBridgedMoveManagedSpaceToDisplayIndexOperation`만 사용했다. exported
+`SLSMoveManagedSpaceToDisplayIndex` raw wrapper는 같은 bridge 또는 적용 ACK가 없는 one-way
+fallback으로 가므로 더 안전한 semantics가 없어 실행 후보에서 제외했다.
 
 각 회차 절차:
 
-1. A의 두 일반 Space를 각각 방문하고 창 하나를 조금 움직인다.
-2. Mission Control을 열었다면 닫고 3초 기다린다.
-3. 카드의 저장 대기 상태를 확인한 뒤 A를 분리한다.
-4. B를 연결해 실제 사용처럼 창과 Space를 재배치한다. A 검증을 위해 B에서 수동 저장할 필요는 없다.
-5. B를 분리하고 A를 연결한다.
-6. Mission Control을 직접 열지 않고 20초 기다린다.
-7. 현재 Space의 창 위치를 확인한다.
-8. 다른 저장 Space를 각각 한 번 방문해 3초 머무르고 창 위치를 확인한다.
+1. baseline stable snapshot 두 회로 SID·opaque name·display·order·kind·current·layer `0` window membership을 기록한다.
+2. 빈 희생용 Space를 destination tail로 한 번 이동하고 8초 안의 stable snapshot을 확인한다.
+3. 같은 SID를 원래 source index로 한 번 되돌리고 baseline 복귀를 확인한다.
+4. no-op·오이동·Dock 재시작·다른 topology 변경·역복구 실패 중 하나라도 있으면 즉시 중단한다.
 
 통과 기준:
 
-- Plugback이 Mission Control을 잠깐 열고, 내장 화면에 남은 **저장된 A Space**를 A로 옮긴다.
-- 현재 Space의 창은 먼저 복원되고 다른 Space의 창은 방문할 때 각각 한 번 복원된다.
-- 첫 방문의 초기 판독이 전환 중이어도 정착 뒤 1회 재시도로 복원되며, 다른 Space 왕복은 필요 없다.
-- B 전용 Space와 관계없는 내장 Space는 움직이지 않는다.
-- Mission Control drag 뒤 화면 구성과 창 membership이 안정된 상태로 끝난다.
+- 같은 SID·opaque name이 A → B → A로 왕복한다.
+- 다른 Space의 display·상대 순서·current와 모든 관찰 layer `0` window membership이 baseline과 같다.
+- Mission Control 표시, 합성 키보드·마우스 입력, Space create/destroy, 자동 retry가 0회다.
+- 빈 Space 3/3만으로는 제품에 연결하지 않는다. 아래 앱 창 포함 게이트 실패로 제품 후보를 닫았다.
 
-| 회차 | 두 Space 후보 함께 확정 | macOS가 스스로 복귀 | Plugback Mission Control 동작 | 현재 Space 복원 | 방문 Space 복원 | 관계없는 Space 무동작 | 판정 |
-|---|---|---|---|---|---|---|---|
-| 기존 1 | 별도 실측에서 확인 | 아니요 | 확인 | 확인 | 확인 | 확인 | 통과 |
-| 추가 2 | 미확인 | 미확인 | 미확인 | 확인 | 두 번째 방문에 확인 | 미확인 | 실패 · 첫 방문 무동작 |
-| 추가 3 |  |  |  |  |  |  |  |
+| 후보 | 빌드 | 왕복 1 | 왕복 2 | 왕복 3 | baseline 복귀 | 판정 |
+|---|---|---|---|---|---|---|
+| direct bridged op | `25G83` | 통과 | 통과 | 통과 | 3/3 | 자동 검증 통과 |
+| raw wrapper | `25G83` | 미실행 | 미실행 | 미실행 | — | 후보 제외 |
 
-회차별 메모:
+## 2.1. 게이트 A2 — 앱 창 포함 시각 확인 (실패 · 종료)
 
-- 진단 회차: A → B → A에서 Space drag 1회와 창 이동 3회를 확인했지만 LLDB가 세 번째
-  이동 도중 프로세스를 멈춰 타이밍을 교란했으므로 통과 횟수에는 넣지 않는다. 이 회차에서
-  처리 완료된 inactive Space에도 `방문 시 복원`이 남는 카드 표시 버그를 찾아 수정했다.
-- 추가 2 (수정 전 실패): Space 2 첫 방문에는 Buzz가 움직이지 않았고 Space 1을 방문한 뒤
-  Space 2로 돌아오자 복원됐다. 방문 대기는 유지됐지만 첫 판독 무동작 뒤 재시도가 없었다.
-- 추가 3: `________________`
+2026-09-01, 내장 화면의 macOS `데스크탑 2`/Buzz를 희생용으로 허용했다. 중간 topology 항목은
+Obsidian fullscreen이었다. 외장 `데스크탑 5`/Mail 회차는 실행하지 않았다.
+
+관찰:
+
+1. direct bridged move 뒤 Mission Control에서 이동이 보이지 않았고, 내장 `데스크탑 2`는 검정 화면이 됐다.
+2. 첫 `원위치 복귀`는 거절됐고 잠시 뒤 재실행은 topology baseline 복귀와 Dock 유지로 `통과`했다.
+3. 통과 뒤에도 대상 SID와 Buzz 창 프레임이 외장 화면 끝으로 지연 이동했다. Buzz 창은 그 비활성 SID에
+   단일 membership을 유지하면서 다른 외장 Space에서도 계속 보였다.
+4. SkyLight에는 외장 type `0` Space가 4개였지만 Mission Control에는 3개만 보여 대상 SID가 orphan이 됐다.
+5. Debug 앱을 종료하고 Dock을 한 번 재시작하자 네 번째 thumbnail이 다시 나타났다. 사용자가 이를
+   Mission Control로 내장 화면에 직접 옮긴 뒤 membership과 창 프레임이 모두 내장 화면으로 돌아왔고,
+   화면별 regular 수는 내장 2·외장 3으로 복구됐다. Buzz의 정확한 최종 좌표는 사용자가 조정했으므로
+   baseline 좌표 근거로 쓰지 않는다.
+
+판정: 두 번 같은 stable topology를 읽은 것은 populated Space operation의 완료·지속성을 증명하지
+못한다. 자동 rollback도 transient baseline을 성공으로 오판했다. 앱 창 포함 write 경로와 Debug 설정
+패널을 제거하고, 빈 Space 전용 CLI 외에는 whole-Space write를 노출하지 않는다.
 
 ## 3. 게이트 B — 자동 슬롯 OFF 무수집
 
@@ -221,7 +255,8 @@ Split View를 single fullscreen으로 잘못 복원하지 않는지 확인한다
 
 ## 6. 종료 조건
 
-- [ ] 자동 regular Space 재배치 합계 3/3
+- [ ] 제품 Mission Control 입력 0회·Space relocation 호출 0회 smoke 통과
+- [ ] whole-Space bridge를 다시 연결하려면 DEBUG 희생용 왕복 3/3 통과
 - [ ] 자동 슬롯 OFF 무수집 통과
 - [ ] Split View fullscreen write 0회·move 0회 통과
 - [ ] 새 Release smoke test 통과

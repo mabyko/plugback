@@ -65,16 +65,26 @@ xcodebuild -project App/Plugback.xcodeproj -scheme Plugback \
 `build/`는 gitignore 대상이라 레포를 더럽히지 않는다 — README의 빌드 명령과 같은 경로를 쓴다.
 Release 빌드는 `-configuration Release`, 경로도 `.../Products/Release/`로 바뀐다.
 
+Debug는 Finder·Dock에서 `Plugback Debug`와 파란 `D` 배지 앱 아이콘, 메뉴바에서
+기존 glyph 오른쪽 아래의 작은 벌레 배지로 보인다. Release의 `Plugback` 이름과 기존 아이콘은 바뀌지 않는다.
+Debug 프로필은 `~/Library/Application Support/Plugback Debug/profiles.json`에 저장되어
+Release의 `~/Library/Application Support/Plugback/profiles.json`을 읽거나 덮어쓰지 않는다.
+
 ## 4. 실기기에서 실행
 
-메뉴바 전용 앱이다(`LSUIElement`). Dock에 안 뜨고, 창도 안 뜬다 — 메뉴바 아이콘으로 확인한다.
+메뉴바 전용 앱이다(`LSUIElement`). 실행만으로 Dock 타일이 생기지는 않고 창도 안 뜬다.
+Finder나 Dock에 고정한 Debug 앱은 파란 `D` 배지로, 실행 여부는 벌레 배지가 붙은 기존 메뉴바 glyph로 확인한다.
 
 ```bash
-pkill -x Plugback                                  # 이전 빌드가 떠 있으면 먼저 죽인다
+# 이전 Debug 빌드가 떠 있으면 메뉴에서 먼저 종료한다. Release와 실행 파일 이름이 같다.
 open build/Build/Products/Debug/Plugback.app
 ```
 
-판정: 메뉴바에 아이콘이 생긴다. 안 생기면 `pgrep -x Plugback`으로 프로세스부터 확인한다.
+판정: 메뉴바에 벌레 배지가 붙은 기존 glyph가 생긴다. 안 생기면 `pgrep -x Plugback`으로 프로세스부터 확인한다.
+
+앱 창 포함 SkyLight whole-Space 회차는 지연 이동과 orphan Space를 만들어 실패했으므로 실행하지
+않는다. Debug 설정의 write 구획도 제거했다. Release에는 private write 코드가 없고, CLI 플래그는
+빈 Space 즉시 왕복의 과거 qualification을 재현할 때만 쓰는 헤드리스 진단으로 남긴다.
 
 ## 5. 손쉬운 사용 권한
 
@@ -118,5 +128,3 @@ swift run screen-probe
 | 번들 ID가 `forked.plugback.local`                     | 1번 Local.xcconfig가 없다                                             |
 | 권한을 줬는데 창이 안 움직임                                   | 5번 `tccutil reset`                                                |
 | 메뉴바 아이콘 두 개                                        | 이전 인스턴스가 살아 있다. `pkill -x Plugback` 후 재실행                         |
-
-

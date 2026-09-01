@@ -30,8 +30,7 @@ ActiveSpaceWatcher ──────▶      ├─▶ ProfileSlots ─▶ Capt
                                └─────────┴─▶ DesktopObservation
                                                 ├─▶ WindowGateway
                                                 └─▶ SpaceReader
-Space snapshot ─▶ SpacePlacement ─▶ CaptureEngine · RestoreEngine · PlugbackController · SpaceRelocator
-RestoreSession ─▶ SpaceRelocator
+Space snapshot ─▶ SpacePlacement ─▶ CaptureEngine · RestoreEngine · PlugbackController
 PlugbackController ─▶ ScreenProvider (ScreenID 내장)
 ```
 
@@ -72,12 +71,12 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 - **인터페이스**: 저장된 `SpaceHint`, 회차 한정 `runtimeID`, AX 열거에서 join한 window ID들을 각각 stable `SpaceSnapshot`의 위치 사실로 해석한다. 결과는 목표 화면의 current/inactive regular, 다른 화면의 stranded regular, fullscreen, unsupported, missing, 판정 불가 중 하나이며, 찾은 Space와 저장 가능한 identity를 함께 돌려준다.
 - **숨기는 것**: 화면·runtime ID·membership의 유일성 검증과 opaque name의 **snapshot 전체 유일성** 판정. 같은 이름이 다른 화면이나 다른 type에 하나라도 더 있으면 identity를 만들지 않는다.
-- 저장·복원·카드·재배치 정책은 넣지 않는 순수 내부 값 모듈이다. 네 소비자는 이 사실을 각자의 기존 결과로 매핑하며, 별도 프로토콜이나 어댑터는 만들지 않는다.
+- 저장·복원·카드 정책은 넣지 않는 순수 내부 값 모듈이다. 세 소비자는 이 사실을 각자의 기존 결과로 매핑하며, 별도 프로토콜이나 어댑터는 만들지 않는다.
 
 ### RestoreSession
 
 - **인터페이스**: `restoreAll`(연결·수동 복원) / `restoreVisited`(Space 방문) / 화면·완전 삭제 앱의 방문 대기 무효화 + 읽기 전용 방문 대기 조회.
-- **숨기는 것**: 일반 Space·전체 화면 복원 범위, binding 확정 실패에도 저장된 의도만 따르는 범위 판정, 일반 Space 사전 재배치와 검증, 연결 직후 방문 대기 생성, 현재 Space만 복원, 완료된 대상 제거, 새 창 열기 뒤 authoritative 창 열거 → 필요할 때만 stable snapshot → RestoreEngine 순서. 방문 대기와 창 없는 앱 재열기도 RestoreEngine의 같은 화면 적격성·앱 선점 결과를 쓴다. Space 복원 범위가 모두 꺼져도 같은 복원 회차를 쓰되 private snapshot은 읽지 않는다.
+- **숨기는 것**: 일반 Space·전체 화면 복원 범위, binding 확정 실패에도 저장된 의도만 따르는 범위 판정, 연결 직후 방문 대기 생성, 현재 Space만 복원, 완료된 대상 제거, 새 창 열기 뒤 authoritative 창 열거 → 필요할 때만 stable snapshot → RestoreEngine 순서. 방문 대기와 창 없는 앱 재열기도 RestoreEngine의 같은 화면 적격성·앱 선점 결과를 쓴다. Space 복원 범위가 모두 꺼져도 같은 복원 회차를 쓰되 private snapshot은 읽지 않는다.
 - ProfileSlots를 소유하지 않는다. 컨트롤러가 고른 최신 `ResolvedProfile` 값만 받아 프로필과 Space overlay의 복원 소스를 섞지 않는다.
 - 카드 상태를 소유하지 않는 MainActor 내부 타입이다. 결과는 컨트롤러에 돌려주고, 결과 수명·복원 중 게이트·새 화면 재요청·복원 뒤 수집과 카드 갱신은 컨트롤러가 맡는다.
 
@@ -116,7 +115,7 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 ### RestoreEngine
 
 - **인터페이스**: 내부 `restore(선택된 프로필+Space overlay들, 화면들, 한 번 열거한 창들, Space snapshot?, 복원 범위, 옵션) -> 복원 회차 결과`. 복원의 외부 진입점은 RestoreSession 하나다.
-- **숨기는 것**: 복원 정책 전부. legacy와 Space-aware 창 선택, 건너뜀·방문 대기·판정 불가 판정(F-02.2), 예외 옵션(최소화 꺼내기·새 창 열기), 이동·검증·재시도(F-02.3), 다중 화면 중복 제거(F-01.6), 지문 검증(F-01.4 — 불일치는 앱 선점 전에 제외하고 화면 단위 건너뜀 사유로 결과에 실린다), 이동·건너뜀·실패 사유 기록. 적격 화면의 식별자 순 앱 선점은 RestoreSession과 SpaceRelocator도 같은 판정을 쓴다.
+- **숨기는 것**: 복원 정책 전부. legacy와 Space-aware 창 선택, 건너뜀·방문 대기·판정 불가 판정(F-02.2), 예외 옵션(최소화 꺼내기·새 창 열기), 이동·검증·재시도(F-02.3), 다중 화면 중복 제거(F-01.6), 지문 검증(F-01.4 — 불일치는 앱 선점 전에 제외하고 화면 단위 건너뜀 사유로 결과에 실린다), 이동·건너뜀·실패 사유 기록. 적격 화면의 식별자 순 앱 선점은 RestoreSession도 같은 판정을 쓴다.
 - WindowGateway를 주입받는다. 페이크 어댑터로 실기기 없이 정책 전부를 테스트한다 — 대기·타이밍은 심 뒤라 정책 테스트에 벽시계 대기가 없다(인터리빙 검증용 서스펜션 노브 제외).
 - **격리 자유** — 어느 액터에도 묶이지 않는 순수 정책 모듈. 내부 호출자가 MainActor 홉 없이 쓸 수 있다.
 
@@ -153,7 +152,7 @@ WindowGateway를 주입받되, Space 복원 범위와 무관하게 복원 세션
 
 ## 3. 심 (Seam)
 
-교체 지점은 **WindowGateway·WindowMoveSource·ScreenProvider·SpaceReading·SpaceRelocating 다섯 프로토콜과 권한 판정 클로저(`authorizationCheck`)**다. (생성자 파라미터 심 — ProfileStore 디렉터리, UserDefaults, DisplayWatcher 간격 — 은 테스트 격리용이지 교체 지점이 아니다.) WindowGateway 페이크로 두 엔진의 정책 전부를, ScreenProvider 페이크로 컨트롤러의 화면 상태 정책을, SpaceReading·SpaceRelocating 페이크로 private Space 판독과 visible drag 정책을, 권한 클로저로 게이트 정책을 실기기 없이 검증한다. RestoreSession과 DesktopObservation은 교체 대상이 아닌 MainActor 내부 타입이다. 어댑터가 하나뿐인 곳(ProfileStore 등)에는 여전히 가상의 심을 만들지 않는다.
+교체 지점은 **WindowGateway·WindowMoveSource·ScreenProvider·SpaceReading 네 프로토콜과 권한 판정 클로저(`authorizationCheck`)**다. (생성자 파라미터 심 — ProfileStore 디렉터리, UserDefaults, DisplayWatcher 간격 — 은 테스트 격리용이지 교체 지점이 아니다.) WindowGateway 페이크로 두 엔진의 정책 전부를, ScreenProvider 페이크로 컨트롤러의 화면 상태 정책을, SpaceReading 페이크로 private Space 판독 정책을, 권한 클로저로 게이트 정책을 실기기 없이 검증한다. RestoreSession과 DesktopObservation은 교체 대상이 아닌 MainActor 내부 타입이다. 어댑터가 하나뿐인 곳(ProfileStore 등)에는 여전히 가상의 심을 만들지 않는다.
 
 ## 4. 스택
 

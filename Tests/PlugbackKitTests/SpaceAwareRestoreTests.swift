@@ -275,7 +275,7 @@ final class SpaceAwareRestoreTests: XCTestCase {
         ), "a disconnected target has no live configuration to compare")
     }
 
-    func testAutoCollectKeepsAnEmptyRegularSpaceForRelocation() {
+    func testAutoCollectKeepsAnEmptyRegularSpace() {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let slots = ProfileSlots(
@@ -299,55 +299,6 @@ final class SpaceAwareRestoreTests: XCTestCase {
             resolved[external.id]?.overlay?.regularSpaces,
             [SpaceHint(opaqueName: "empty-space", localOrderHint: 1)]
         )
-
-        let plan = SpaceRelocationPlanner.next(
-            resolved: resolved, screens: [external], snapshot: SpaceSnapshot(
-                displays: [
-                    .init(screenID: builtin.id, spaces: [
-                        space(SpaceRuntimeID(100), "builtin", order: 1, current: true),
-                        space(remembered, "empty-space", order: 2),
-                    ]),
-                    .init(screenID: external.id, spaces: [
-                        space(SpaceRuntimeID(200), "external", order: 1, current: true),
-                    ]),
-                ],
-                membershipsByWindowServerID: [:]
-            )
-        )
-        guard case .move(let move) = plan else {
-            return XCTFail("앱 없는 Space도 화면 소속 복원 대상이어야 한다")
-        }
-        XCTAssertEqual(move.runtimeID, remembered)
-        XCTAssertEqual(move.request.destinationScreenID, external.id)
-    }
-
-    func testPlannerMovesAnInactiveSpacePastABlockedCurrentSpace() {
-        let current = SpaceRuntimeID(1)
-        let movable = SpaceRuntimeID(2)
-        let resolved = [external.id: ResolvedProfile(
-            profile: Profile(screenID: external.id, screenName: external.name),
-            overlay: SlotSpaceOverlay(regularSpaces: [
-                SpaceHint(opaqueName: "current", localOrderHint: 1),
-                SpaceHint(opaqueName: "movable", localOrderHint: 2),
-            ])
-        )]
-        let snapshot = SpaceSnapshot(
-            displays: [
-                .init(screenID: builtin.id, spaces: [
-                    space(current, "current", order: 1, current: true),
-                    space(movable, "movable", order: 2),
-                ]),
-                .init(screenID: external.id, spaces: [
-                    space(SpaceRuntimeID(100), "external", order: 1, current: true),
-                ]),
-            ],
-            membershipsByWindowServerID: [:]
-        )
-
-        guard case .move(let move) = SpaceRelocationPlanner.next(
-            resolved: resolved, screens: [external], snapshot: snapshot
-        ) else { return XCTFail("막힌 현재 Space가 뒤의 안전한 이동을 막으면 안 된다") }
-        XCTAssertEqual(move.runtimeID, movable)
     }
 
     func testCaptureRecordsSingleFullscreenIntentButRejectsSplitView() {
@@ -957,26 +908,24 @@ final class SpaceAwareRestoreTests: XCTestCase {
         XCTAssertEqual(gateway.windowsList[0].frame, savedFrame)
     }
 
-    func testManualRegularSpaceRestoreWorksWhileAutoSlotIsOff() async {
+    func testManualRegularSpaceRestoreWaitsForSavedSpaceOnTargetScreen() async {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let gateway = FakeWindowGateway()
         let screens = FakeScreenProvider()
         screens.screensList = [builtin, external]
         let reader = FakeSpaceReader()
-        let relocator = FakeSpaceRelocator()
         let controller = makeController(
             gateway: gateway, screens: screens, reader: reader,
-            relocator: relocator, autoSlot: false,
-            regularSpaceRestore: true, fullscreenRestore: false,
+            autoSlot: false, regularSpaceRestore: true, fullscreenRestore: false,
             directory: directory
         )
         controller.restoreMode = .manual
         let bound = SpaceRuntimeID(1)
         let externalCurrent = SpaceRuntimeID(2)
         let builtinCurrent = SpaceRuntimeID(100)
-        let fullscreenFollower = SpaceRuntimeID(101)
         let savedFrame = CGRect(x: 1100, y: 100, width: 500, height: 700)
+        let displacedFrame = CGRect(x: 100, y: 100, width: 300, height: 300)
 
         gateway.runningBundleIDs = ["com.app"]
         gateway.windowsList = [window(
@@ -995,43 +944,21 @@ final class SpaceAwareRestoreTests: XCTestCase {
                 .init(screenID: builtin.id, spaces: [
                     space(builtinCurrent, "builtin", order: 1, current: true),
                     space(bound, "return-me", order: 2),
-                    space(fullscreenFollower, "fullscreen", order: 3, kind: .fullscreen),
                 ]),
                 .init(screenID: external.id, spaces: [
                     space(externalCurrent, "external", order: 1, current: true),
                 ]),
             ],
-            membershipsByWindowServerID: [11: [bound], 22: [fullscreenFollower]]
-        )
-        let after = SpaceSnapshot(
-            displays: [
-                .init(screenID: builtin.id, spaces: [
-                    space(builtinCurrent, "builtin", order: 1, current: true),
-                ]),
-                .init(screenID: external.id, spaces: [
-                    space(externalCurrent, "external", order: 1, current: true),
-                    space(fullscreenFollower, "fullscreen", order: 2, kind: .fullscreen),
-                    space(bound, "return-me", order: 3),
-                ]),
-            ],
-            membershipsByWindowServerID: [11: [bound], 22: [fullscreenFollower]]
+            membershipsByWindowServerID: [11: [bound]]
         )
         reader.availability = .available(before)
-        relocator.onRelocate = { request in
-            reader.availability = .available(after)
-            return true
-        }
-        gateway.windowsList = []
+        gateway.windowsList = [window(
+            1, bundleID: "com.app", frame: displacedFrame, windowServerID: 11
+        )]
 
         await controller.restoreNow()
 
-        XCTAssertEqual(relocator.requests, [SpaceRelocation(
-            sourceScreenID: builtin.id,
-            sourceLocalOrder: 2,
-            destinationScreenID: external.id,
-            expectedSourceCount: 3,
-            expectedDestinationCount: 1
-        )])
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
 
         let afterVisit = SpaceSnapshot(
             displays: [
@@ -1040,24 +967,14 @@ final class SpaceAwareRestoreTests: XCTestCase {
                 ]),
                 .init(screenID: external.id, spaces: [
                     space(externalCurrent, "external", order: 1),
-                    space(fullscreenFollower, "fullscreen", order: 2, kind: .fullscreen),
-                    space(bound, "return-me", order: 3, current: true),
+                    space(bound, "return-me", order: 2, current: true),
                 ]),
             ],
-            membershipsByWindowServerID: [11: [bound], 22: [fullscreenFollower]]
+            membershipsByWindowServerID: [11: [bound]]
         )
-        gateway.windowsList = [window(
-            1, bundleID: "com.app",
-            frame: CGRect(x: 100, y: 100, width: 300, height: 300), windowServerID: 11
-        )]
         reader.availability = .available(afterVisit)
         await controller.restoreNow()
         XCTAssertEqual(gateway.moveCalls.last?.target, savedFrame)
-
-        controller.labRegularSpaceRestore = false
-        reader.availability = .available(before)
-        await controller.restoreNow()
-        XCTAssertEqual(relocator.requests.count, 1, "스위치 OFF이면 Space 자체는 움직이지 않아야 한다")
     }
 
     func testAllSpaceFeaturesOffKeepManualCaptureOnLegacyPath() async {
@@ -1568,7 +1485,6 @@ final class SpaceAwareRestoreTests: XCTestCase {
         gateway: FakeWindowGateway,
         screens: FakeScreenProvider,
         reader: FakeSpaceReader,
-        relocator: SpaceRelocating? = nil,
         autoSlot: Bool = true,
         regularSpaceRestore: Bool? = nil,
         fullscreenRestore: Bool? = nil,
@@ -1588,20 +1504,8 @@ final class SpaceAwareRestoreTests: XCTestCase {
             store: ProfileStore(directory: directory),
             defaults: defaults,
             spaceReader: reader,
-            spaceRelocator: relocator,
             activeSpaceDebounceInterval: 0.01
         )
-    }
-}
-
-@MainActor
-private final class FakeSpaceRelocator: SpaceRelocating {
-    private(set) var requests: [SpaceRelocation] = []
-    var onRelocate: ((SpaceRelocation) -> Bool)?
-
-    func relocate(_ request: SpaceRelocation) async -> Bool {
-        requests.append(request)
-        return onRelocate?(request) ?? false
     }
 }
 
