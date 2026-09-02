@@ -31,6 +31,14 @@ final class CardPresentationTests: XCTestCase {
         XCTAssertEqual(CardPresentation.describe(.skipped(.noWindow)), "창이 없어 건너뜀")
     }
 
+    func testResultSymbolSeparatesFailureFromSkip() {
+        // 실패만 다른 기호 — 건너뜀과 같은 기호면 "실패 1"을 세어 읽어야 한다
+        XCTAssertEqual(CardPresentation.symbolName(for: .failed), "xmark.circle.fill")
+        XCTAssertEqual(CardPresentation.symbolName(for: .skipped(.fullscreen)), "minus.circle")
+        XCTAssertEqual(CardPresentation.symbolName(for: .skipped(.alreadyInPlace)), "checkmark.circle")
+        XCTAssertEqual(CardPresentation.symbolName(for: .moved), "checkmark.circle")
+    }
+
     func testSourceLabelNamesTheWinningSlotAndItsTime() {
         // 자동으로 뭔가 저장되는데 볼 수 없으면 조용한 게 아니라 불투명한 것이다.
         // 날짜를 고정해 넣는다 — 오늘/오늘 아님 두 분기를 시계 없이 검증한다.

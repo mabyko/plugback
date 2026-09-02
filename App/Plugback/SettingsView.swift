@@ -5,6 +5,8 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var controller: PlugbackController
     @State private var launchAtLogin = LoginItem.isEnabled
+    /// 삭제 확인을 기다리는 프로필 — 되돌릴 수 없는 유일한 명시적 동작이라 한 번 묻는다
+    @State private var profileToDelete: Profile?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,12 +17,17 @@ struct SettingsView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("plugback")
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .font(.system(.title2, design: .rounded).weight(.semibold))
                     Text("꽂으면, 제자리로")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                // 버전은 문의의 첫 질문이다 — Dock 아이콘도 About 창도 없어 여기 말고는 볼 데가 없다
+                Text(Self.version)
+                    .font(.subheadline).monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -42,9 +49,7 @@ struct SettingsView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("삭제", role: .destructive) {
-                                    controller.removeProfile(profile.screenID)
-                                }
+                                Button("삭제", role: .destructive) { profileToDelete = profile }
                             }
                         }
                     }
@@ -94,6 +99,26 @@ struct SettingsView: View {
         .frame(width: 440, height: 450)
         .tint(.orange)
         .onAppear { launchAtLogin = LoginItem.isEnabled }
+        .confirmationDialog(
+            "\(profileToDelete?.screenName ?? "") 프로필을 삭제할까요?",
+            isPresented: Binding(get: { profileToDelete != nil },
+                                 set: { if !$0 { profileToDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: profileToDelete
+        ) { profile in
+            Button("삭제", role: .destructive) { controller.removeProfile(profile.screenID) }
+        } message: { profile in
+            Text("대상 앱 \(profile.apps.count)개의 창 위치 기록이 지워집니다. 되돌릴 수 없습니다.")
+        }
+    }
+}
+
+private extension SettingsView {
+    static var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let short = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
     }
 }
 

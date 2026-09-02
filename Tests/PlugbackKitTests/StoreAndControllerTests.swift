@@ -208,6 +208,7 @@ final class PlugbackControllerTests: XCTestCase {
         await controller.restoreNow()
         XCTAssertEqual(controller.lastResults.map(\.screenID), ["ext-1", "ext-2"])
         XCTAssertEqual(controller.sections[1].lastResult?.movedCount, 1)
+        XCTAssertNotNil(controller.lastRestoredAt) // 결과에는 시각이 따라온다 — 묵은 결과가 방금 것으로 읽히지 않게
     }
 
     func testCheckAndRemoveActOnTheGivenScreenOnly() async {

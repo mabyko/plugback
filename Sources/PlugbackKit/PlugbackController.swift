@@ -159,6 +159,9 @@ public final class PlugbackController: ObservableObject {
     private let slots: ProfileSlots
     private var slotChanges: AnyCancellable?
     @Published private var resultsByScreen: [String: RestoreResult] = [:]
+    /// 마지막 복원 회차가 끝난 시각. 결과는 앱이 도는 동안 남으므로,
+    /// 시각이 없으면 어제의 「이동 2」가 방금 복원으로 읽힌다.
+    @Published public private(set) var lastRestoredAt: Date?
 
     /// 카드가 화면 하나를 그리는 단위 — 프로필·복원 소스·저장하지 않는 앱·마지막 결과가
     /// 전부 그 화면의 것이다. 첫 화면만 보여주던 카드가 화면을 빠뜨리지 않게 하는 인터페이스.
@@ -725,6 +728,7 @@ public final class PlugbackController: ObservableObject {
         for result in results where slots.source(for: result.screenID) != nil {
             resultsByScreen[result.screenID] = result
         }
+        if !results.isEmpty { lastRestoredAt = Date() }
     }
 
     /// 저장된 모든 프로필 — 연결되지 않은 화면 포함 (F-05.6, US-012 AC-1).

@@ -29,6 +29,16 @@ enum CardPresentation {
         }
     }
 
+    /// 결과 행의 기호 — 실패만 다르게 그린다. 건너뜀과 같은 기호면 "실패 1"을 세어 읽어야 한다.
+    /// 「이미 제자리」는 좋은 결과라 이동과 같은 체크다.
+    static func symbolName(for outcome: RestoreResult.Outcome) -> String {
+        switch outcome {
+        case .moved, .skipped(.alreadyInPlace): return "checkmark.circle"
+        case .skipped: return "minus.circle"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
+
     // MARK: - Space 그룹 — 번호는 외장 화면 안에서 저장된 일반 Space의 로컬 순서다
 
     static func spaceGroupTitle(for kind: PlugbackController.SpaceGroup.Kind) -> String {
@@ -126,6 +136,9 @@ enum CardPresentation {
     /// 애초에 대상이 아니다. 「그대로 둠」은 「제자리」와 겹친다. 「미등록」은 대상 앱의
     /// 금지어(등록 앱)에 스친다.
     static let untrackedHeader = "저장하지 않는 앱"
+    /// 체크된 앱 중 지금 실행 중이 아닌 행에만 붙는 한 단어. 켜진 앱에는 아무것도 붙이지 않는다 —
+    /// 예외만 표시해야 정상일 때 카드가 조용하다. 결과 사유 「꺼져 있어 건너뜀」과 같은 말을 쓴다.
+    static let notRunningLabel = "꺼짐"
     static let saveBlockedStatus = "저장 중지됨 · 프로필 파일 확인 필요"
 
     // MARK: - 복원 소스 (실험실 · 자동 슬롯) — 어느 슬롯이 이겼는지 카드가 말한다
@@ -167,7 +180,8 @@ enum CardPresentation {
     static let manualSpaceConfigurationDifference =
         "현재 Space 구성이 저장본과 다름 · 저장하면 갱신"
 
-    private static func relative(_ date: Date?, _ now: Date) -> String {
+    /// 상대 시각 — 결과 스트립과 대기 중 문구가 같은 눈금을 쓴다.
+    static func relative(_ date: Date?, _ now: Date = Date()) -> String {
         guard let date else { return "확인 안 됨" }
         let seconds = Int(now.timeIntervalSince(date))
         switch seconds {
