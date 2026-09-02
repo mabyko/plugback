@@ -89,24 +89,28 @@ public struct WindowInfo: Equatable, Sendable {
     public let frame: CGRect
     public let fullscreenState: WindowFullscreenState
     public let isMinimized: Bool
+    /// 앱이 ⌘H로 숨겨져 있다. 창 좌표는 남아 있지만 어떤 의미로도 화면에 있는 창이 아니다 —
+    /// 저장·수집·카드 목록은 없는 창으로 보고, 복원은 그대로 옮긴다 (F-03.2).
+    public let isHidden: Bool
     public let windowServerID: CGWindowID?
 
     public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
-                isFullscreen: Bool = false, isMinimized: Bool = false,
+                isFullscreen: Bool = false, isMinimized: Bool = false, isHidden: Bool = false,
                 windowServerID: CGWindowID? = nil) {
         self.id = id; self.appBundleID = appBundleID; self.appName = appName
         self.frame = frame
         fullscreenState = isFullscreen ? .fullscreen : .windowed
-        self.isMinimized = isMinimized
+        self.isMinimized = isMinimized; self.isHidden = isHidden
         self.windowServerID = windowServerID
     }
 
     public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
                 fullscreenState: WindowFullscreenState, isMinimized: Bool = false,
-                windowServerID: CGWindowID? = nil) {
+                isHidden: Bool = false, windowServerID: CGWindowID? = nil) {
         self.id = id; self.appBundleID = appBundleID; self.appName = appName
         self.frame = frame; self.fullscreenState = fullscreenState
-        self.isMinimized = isMinimized; self.windowServerID = windowServerID
+        self.isMinimized = isMinimized; self.isHidden = isHidden
+        self.windowServerID = windowServerID
     }
 
     /// 기존 flat 복원 경로의 source compatibility. unknown은 종전처럼 false지만,

@@ -44,11 +44,11 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
         // 조용히 성공하는 것을 막고, 장기 실행 시 refs의 무한 증식도 막는다.
         refs.removeAll()
         // 앱 목록은 NSWorkspace(메인)에서 한 번에 — AX 순회는 actor 실행기에서
-        let apps: [(pid: pid_t, bundleID: String, name: String)] = await MainActor.run {
+        let apps: [(pid: pid_t, bundleID: String, name: String, hidden: Bool)] = await MainActor.run {
             NSWorkspace.shared.runningApplications.compactMap { app in
                 guard app.activationPolicy == .regular, let id = app.bundleIdentifier else { return nil }
                 if let ids = bundleIDs, !ids.contains(id) { return nil }
-                return (app.processIdentifier, id, app.localizedName ?? id)
+                return (app.processIdentifier, id, app.localizedName ?? id, app.isHidden)
             }
         }
 
@@ -84,7 +84,8 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
                 result.append(WindowInfo(id: id, appBundleID: app.bundleID,
                                          appName: app.name,
                                          frame: frame, fullscreenState: fullscreen,
-                                         isMinimized: minimized, windowServerID: windowServerID))
+                                         isMinimized: minimized, isHidden: app.hidden,
+                                         windowServerID: windowServerID))
             }
         }
         return result

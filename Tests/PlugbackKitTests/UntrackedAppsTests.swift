@@ -11,9 +11,9 @@ final class UntrackedAppsTests: XCTestCase {
                                      frame: CGRect(x: 0, y: 0, width: 1000, height: 1000), isBuiltin: true)
 
     private func window(_ id: Int, _ bundleID: String, _ frame: CGRect,
-                        minimized: Bool = false, fullscreen: Bool = false) -> WindowInfo {
+                        minimized: Bool = false, fullscreen: Bool = false, hidden: Bool = false) -> WindowInfo {
         WindowInfo(id: id, appBundleID: bundleID, appName: bundleID, frame: frame,
-                   isFullscreen: fullscreen, isMinimized: minimized)
+                   isFullscreen: fullscreen, isMinimized: minimized, isHidden: hidden)
     }
 
     private let onScreen = CGRect(x: 1100, y: 100, width: 400, height: 400)
@@ -40,6 +40,13 @@ final class UntrackedAppsTests: XCTestCase {
             in: [window(1, "com.a", onScreen, minimized: true),
                  window(2, "com.b", onScreen, fullscreen: true)],
             on: screen, excluding: [])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testIgnoresHiddenApps() {
+        // ⌘H로 숨긴 앱 — 창 좌표는 화면에 남지만 사용자에겐 없는 창이다. 저장도 안 잡아간다 (F-03.2).
+        let result = PlugbackController.untracked(
+            in: [window(1, "com.discord", onScreen, hidden: true)], on: screen, excluding: [])
         XCTAssertTrue(result.isEmpty)
     }
 

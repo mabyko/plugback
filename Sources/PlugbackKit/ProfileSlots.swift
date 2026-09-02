@@ -199,13 +199,14 @@ final class ProfileSlots: ObservableObject {
         windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil
     ) -> Bool {
         guard !isSaveBlocked else { return false }
+        let windows = windows.filter { !$0.isHidden } // 숨긴 창의 위치는 선언된 배치가 아니다 (F-03.2)
         let now = Date()
         var nextStored = stored
         var nextCandidates = candidates
         for screen in screens {
             let key = Slot.manual.key(screen.id)
-            // 체크 해제한 앱의 창은 넘기지 않는다 — 「저장하지 않고 감지하지 않는다」가 해제의 뜻이다.
-            // 프로필 항목과 좌표는 그대로 남는다(병합) — 다시 켜면 그 자리로 돌아온다 (US-006 AC-2).
+            // 프로필이 있으면 체크된 대상 앱의 창만 넘긴다 — 화면에 우연히 있던 창이 대상 앱이 되지 않는다.
+            // 체크 해제한 앱의 항목과 좌표는 그대로 남는다(병합) — 다시 켜면 그 자리로 돌아온다 (US-006 AC-2).
             let selected = kept(windows, for: key)
             var merged: ResolvedProfile
             if let snapshot {
@@ -280,6 +281,7 @@ final class ProfileSlots: ObservableObject {
         windows: [WindowInfo], on screens: [ScreenInfo], snapshot: SpaceSnapshot? = nil
     ) {
         guard !isSaveBlocked else { return }
+        let windows = windows.filter { !$0.isHidden } // 저장과 같은 눈 — 숨긴 창은 없는 창이다
         let bases = spaceBases(for: screens)
         var collected = false
         for screen in screens {
@@ -399,13 +401,13 @@ final class ProfileSlots: ObservableObject {
 
     // MARK: - 내부
 
-    /// 그 슬롯에서 체크 해제된 앱의 창을 걸러낸다.
+    /// 저장이 볼 창 — 프로필이 있으면 체크된 대상 앱의 창만, 프로필이 비어 있으면(첫 저장) 화면의 창 전부.
+    /// 첫 저장은 시작점이 필요해 쓸어 담고, 그 뒤 새 앱은 카드에서 체크할 때만 들어온다 (F-03.3).
+    /// 「저장하지 않는 앱」이라는 카드의 이름이 참이 되는 지점이다.
     private func kept(_ windows: [WindowInfo], for key: String) -> [WindowInfo] {
-        let disabled = Set(
-            (stored[key]?.profile.apps.filter { !$0.isEnabled } ?? []).map(\.bundleID)
-        )
-        guard !disabled.isEmpty else { return windows }
-        return windows.filter { !disabled.contains($0.appBundleID) }
+        guard let apps = stored[key]?.profile.apps, !apps.isEmpty else { return windows }
+        let enabled = Set(apps.filter(\.isEnabled).map(\.bundleID))
+        return windows.filter { enabled.contains($0.appBundleID) }
     }
 
     /// 화면별 수집 바탕 — profile과 overlay가 같은 candidate/auto/manual pair에서 나온다.

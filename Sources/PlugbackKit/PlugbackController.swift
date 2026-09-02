@@ -816,7 +816,7 @@ public final class PlugbackController: ObservableObject {
         projectionsByScreen = next
     }
 
-    /// 저장이 잡아갈 창과 같은 규칙 — 중심점이 이 화면이고, 최소화·전체화면이 아닌 표준 창.
+    /// 저장이 잡아갈 창과 같은 규칙 — 중심점이 이 화면이고, 최소화·전체화면·숨김이 아닌 표준 창.
     /// 순수 함수라 규칙이 저장과 어긋나면 테스트가 잡는다.
     static func untracked(in windows: [WindowInfo], on screen: ScreenInfo?,
                           excluding targets: Set<String>) -> [UntrackedApp] {
@@ -824,7 +824,7 @@ public final class PlugbackController: ObservableObject {
         var seen = targets
         var out: [UntrackedApp] = []
         for window in windows
-        where !window.isMinimized && !window.isFullscreen && screen.contains(window) {
+        where !window.isMinimized && !window.isFullscreen && !window.isHidden && screen.contains(window) {
             if seen.insert(window.appBundleID).inserted {
                 out.append(UntrackedApp(bundleID: window.appBundleID, displayName: window.appName))
             }

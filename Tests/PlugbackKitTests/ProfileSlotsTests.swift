@@ -354,13 +354,37 @@ final class ProfileSlotsTests: XCTestCase {
         slots.collect(windows: [window("com.chrome", right)], on: [screen])
         slots.confirm(["ext-1"]) // 자동 슬롯 = { chrome }
 
-        // Linear를 화면에 띄운 채 수동 저장 — 수동 슬롯에만 들어간다
-        slots.capture(windows: [window("com.chrome", left),
-                                WindowInfo(id: 2, appBundleID: "com.linear", appName: "Linear", frame: right)],
-                      on: [screen])
+        // Linear를 카드에서 체크해 명부에 올린다 — 저장은 대상 앱만 갱신하므로 체크가 입구다 (F-03.3)
+        slots.addTarget(windows: [WindowInfo(id: 2, appBundleID: "com.linear", appName: "Linear", frame: right)],
+                        on: [screen])
 
         XCTAssertEqual(slots.targets(for: [screen]).sorted(), ["com.chrome", "com.linear"],
                        "수동 슬롯에만 있는 앱도 따라가야 자동 슬롯에 도달한다")
+    }
+
+    // MARK: - 저장은 대상 앱만 갱신한다 (US-002 AC-7)
+
+    func testFirstSaveSweepsThenLaterSavesUpdateOnlyCheckedApps() {
+        let slots = makeSlots()
+        // 첫 저장: 프로필이 없으니 화면의 창을 전부 담는다 — 시작점이 필요하다
+        slots.capture(windows: [window("com.chrome", left)], on: [screen])
+        // 두 번째 저장: Passwords 창이 화면에 있어도(큰 창 뒤에 가려진 채) 들어오지 않는다 — 체크가 유일한 입구
+        slots.capture(windows: [window("com.chrome", right),
+                                WindowInfo(id: 2, appBundleID: "com.apple.Passwords", appName: "Passwords", frame: left)],
+                      on: [screen])
+        let apps = slots.source(for: "ext-1")?.profile.apps ?? []
+        XCTAssertEqual(apps.map(\.bundleID), ["com.chrome"], "화면에 우연히 있던 창이 대상 앱이 되지 않는다")
+        XCTAssertEqual(apps.first?.unitRect.x, 0.5, "체크된 앱의 위치는 갱신된다")
+    }
+
+    func testSaveIgnoresHiddenWindows() {
+        // ⌘H로 숨긴 창의 위치는 선언된 배치가 아니다 (F-03.2)
+        let slots = makeSlots()
+        slots.capture(windows: [window("com.chrome", left),
+                                WindowInfo(id: 2, appBundleID: "com.discord", appName: "Discord",
+                                           frame: right, isHidden: true)],
+                      on: [screen])
+        XCTAssertEqual(slots.source(for: "ext-1")?.profile.apps.map(\.bundleID), ["com.chrome"])
     }
 
     func testTargetsAreEmptyForAnUnknownScreen() {
