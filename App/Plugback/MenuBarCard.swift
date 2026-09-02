@@ -54,16 +54,17 @@ private struct Card: View {
                     .font(.callout)
                 }
             }
-            // 연결된 모든 화면의 결과를 합산한다 — 두 번째 화면의 실패 사유도 여기서 보인다.
-            // 지문 불일치로 통째 건너뛴 화면은 lastResults가 이미 뺐다 — 그건 위 경고 배너의 몫이다.
-            if controller.isConnected, !controller.lastResults.isEmpty {
-                Divider()
-                resultStrip(controller.lastResults)
-            }
             Divider()
             actions
             Divider()
             appList
+            // 연결된 모든 화면의 결과를 합산한다 — 두 번째 화면의 실패 사유도 여기서 보인다.
+            // 지문 불일치로 통째 건너뛴 화면은 lastResults가 이미 뺐다 — 그건 위 경고 배너의 몫이다.
+            // 버튼(다음 행동) 아래, 목록 다음에 둔다 — 결과는 참고 정보라 맨 아래가 맞다.
+            if controller.isConnected, !controller.lastResults.isEmpty {
+                Divider()
+                resultStrip(controller.lastResults)
+            }
             Divider()
             footer
         }
