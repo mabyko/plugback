@@ -1,0 +1,291 @@
+import PlugbackKit
+import SwiftUI
+
+/// 시스템 강조색에 덮이지 않는 체크박스·스위치. 보조 기술에는 표준 Toggle을 제공한다.
+struct CardToggleStyle: ToggleStyle {
+    let palette: CardPalette
+    var isSwitch = false
+    var controlOnTrailingEdge = false
+    @Environment(\.isEnabled) private var isEnabled
+    @FocusState private var focused: Bool
+    @ScaledMetric(relativeTo: .caption) private var size: CGFloat = 13
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 8) {
+                let control = Group {
+                    if isSwitch {
+                        Capsule().fill(configuration.isOn ? palette.accent : palette.border)
+                            .overlay(alignment: configuration.isOn ? .trailing : .leading) {
+                                Circle().fill(configuration.isOn ? palette.onAccent : palette.text)
+                                    .frame(width: size - 4, height: size - 4).padding(3)
+                            }
+                            .frame(width: size + 12, height: size + 2)
+                    } else {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(configuration.isOn ? palette.accent : palette.background)
+                            .overlay(RoundedRectangle(cornerRadius: 2)
+                                .strokeBorder(configuration.isOn ? palette.accent : palette.secondary))
+                            .overlay {
+                                if configuration.isOn {
+                                    Image(systemName: "checkmark").font(.system(size: size - 4, weight: .bold))
+                                        .foregroundStyle(palette.onAccent)
+                                }
+                            }
+                            .frame(width: size, height: size)
+                    }
+                }
+                if !controlOnTrailingEdge { control }
+                configuration.label
+                if controlOnTrailingEdge { control }
+            }
+            .frame(minHeight: isSwitch ? 28 : 0)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+        .buttonStyle(CardPressStyle())
+        .focused($focused)
+        .overlay(RoundedRectangle(cornerRadius: 3)
+            .strokeBorder(focused ? palette.accent : Color.clear, lineWidth: 2))
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.checkbox)
+        }
+    }
+}
+
+private struct CardPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.78 : 1)
+    }
+}
+
+/// 실제 Button의 동작은 유지하고 HTML 시안의 모서리·색·높이만 지정한다.
+struct CardActionStyle: ButtonStyle {
+    let palette: CardPalette
+    let prominent: Bool
+    let tall: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @FocusState private var focused: Bool
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(prominent ? .semibold : .regular))
+            .padding(.horizontal, 11).padding(.vertical, 8)
+            .frame(minHeight: tall ? 38 : 32)
+            .foregroundStyle(prominent ? palette.onAccent : palette.text)
+            .background(prominent ? palette.accent : palette.surface,
+                        in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(focused ? palette.accent : (prominent ? palette.accent : palette.border),
+                              lineWidth: focused ? 2 : 1))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .fill(palette.text.opacity(hovered && isEnabled ? 0.04 : 0))
+                .allowsHitTesting(false))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .focused($focused)
+            .onHover { hovered = $0 }
+    }
+}
+
+/// MenuBarExtra가 목록 높이를 0으로 접지 않게 내용을 측정하고, 긴 목록에는 상한을 둔다.
+struct CardScrollView<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView(.vertical) {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        }
+        .frame(height: min(max(contentHeight, 1), maxHeight))
+    }
+}
+
+struct CardAppRow: View {
+    let bundleID: String
+    let name: String
+    let isEnabled: Bool
+    let isRunning: Bool?
+    let layout: CardLayout
+    let palette: CardPalette
+    let setTracked: (Bool) -> Void
+    let remove: (() -> Void)?
+    @State private var appIcon: NSImage?
+    @State private var hovered = false
+    @ScaledMetric(relativeTo: .callout) private var iconSize: CGFloat = 22
+    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 35
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: Binding(get: { isEnabled }, set: setTracked)) {
+                HStack(spacing: 8) {
+                    identity
+                    Spacer(minLength: 4)
+                    runningStatus
+                }
+                .padding(.vertical, layout.rowPadding)
+                .frame(maxWidth: .infinity,
+                       minHeight: rowHeight + (layout == .comfortable ? 4 : layout == .compact ? 0 : -3),
+                       alignment: .leading)
+            }
+            .toggleStyle(CardToggleStyle(palette: palette, controlOnTrailingEdge: layout == .command))
+            .accessibilityLabel(name)
+            .help(isEnabled ? "복원 대상에서 제외" : "복원 대상에 포함")
+            if !isEnabled, let remove {
+                Button(action: remove) {
+                    Image(systemName: "xmark.circle").frame(width: 24, height: 24)
+                }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(palette.secondary)
+                    .help("프로필에서 삭제")
+                    .accessibilityLabel("\(name) 프로필에서 삭제")
+            }
+        }
+        .background(hovered ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .contextMenu {
+            if let remove { Button("프로필에서 삭제", role: .destructive, action: remove) }
+        }
+        .task(id: bundleID) {
+            // body 재계산마다 파일을 읽지 않는다. 설치되지 않은 앱에는 표준 기호를 쓴다.
+            appIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        }
+    }
+
+    private var identity: some View {
+        HStack(spacing: 8) {
+            Group {
+                if let appIcon { Image(nsImage: appIcon).resizable() }
+                else { Image(systemName: "app").resizable() }
+            }
+            .scaledToFit()
+            .frame(width: iconSize + (layout == .comfortable ? 3 : layout == .command ? -2 : 1),
+                   height: iconSize + (layout == .comfortable ? 3 : layout == .command ? -2 : 1))
+            .accessibilityHidden(true)
+            Text(name).font(.body)
+                .foregroundStyle(isEnabled ? palette.text : palette.secondary)
+        }
+    }
+
+    @ViewBuilder private var runningStatus: some View {
+        if isRunning == false {
+            Text(CardPresentation.notRunningLabel)
+                .font(.caption).foregroundStyle(palette.secondary)
+        }
+    }
+}
+
+struct CardResultStrip: View {
+    let results: [RestoreResult]
+    let restoredAt: Date?
+    let palette: CardPalette
+    @State private var expanded = false
+    @ScaledMetric(relativeTo: .callout) private var detailCap: CGFloat = 144
+
+    var body: some View {
+        let moved = results.reduce(0) { $0 + $1.movedCount }
+        let skipped = results.reduce(0) { $0 + $1.skippedCount }
+        let failed = results.reduce(0) { $0 + $1.failedCount }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("마지막 복원", systemImage: "arrow.counterclockwise")
+                    .fontWeight(.medium)
+                Spacer()
+                if let restoredAt {
+                    Text(CardPresentation.relative(restoredAt)).foregroundStyle(palette.secondary)
+                }
+            }
+            if failed > 0 {
+                Label {
+                    Text("\(failureNames) 복원 실패").foregroundStyle(palette.text)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                }
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !results.isEmpty {
+                DisclosureGroup("이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed) · 상세", isExpanded: $expanded) {
+                    CardScrollView(maxHeight: detailCap) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(results, id: \.screenID) { result in
+                                ForEach(result.entries, id: \.bundleID) { entry in
+                                    Label("\(entry.displayName) — \(CardPresentation.describe(entry.outcome))",
+                                          systemImage: CardPresentation.symbolName(for: entry.outcome))
+                                        .foregroundStyle(entry.outcome == .failed ? palette.text : palette.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .foregroundStyle(palette.secondary)
+            }
+        }
+        .font(.caption)
+    }
+
+    private var failureNames: String {
+        let names = results.flatMap(\.entries).filter { $0.outcome == .failed }.map(\.displayName)
+        let first = names.prefix(2).joined(separator: ", ")
+        return names.count > 2 ? "\(first) 외 \(names.count - 2)개 앱" : first
+    }
+}
+
+/// 명령형 레이아웃도 실제 Button을 쓴다. 키보드 포커스와 비활성 상태를 명확히 남긴다.
+struct CardCommandButton: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let prominent: Bool
+    let isBusy: Bool
+    let palette: CardPalette
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    @FocusState private var focused: Bool
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Group {
+                    if isBusy { ProgressView().controlSize(.small) }
+                    else { Image(systemName: symbol).font(prominent ? .title3 : .body) }
+                }
+                .frame(width: 32, height: prominent ? 32 : 20)
+                .foregroundStyle(prominent ? palette.onAccent : palette.secondary)
+                .background(prominent ? palette.accent : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(prominent ? .body.weight(.medium) : .callout)
+                        .foregroundStyle(prominent ? palette.text : palette.secondary)
+                    if prominent {
+                        Text(detail).font(.caption).foregroundStyle(palette.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                if prominent {
+                    Image(systemName: "chevron.right").foregroundStyle(palette.secondary)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, prominent ? 12 : 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(prominent ? palette.accentSoft : (hovered && isEnabled ? palette.soft : palette.background),
+                        in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(focused ? palette.accent : (hovered && isEnabled ? palette.border : Color.clear),
+                              lineWidth: focused ? 2 : 1))
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+        .buttonStyle(CardPressStyle())
+        .focused($focused)
+        .onHover { hovered = $0 }
+        .help(detail)
+    }
+}

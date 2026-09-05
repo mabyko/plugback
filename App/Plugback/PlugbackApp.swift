@@ -12,7 +12,11 @@ struct PlugbackApp: App {
 
     init() {
 #if DEBUG
-        controller = SpaceProbe.isRequested ? SpaceProbe.placeholderController : AppServices.controller
+        // 호스트 유닛 테스트는 실제 창 감시·자동 복원을 시작하지 않는다.
+        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+        controller = (SpaceProbe.isRequested || isTesting)
+            ? SpaceProbe.placeholderController : AppServices.controller
 #else
         controller = AppServices.controller
 #endif
