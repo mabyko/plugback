@@ -19,6 +19,17 @@ Status: pre-release. Implementation complete (M1-M5), pending on-device
 verification; no signed release yet. Design documents live in
 [docs/](docs/) (currently written in Korean).
 
+## Design preview
+
+The original four menu bar design concepts: Graphite, Porcelain, Command, and
+Sage. This prototype screenshot shows the initial designs; the current app
+includes later refinements.
+
+![Original Plugback design concepts: A Graphite, B Porcelain, C Command, and D Sage](prototypes/theme-directions-overview.png)
+
+Open [the HTML prototype](prototypes/theme-directions.html) locally to explore
+the designs, or read the [design notes](docs/THEME_DIRECTIONS.md).
+
 ## Build from source
 
 Requires macOS 13+ and Xcode 16+. There is no signed release yet, so building
