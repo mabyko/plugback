@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugback · 메뉴바 카드 비교 시안</title>
+<style>
+  :root { color-scheme:light dark; --page:#e8e8eb; --panel:#f8f8fa; --surface:#ededf0; --text:#222226; --muted:#606069; --line:#d7d7dd; --accent:#ffad32; --ink:#302000; }
+  @media(prefers-color-scheme:dark) { :root { --page:#18181b; --panel:#28282c; --surface:#34343a; --text:#f2f2f5; --muted:#b8b8c1; --line:#47474f; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--page); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; }
+  main { max-width:940px; margin:auto; padding:48px 24px; }
+  h1 { margin:4px 0 10px; font-size:28px; letter-spacing:-.8px; }
+  p { margin:0; color:var(--muted); }
+  .eyebrow { font-size:12px; letter-spacing:1px; font-weight:600; }
+  .comparison { display:flex; gap:48px; align-items:flex-start; flex-wrap:wrap; margin-top:36px; }
+  figure { margin:0; max-width:100%; }
+  figcaption { font-size:12px; color:var(--muted); margin-bottom:12px; }
+  .card { width:360px; max-width:100%; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .current { width:320px; }
+  .zone { padding:16px 20px; }
+  .zone+.zone { border-top:1px solid var(--line); }
+  .current .zone { padding:12px 16px; }
+  .flex { display:flex; align-items:center; gap:10px; }
+  .between { justify-content:space-between; }
+  .title { font-size:17px; font-weight:650; letter-spacing:-.4px; }
+  .caption { font-size:12px; color:var(--muted); }
+  .badge { padding:3px 8px; border-radius:20px; background:var(--surface); font-size:11px; white-space:nowrap; }
+  .screen { width:34px; height:34px; color:var(--muted); flex-shrink:0; }
+  .actions { display:flex; gap:8px; }
+  .action { border:1px solid var(--line); border-radius:7px; padding:8px 12px; text-align:center; font-weight:550; background:var(--surface); }
+  .primary { background:var(--accent); color:var(--ink); border-color:var(--accent); flex:1; }
+  .current .action { flex:1; font-size:11px; padding:6px 3px; white-space:nowrap; }
+  .section-title { font-size:12px; font-weight:600; color:var(--muted); }
+  .row { display:flex; gap:10px; align-items:center; padding:8px 0; }
+  .row .status { margin-left:auto; font-size:11px; color:var(--muted); }
+  .check { display:grid; place-items:center; width:15px; height:15px; border-radius:3px; color:var(--ink); background:var(--accent); font-size:11px; flex-shrink:0; }
+  .off { border:1px solid var(--muted); background:transparent; }
+  .guide { padding:12px; background:var(--surface); border-radius:6px; margin-top:10px; font-size:12px; }
+  .guide strong { display:block; margin-bottom:4px; font-weight:600; }
+  .spaced { margin-top:16px; }
+  details { font-size:12px; color:var(--muted); }
+  summary { cursor:pointer; padding:7px 0; }
+  summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:2px; }
+  details p { padding:4px 0; }
+  .footer { font-size:12px; }
+  .toggle { display:inline-block; vertical-align:middle; width:25px; height:15px; border-radius:20px; background:var(--accent); margin-right:6px; }
+  .toggle::after { content:""; display:block; width:11px; height:11px; border-radius:50%; background:var(--ink); margin:2px 2px 2px auto; }
+  .note { max-width:750px; margin-top:32px; font-size:12px; }
+  @media(max-width:480px) { main { padding:28px 16px; } .comparison { gap:28px; } .title { font-size:16px; } }
+</style>
+<main>
+  <p class="eyebrow">PLUGBACK / DESIGN REVIEW</p>
+  <h1>필요한 동작이 먼저 보이도록.</h1>
+  <p>현재 구성 요약과 개선 제안. 정적 시안이며 실제 앱의 화면 캡처가 아닙니다.<br>접힌 상세만 펼쳐 볼 수 있습니다. 저장·복원은 실행하지 않습니다.</p>
+  <div class="comparison">
+    <figure>
+      <figcaption>01 · 현재 코드의 구성 요약 / 320px</figcaption>
+      <div class="card current">
+        <div class="zone flex between"><strong>LG UltraFine 27</strong><span class="badge">프로필 있음</span></div>
+        <div class="zone actions"><span class="action">지금 레이아웃 저장</span><span class="action primary">지금 레이아웃 복원</span></div>
+        <div class="zone">
+          <div class="section-title">Space 1 <span style="float:right">현재</span></div>
+          <div class="row"><span class="check" aria-hidden="true">✓</span>Safari</div>
+          <div class="row"><span class="check" aria-hidden="true">✓</span>Slack</div>
+          <div class="section-title spaced">Space 2 <span style="float:right">이동 필요</span></div>
+          <p class="caption">내장 화면 → LG UltraFine 27<br>Mission Control에서 이 Space를 옮겨 주세요.</p>
+          <div class="row"><span class="check" aria-hidden="true">✓</span>Xcode</div>
+          <div class="section-title spaced">저장하지 않는 앱</div>
+          <div class="row"><span class="check off" aria-hidden="true"></span>음악</div>
+        </div>
+        <div class="zone caption"><strong>마지막 복원</strong> · 방금<br>이동 1 · 건너뜀 2 · 실패 0<br>Slack — 이미 제자리<br>Xcode — Space 확인 필요</div>
+        <div class="zone flex between footer"><span>자동 복원 켬</span><span>설정　 종료</span></div>
+      </div>
+    </figure>
+    <figure>
+      <figcaption>02 · 제안 / 360px · 시스템 설정에 따라 라이트·다크</figcaption>
+      <div class="card">
+        <div class="zone flex">
+          <svg class="screen" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="5" width="26" height="18" rx="2"/><path d="M16 23v5m-6 0h12"/></svg>
+          <div><div class="title">LG UltraFine 27</div><p class="caption">연결됨 · 프로필 있음 · 대상 앱 3개</p></div>
+        </div>
+        <div class="zone">
+          <div class="actions"><span class="action">저장</span><span class="action primary">지금 레이아웃 복원</span></div>
+        </div>
+        <div class="zone">
+          <div class="flex between section-title"><span>Space 1</span><span class="badge">현재</span></div>
+          <div class="row"><span class="check" aria-hidden="true">✓</span>Safari</div>
+          <div class="row"><span class="check" aria-hidden="true">✓</span>Slack</div>
+          <div class="flex between section-title spaced"><span>Space 2</span><span class="badge">이동 필요</span></div>
+          <div class="row"><span class="check" aria-hidden="true">✓</span>Xcode</div>
+          <div class="guide"><strong>내장 화면 → LG UltraFine 27</strong><p>Mission Control에서 이 Space를 옮겨 주세요.</p></div>
+          <details class="spaced"><summary>저장하지 않는 앱 · 1개</summary><div class="row"><span class="check off" aria-hidden="true"></span>음악</div></details>
+        </div>
+        <div class="zone">
+          <div class="flex between"><strong style="font-size:12px">마지막 복원</strong><span class="caption">방금</span></div>
+          <p class="caption">이동 1 · 건너뜀 2 · 실패 0</p>
+          <details><summary>건너뛴 이유 보기</summary><p>Slack — 이미 제자리</p><p>Xcode — Space 확인 필요</p></details>
+        </div>
+        <div class="zone flex between footer"><span><span class="toggle" aria-hidden="true"></span>자동 복원</span><span>설정　 종료</span></div>
+      </div>
+    </figure>
+  </div>
+  <p class="note">제안의 핵심은 제목·상태를 분리하고 복원 버튼을 강조하며 상세 정보의 밀도를 조절하는 것입니다. 주황은 주요 동작과 선택 상태에 사용합니다. 실제 구현에서는 저장 버튼의 접근성 이름을 유지하고, 실패는 접힌 상태에서도 표시해야 합니다. 여러 외장 화면·프로필 없음·권한 없음·연결 해제 상태의 기존 동작도 유지합니다.</p>
+</main>
+</html>
