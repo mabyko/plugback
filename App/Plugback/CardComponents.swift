@@ -60,11 +60,10 @@ private struct CardPressStyle: ButtonStyle {
     }
 }
 
-/// 실제 Button의 동작은 유지하고 HTML 시안의 모서리·색·높이만 지정한다.
+/// 팔레트와 키보드 포커스를 유지하는 메뉴바 카드의 동작 버튼.
 struct CardActionStyle: ButtonStyle {
     let palette: CardPalette
     let prominent: Bool
-    let tall: Bool
     @Environment(\.isEnabled) private var isEnabled
     @FocusState private var focused: Bool
     @State private var hovered = false
@@ -72,8 +71,8 @@ struct CardActionStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(prominent ? .semibold : .regular))
-            .padding(.horizontal, 11).padding(.vertical, 8)
-            .frame(minHeight: tall ? 38 : 32)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .frame(minHeight: 32)
             .foregroundStyle(prominent ? palette.onAccent : palette.text)
             .background(prominent ? palette.accent : palette.surface,
                         in: RoundedRectangle(cornerRadius: 6))
@@ -99,6 +98,8 @@ struct CardScrollView<Content: View>: View {
         ScrollView(.vertical) {
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // 오버레이 스크롤바가 행의 상태·삭제 버튼·구분선을 덮지 않게 한다.
+                .padding(.trailing, 20)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
         .frame(height: min(max(contentHeight, 1), maxHeight))
@@ -116,8 +117,8 @@ struct CardAppRow: View {
     let remove: (() -> Void)?
     @State private var appIcon: NSImage?
     @State private var hovered = false
-    @ScaledMetric(relativeTo: .callout) private var iconSize: CGFloat = 22
-    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 35
+    @ScaledMetric(relativeTo: .callout) private var iconSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 32
 
     var body: some View {
         HStack(spacing: 8) {
@@ -129,7 +130,7 @@ struct CardAppRow: View {
                 }
                 .padding(.vertical, layout.rowPadding)
                 .frame(maxWidth: .infinity,
-                       minHeight: rowHeight + (layout == .comfortable ? 4 : layout == .compact ? 0 : -3),
+                       minHeight: rowHeight + (layout == .comfortable ? 2 : layout == .grouped ? 0 : -2),
                        alignment: .leading)
             }
             .toggleStyle(CardToggleStyle(palette: palette, controlOnTrailingEdge: layout == .command))
@@ -165,11 +166,12 @@ struct CardAppRow: View {
                 else { Image(systemName: "app").resizable() }
             }
             .scaledToFit()
-            .frame(width: iconSize + (layout == .comfortable ? 3 : layout == .command ? -2 : 1),
-                   height: iconSize + (layout == .comfortable ? 3 : layout == .command ? -2 : 1))
+            .frame(width: iconSize, height: iconSize)
             .accessibilityHidden(true)
             Text(name).font(.body)
                 .foregroundStyle(isEnabled ? palette.text : palette.secondary)
+                .lineLimit(1).truncationMode(.tail)
+                .help("\(name)\n\(bundleID)")
         }
     }
 
@@ -177,6 +179,7 @@ struct CardAppRow: View {
         if isRunning == false {
             Text(CardPresentation.notRunningLabel)
                 .font(.caption).foregroundStyle(palette.secondary)
+                .fixedSize()
         }
     }
 }
@@ -193,14 +196,6 @@ struct CardResultStrip: View {
         let skipped = results.reduce(0) { $0 + $1.skippedCount }
         let failed = results.reduce(0) { $0 + $1.failedCount }
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("마지막 복원", systemImage: "arrow.counterclockwise")
-                    .fontWeight(.medium)
-                Spacer()
-                if let restoredAt {
-                    Text(CardPresentation.relative(restoredAt)).foregroundStyle(palette.secondary)
-                }
-            }
             if failed > 0 {
                 Label {
                     Text("\(failureNames) 복원 실패").foregroundStyle(palette.text)
@@ -210,7 +205,7 @@ struct CardResultStrip: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !results.isEmpty {
-                DisclosureGroup("이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed) · 상세", isExpanded: $expanded) {
+                DisclosureGroup(isExpanded: $expanded) {
                     CardScrollView(maxHeight: detailCap) {
                         VStack(alignment: .leading, spacing: 5) {
                             ForEach(results, id: \.screenID) { result in
@@ -223,7 +218,19 @@ struct CardResultStrip: View {
                             }
                         }
                     }
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if let restoredAt {
+                            Text(CardPresentation.relative(restoredAt)).fixedSize()
+                        }
+                    }
+                    .accessibilityLabel("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)"
+                                        + (restoredAt.map { " · \(CardPresentation.relative($0))" } ?? ""))
                 }
+                .help("마지막 복원 결과 펼치기")
                 .foregroundStyle(palette.secondary)
             }
         }
@@ -252,12 +259,12 @@ struct CardCommandButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Group {
                     if isBusy { ProgressView().controlSize(.small) }
                     else { Image(systemName: symbol).font(prominent ? .title3 : .body) }
                 }
-                .frame(width: 32, height: prominent ? 32 : 20)
+                .frame(width: 28, height: prominent ? 28 : 20)
                 .foregroundStyle(prominent ? palette.onAccent : palette.secondary)
                 .background(prominent ? palette.accent : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8))
@@ -269,11 +276,8 @@ struct CardCommandButton: View {
                     }
                 }
                 Spacer(minLength: 0)
-                if prominent {
-                    Image(systemName: "chevron.right").foregroundStyle(palette.secondary)
-                }
             }
-            .padding(.horizontal, 12).padding(.vertical, prominent ? 12 : 8)
+            .padding(.horizontal, 10).padding(.vertical, prominent ? 8 : 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(prominent ? palette.accentSoft : (hovered && isEnabled ? palette.soft : palette.background),
                         in: RoundedRectangle(cornerRadius: 6))

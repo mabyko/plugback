@@ -6,6 +6,88 @@ import XCTest
 
 final class CardAppearanceTests: XCTestCase {
     @MainActor
+    func testLongListKeepsExcludedAppsAndScrollerReachable() async throws {
+        let suite = "plugback-long-list-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let fixture = CardDesktopFixture()
+        let store = ProfileStore(directory: directory)
+        let apps = (0...20).map { index in
+            TargetApp(bundleID: "preview.app.\(index)",
+                      displayName: index == 0 ? "저장했던 앱" : "대상 앱 \(index)",
+                      isEnabled: index != 0, unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5))
+        }
+        try store.save(["preview": Profile(screenID: "preview", screenName: "LG HDR 4K", apps: apps)])
+        let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
+                                           store: store, defaults: defaults, spaceReader: fixture)
+        controller.labAutoSlot = true
+        await controller.cardOpened()
+        XCTAssertEqual(controller.sections.first?.untrackedApps.count, 3)
+
+        func subviews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(subviews) }
+        for style in [NSScroller.Style.overlay, .legacy] {
+            let palette = CardColors.sage.palette(for: .dark)
+            let host = NSHostingView(rootView: Card(controller: controller, layout: .comfortable, palette: palette)
+                .modifier(CardSurface(layout: .comfortable, palette: palette))
+                .environment(\.colorScheme, .dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 700),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.orderOut(nil) }
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            host.setFrameSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            XCTAssertLessThan(host.frame.height, 600, "앱이 많아도 카드 높이는 제한한다")
+            let scroll = try XCTUnwrap(subviews(host).compactMap { $0 as? NSScrollView }.first)
+            scroll.scrollerStyle = style
+            scroll.autohidesScrollers = false
+            scroll.hasVerticalScroller = true
+            let document = try XCTUnwrap(scroll.documentView)
+            XCTAssertGreaterThan(document.bounds.height, scroll.contentSize.height)
+            let disclosurePoint = NSPoint(x: 40, y: document.isFlipped ? document.bounds.maxY - 12 : 12)
+            func clickDisclosure() throws {
+                let location = document.convert(disclosurePoint, to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location,
+                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                    window.sendEvent(event)
+                }
+            }
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            let collapsedHeight = document.bounds.height
+            try clickDisclosure()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            XCTAssertGreaterThan(document.bounds.height, collapsedHeight, "제외 앱을 펼치면 목록이 늘어난다")
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            scroll.flashScrollers()
+            let scroller = try XCTUnwrap(scroll.verticalScroller)
+            XCTAssertFalse(scroller.isHidden)
+            XCTAssertTrue(host.bounds.contains(host.convert(scroller.bounds, from: scroller)),
+                          "스크롤바는 카드 안에서 조작할 수 있다")
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: FileManager.default.temporaryDirectory
+                .appendingPathComponent("plugback-long-list-\(style.rawValue).png"))
+            try clickDisclosure()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            XCTAssertEqual(document.bounds.height, collapsedHeight, accuracy: 1, "다시 누르면 목록이 접힌다")
+            XCTAssertEqual(controller.sections.first?.profile?.apps.count, 21, "접기는 저장 기록을 바꾸지 않는다")
+        }
+    }
+
+    @MainActor
     func testClickingRowWhitespaceTogglesBothCheckboxPositions() throws {
         for layout in [CardLayout.comfortable, .command] {
             var tracked = false

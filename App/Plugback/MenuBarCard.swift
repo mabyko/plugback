@@ -38,14 +38,13 @@ struct Card: View {
     let palette: CardPalette
     /// 목록 스크롤 캡 — 글자 크기에 비례해 같은 줄 수가 보이게 한다
     @ScaledMetric(relativeTo: .callout) private var listCap: CGFloat = 320
-    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 21
+    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .headline) private var compactTitleSize: CGFloat = 15
-    @ScaledMetric(relativeTo: .title) private var displaySize: CGFloat = 28
+    @State private var expandedUntrackedScreens: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .padding(.top, layout == .comfortable ? 8 : layout == .grouped ? 6 : layout == .command ? 1 : 4)
                 .background(layout == .command ? palette.soft : palette.background)
             if let notice = controller.storeNotice {
                 separator
@@ -68,7 +67,6 @@ struct Card: View {
             if layout == .command { separator }
             actions
             if layout == .compact || layout == .command { separator }
-            if layout == .comfortable { paperSummary }
             appList
             // 연결된 모든 화면의 결과를 합산한다 — 두 번째 화면의 실패 사유도 여기서 보인다.
             // 지문 불일치로 통째 건너뛴 화면은 lastResults가 이미 뺐다 — 그건 위 경고 배너의 몫이다.
@@ -96,52 +94,16 @@ struct Card: View {
     }
 
     // 헤더·목록 밀도는 layout, 색은 palette만 따른다. 어느 쪽도 다른 설정을 바꾸지 않는다.
-    @ViewBuilder private var header: some View {
-        switch layout {
-        case .compact:
-            zone {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) { displaySymbol; screenTitle; Spacer(); headerBadge }
-                    profileSummary
+    private var header: some View {
+        zone {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    displaySymbol.font(.title3)
+                    screenTitle
+                    Spacer(minLength: 4)
+                    headerBadge
                 }
-            }
-        case .comfortable:
-            zone {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        displaySymbol.font(.system(size: displaySize))
-                        Spacer()
-                        headerBadge
-                    }
-                    Text(CardPresentation.headerTitle(for: controller.screenPresence))
-                        .font(.system(size: titleSize, weight: .semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("꽂으면, 제자리로.")
-                        .font(.subheadline).foregroundStyle(palette.secondary)
-                }
-            }
-        case .command:
-            zone {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("plugback / 외장 화면")
-                        .font(.caption).foregroundStyle(palette.secondary)
-                    HStack(spacing: 8) { displaySymbol; screenTitle; Spacer(); headerBadge }
-                }
-            }
-            .background(palette.soft)
-        case .grouped:
-            zone {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Text("plugback").font(.subheadline.weight(.semibold))
-                        Spacer()
-                        headerBadge
-                    }
-                    HStack(spacing: 12) {
-                        displaySymbol.font(.title)
-                        VStack(alignment: .leading, spacing: 4) { screenTitle; profileSummary }
-                    }
-                }
+                profileSummary
             }
         }
     }
@@ -154,41 +116,21 @@ struct Card: View {
 
     private var screenTitle: some View {
         Text(CardPresentation.headerTitle(for: controller.screenPresence))
-            .font(.system(size: compactTitleSize, weight: .semibold))
+            .font(.system(size: layout == .comfortable ? titleSize : compactTitleSize, weight: .semibold))
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private var profileSummary: some View {
-        Text("\(controller.hasRestorableProfile ? "프로필 있음" : "프로필 없음") · 대상 앱 \(targetCount)개")
-            .font(.subheadline).foregroundStyle(palette.secondary)
-    }
-
-    private var paperSummary: some View {
-        VStack(spacing: 15) {
-            separator
-            HStack(alignment: .firstTextBaseline, spacing: 22) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text("\(targetCount)").font(.title3.weight(.semibold))
-                    Text("대상 앱").font(.caption).foregroundStyle(palette.secondary)
-                }
-                let spaceCount = controller.sections.reduce(0) { total, section in
-                    total + section.spaceGroups.filter {
-                        if case .regular = $0.kind { return true }
-                        return false
-                    }.count
-                }
-                if spaceCount > 0 {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text("\(spaceCount)").font(.title3.weight(.semibold))
-                        Text("저장된 Space").font(.caption).foregroundStyle(palette.secondary)
-                    }
-                }
-                Text(controller.hasRestorableProfile ? "프로필 있음" : "프로필 없음")
-                    .font(.caption).foregroundStyle(palette.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        let spaceCount = controller.sections.reduce(0) { total, section in
+            total + section.spaceGroups.filter {
+                if case .regular = $0.kind { return true }
+                return false
+            }.count
         }
-        .padding(.horizontal, layout.inset).padding(.top, 9).padding(.bottom, 18)
+        return Text("\(controller.hasRestorableProfile ? "프로필 있음" : "프로필 없음") · 대상 앱 \(targetCount)개"
+                    + (spaceCount > 0 ? " · Space \(spaceCount)개" : ""))
+            .font(.subheadline).foregroundStyle(palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private var headerBadge: some View {
@@ -259,6 +201,7 @@ struct Card: View {
             if !controller.isConnected, !sections.contains(where: { $0.profile?.apps.isEmpty == false }) {
                 Text("외장 화면을 연결하면 그 화면의 프로필대로\n복원할 수 있습니다")
                     .font(.callout).foregroundStyle(palette.secondary)
+                    .padding(.trailing, layout.inset)
             } else {
                 // 앱이 많으면 목록 부분만 스크롤된다 — 카드 전체가 화면을 넘지 않게.
                 // maxHeight만 두면 MenuBarExtra가 목록을 최소 높이로 접어 아무것도 안 보인다 —
@@ -275,9 +218,10 @@ struct Card: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, layout == .grouped ? 13 : layout.inset)
-        .padding(.top, layout == .comfortable || layout == .grouped ? 0 : 7)
-        .padding(.bottom, layout == .comfortable ? 20 : 14)
+        .padding(.leading, layout.inset)
+        // 오른쪽 여백은 CardScrollView 내부에 두어 스크롤바와 내용을 분리한다.
+        .padding(.top, 8)
+        .padding(.bottom, 10)
     }
 
     /// 화면 하나의 섹션 — 그 화면의 프로필 앱, 저장하지 않는 앱, (실험실) 복원 소스.
@@ -290,12 +234,13 @@ struct Card: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold)).foregroundStyle(palette.secondary)
             }
+            if controller.sections.count > 1 { sourceStatus(for: section) }
             if let profile = section.profile, !profile.apps.isEmpty {
                 if section.spaceGroups.isEmpty {
                     VStack(spacing: 0) {
                         appRows(profile.apps.filter(\.isEnabled), in: section)
                     }
-                    .padding(layout == .grouped ? 12 : 0)
+                    .padding(layout == .grouped ? 8 : 0)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(layout == .grouped ? palette.surface : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 11))
@@ -309,18 +254,6 @@ struct Card: View {
             } else if controller.isConnected {
                 Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
                     .font(.callout).foregroundStyle(palette.secondary)
-            }
-            // 실험실 — 이 화면의 복원 소스. 이기는 슬롯은 화면마다 다를 수 있어 섹션에 붙는다.
-            if controller.labAutoSlot, let slot = section.restoreSource {
-                Text(CardPresentation.sourceLabel(
-                    slot: slot, savedAt: section.profile?.savedAt,
-                    pending: section.usesPendingSource
-                ))
-                    .font(.subheadline).foregroundStyle(palette.secondary)
-            }
-            if !controller.labAutoSlot, section.spaceConfigurationDiffers {
-                Text(CardPresentation.manualSpaceConfigurationDifference)
-                    .font(.subheadline).foregroundStyle(palette.secondary)
             }
             untrackedRows(for: section)
         }
@@ -358,7 +291,7 @@ struct Card: View {
                 }
             }
             .foregroundStyle(layout == .grouped ? palette.text : palette.secondary)
-            .padding(.top, layout == .grouped ? 0 : 9)
+            .padding(.top, layout == .grouped ? 0 : 4)
             .padding(.bottom, 2)
 
             if group.apps.isEmpty {
@@ -377,7 +310,7 @@ struct Card: View {
                                 in: RoundedRectangle(cornerRadius: 6))
             }
         }
-        .padding(layout == .grouped ? 12 : 0)
+        .padding(layout == .grouped ? 8 : 0)
         .background(layout == .grouped
                     ? (alternate ? palette.groupAccent.opacity(0.10) : palette.surface) : Color.clear,
                     in: RoundedRectangle(cornerRadius: 11))
@@ -394,6 +327,7 @@ struct Card: View {
                    isEnabled: app.isEnabled, isRunning: isRunning(app.bundleID),
                    layout: layout, palette: palette,
                    setTracked: { tracked in
+                       if !tracked { expandedUntrackedScreens.insert(section.screenID) }
                        Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
                    },
                    remove: {
@@ -413,18 +347,51 @@ struct Card: View {
     @ViewBuilder private func untrackedRows(for section: PlugbackController.ScreenSection) -> some View {
         if !section.untrackedApps.isEmpty {
             separator.padding(.top, 4)
-            Text(CardPresentation.untrackedHeader)
-                .font(.subheadline).foregroundStyle(palette.secondary)
-                .padding(.top, 2)
-            ForEach(section.untrackedApps, id: \.bundleID) { app in
-                CardAppRow(bundleID: app.bundleID, name: app.displayName,
-                    isEnabled: false, isRunning: nil, layout: layout, palette: palette,
-                    setTracked: { tracked in
-                        Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
-                    },
-                    remove: section.profile?.apps.contains(where: { $0.bundleID == app.bundleID }) == true
-                        ? { Task { await controller.remove(app.bundleID, on: section.screenID) } } : nil)
+            let expanded = Binding(
+                get: { expandedUntrackedScreens.contains(section.screenID) },
+                set: { expanded in
+                    if expanded { expandedUntrackedScreens.insert(section.screenID) }
+                    else { expandedUntrackedScreens.remove(section.screenID) }
+                }
+            )
+            DisclosureGroup(isExpanded: expanded) {
+                VStack(spacing: 0) {
+                    ForEach(section.untrackedApps, id: \.bundleID) { app in
+                        CardAppRow(bundleID: app.bundleID, name: app.displayName,
+                            isEnabled: false, isRunning: nil, layout: layout, palette: palette,
+                            setTracked: { tracked in
+                                Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
+                            },
+                            remove: section.profile?.apps.contains(where: { $0.bundleID == app.bundleID }) == true
+                                ? { Task { await controller.remove(app.bundleID, on: section.screenID) } } : nil)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                Button { expanded.wrappedValue.toggle() } label: {
+                    Text("\(CardPresentation.untrackedHeader) \(section.untrackedApps.count)개")
+                        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(expanded.wrappedValue ? "펼쳐짐" : "접힘")
             }
+            .font(.subheadline).foregroundStyle(palette.secondary)
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder private func sourceStatus(for section: PlugbackController.ScreenSection) -> some View {
+        if controller.labAutoSlot, let slot = section.restoreSource {
+            Text(CardPresentation.sourceLabel(slot: slot, savedAt: section.profile?.savedAt,
+                                              pending: section.usesPendingSource))
+                .font(.subheadline).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !controller.labAutoSlot, section.spaceConfigurationDiffers {
+            Text(CardPresentation.manualSpaceConfigurationDifference)
+                .font(.subheadline).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -450,14 +417,17 @@ struct Card: View {
                 } else {
                     HStack(spacing: 8) {
                         if controller.hasRestorableProfile {
-                            restoreButton(enabled: canRestore, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true, tall: layout == .comfortable))
-                            saveButton(enabled: canSave, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false, tall: layout == .comfortable))
+                            restoreButton(enabled: canRestore, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true))
+                            saveButton(enabled: canSave, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false))
                         } else {
-                            saveButton(enabled: canSave, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true, tall: layout == .comfortable))
-                            restoreButton(enabled: canRestore, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false, tall: layout == .comfortable))
+                            saveButton(enabled: canSave, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true))
+                            restoreButton(enabled: canRestore, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false))
                         }
                     }
-                    .controlSize(layout == .comfortable ? .large : .regular)
+                    .controlSize(.regular)
+                }
+                if controller.sections.count == 1, let section = controller.sections.first {
+                    sourceStatus(for: section)
                 }
                 if let notice = controller.captureNotice {
                     // 성공과 Space 관찰 실패 중 실제 마지막 결과 하나만 보여준다.
@@ -465,8 +435,7 @@ struct Card: View {
                         .font(.subheadline).foregroundStyle(palette.accent)
                 }
                 // 저장 금지는 알림을 닫아도 남는다 — 수동 저장도 막히므로 실험실과 무관하게 표시한다.
-                // 복원 소스(지금 복원되는 값)는 화면마다 다를 수 있어 각 섹션에 붙고,
-                // 여기는 수집(뽑을 때 저장될 값)의 전역 상태 한 줄이다.
+                // 복원 소스와 별도로 수집(뽑을 때 저장될 값)의 전역 상태를 보여준다.
                 // 소스와 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
                 if controller.isSaveBlocked {
                     Text(CardPresentation.saveBlockedStatus)
@@ -479,9 +448,9 @@ struct Card: View {
                         .font(.subheadline).foregroundStyle(palette.secondary)
                 }
         }
-        .padding(.horizontal, layout == .command ? 10 : layout.inset)
-        .padding(.top, layout == .command ? 10 : 5)
-        .padding(.bottom, layout == .command ? 10 : 18)
+        .padding(.horizontal, layout.inset)
+        .padding(.top, layout == .command ? 8 : 2)
+        .padding(.bottom, 10)
     }
 
     // 글자색은 라벨 안쪽에 건다 — 강조 스타일은 바깥의 foregroundStyle을 무시하고 흰 글자를 쓴다
@@ -530,14 +499,14 @@ struct Card: View {
         .font(.caption)
         .buttonStyle(.plain)
         .foregroundStyle(palette.secondary)
-        .padding(.horizontal, 14).padding(.vertical, 9)
+        .padding(.horizontal, layout.inset).padding(.vertical, 6)
         .background(layout == .grouped ? palette.surface : palette.background)
     }
 
     private func zone(@ViewBuilder _ content: () -> some View) -> some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, layout.inset).padding(.vertical, layout == .comfortable ? 18 : 14)
+            .padding(.horizontal, layout.inset).padding(.vertical, 10)
     }
 }
 

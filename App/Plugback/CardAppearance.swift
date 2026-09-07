@@ -32,7 +32,7 @@ enum CardLayout: String, CaseIterable {
     var detail: String {
         switch self {
         case .compact: "짧은 헤더와 촘촘한 목록으로 한눈에 확인합니다."
-        case .comfortable: "큰 제목과 넉넉한 행 간격으로 편하게 읽습니다."
+        case .comfortable: "조금 큰 제목과 편안한 행 간격으로 읽습니다."
         case .command: "복원·저장 명령과 설명을 위에 모읍니다."
         case .grouped: "각 Space의 대상 앱과 안내를 하나의 구획에 담습니다."
         }
@@ -47,8 +47,8 @@ enum CardLayout: String, CaseIterable {
         }
     }
 
-    var inset: CGFloat { self == .comfortable ? 26 : 20 }
-    var rowPadding: CGFloat { self == .comfortable ? 6 : 3 }
+    var inset: CGFloat { 20 }
+    var rowPadding: CGFloat { 2 }
     var frameWidth: CGFloat { self == .grouped ? 6 : 1 }
     var innerCornerRadius: CGFloat { cornerRadius - frameWidth }
     var cornerRadius: CGFloat {

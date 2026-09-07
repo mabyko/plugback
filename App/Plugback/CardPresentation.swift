@@ -172,9 +172,9 @@ enum CardPresentation {
             return "대기 중 변경 없음 · 확인 \(relative(collectedAt, now))"
         }
         if spaceConfigurationChanged {
-            return "대기 중 · Space 구성 변경 — 뽑을 때 저장"
+            return "저장 대기 · Space 구성 변경 — 뽑을 때 저장"
         }
-        return "대기 중 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
+        return "저장 대기 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
     }
 
     static let manualSpaceConfigurationDifference =

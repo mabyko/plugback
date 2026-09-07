@@ -64,15 +64,15 @@ final class CardPresentationTests: XCTestCase {
         let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-3),
                                                      hasPending: true, now: now),
-                       "대기 중 · 방금 배치 — 뽑을 때 저장")
+                       "저장 대기 · 방금 배치 — 뽑을 때 저장")
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-120),
                                                      hasPending: true, now: now),
-                       "대기 중 · 2분 전 배치 — 뽑을 때 저장")
+                       "저장 대기 · 2분 전 배치 — 뽑을 때 저장")
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now,
                                                      hasPending: true,
                                                      spaceConfigurationChanged: true,
                                                      now: now),
-                       "대기 중 · Space 구성 변경 — 뽑을 때 저장")
+                       "저장 대기 · Space 구성 변경 — 뽑을 때 저장")
         // 기다리는 것이 없어도 확인 시각은 보여준다 — 없으면 트리거가 죽은 것과
         // "바뀐 게 없다"가 구별되지 않는다. 「확인」이라 써서 「저장」으로 안 읽히게 한다.
         XCTAssertEqual(CardPresentation.pendingLabel(collectedAt: now.addingTimeInterval(-30),
