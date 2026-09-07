@@ -6,8 +6,90 @@ import XCTest
 
 final class CardAppearanceTests: XCTestCase {
     @MainActor
-    func testClickingRowWhitespaceTogglesBothCheckboxPositions() throws {
-        for layout in [CardLayout.comfortable, .command] {
+    func testLongListKeepsExcludedAppsAndScrollerReachable() async throws {
+        let suite = "plugback-long-list-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let fixture = CardDesktopFixture()
+        let store = ProfileStore(directory: directory)
+        let apps = (0...20).map { index in
+            TargetApp(bundleID: "preview.app.\(index)",
+                      displayName: index == 0 ? "저장했던 앱" : "대상 앱 \(index)",
+                      isEnabled: index != 0, unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5))
+        }
+        try store.save(["preview": Profile(screenID: "preview", screenName: "LG HDR 4K", apps: apps)])
+        let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
+                                           store: store, defaults: defaults, spaceReader: fixture)
+        controller.labAutoSlot = true
+        await controller.cardOpened()
+        XCTAssertEqual(controller.sections.first?.untrackedApps.count, 3)
+
+        func subviews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(subviews) }
+        for style in [NSScroller.Style.overlay, .legacy] {
+            let palette = CardColors.sage.palette(for: .dark)
+            let host = NSHostingView(rootView: Card(controller: controller, layout: .list, palette: palette)
+                .modifier(CardSurface(layout: .list, palette: palette))
+                .environment(\.colorScheme, .dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 700),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.orderOut(nil) }
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            host.setFrameSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            XCTAssertLessThan(host.frame.height, 600, "앱이 많아도 카드 높이는 제한한다")
+            let scroll = try XCTUnwrap(subviews(host).compactMap { $0 as? NSScrollView }.first)
+            scroll.scrollerStyle = style
+            scroll.autohidesScrollers = false
+            scroll.hasVerticalScroller = true
+            let document = try XCTUnwrap(scroll.documentView)
+            XCTAssertGreaterThan(document.bounds.height, scroll.contentSize.height)
+            let disclosurePoint = NSPoint(x: 40, y: document.isFlipped ? document.bounds.maxY - 12 : 12)
+            func clickDisclosure() throws {
+                let location = document.convert(disclosurePoint, to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location,
+                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                    window.sendEvent(event)
+                }
+            }
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            let collapsedHeight = document.bounds.height
+            try clickDisclosure()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            XCTAssertGreaterThan(document.bounds.height, collapsedHeight, "제외 앱을 펼치면 목록이 늘어난다")
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            scroll.flashScrollers()
+            let scroller = try XCTUnwrap(scroll.verticalScroller)
+            XCTAssertFalse(scroller.isHidden)
+            XCTAssertTrue(host.bounds.contains(host.convert(scroller.bounds, from: scroller)),
+                          "스크롤바는 카드 안에서 조작할 수 있다")
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: FileManager.default.temporaryDirectory
+                .appendingPathComponent("plugback-long-list-\(style.rawValue).png"))
+            try clickDisclosure()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            XCTAssertEqual(document.bounds.height, collapsedHeight, accuracy: 1, "다시 누르면 목록이 접힌다")
+            XCTAssertEqual(controller.sections.first?.profile?.apps.count, 21, "접기는 저장 기록을 바꾸지 않는다")
+        }
+    }
+
+    @MainActor
+    func testClickingRowWhitespaceTogglesTargetSelection() throws {
+        for layout in [CardLayout.list, .spaces] {
             var tracked = false
             let host = NSHostingView(rootView: CardAppRow(
                 bundleID: "com.apple.Safari", name: "Safari", isEnabled: false, isRunning: true,
@@ -42,7 +124,7 @@ final class CardAppearanceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         var observed = false
         let host = NSHostingView(rootView: AppearanceObserver(store: defaults) { layout, colors, brightness in
-            observed = layout == .grouped && colors == .coral && brightness == .dark
+            observed = layout == .board && colors == .coral && brightness == .dark
         }.frame(width: 400, height: 100))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 100),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -50,7 +132,7 @@ final class CardAppearanceTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         let settings = CardAppearance(store: defaults)
         settings.colors = .coral
-        settings.layout = .grouped
+        settings.layout = .board
         settings.brightness = .dark
         let deadline = Date().addingTimeInterval(3)
         while !observed && Date() < deadline {
@@ -65,8 +147,11 @@ final class CardAppearanceTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let appearance = CardAppearance(store: defaults)
-        XCTAssertEqual(appearance.layout, .comfortable)
-        XCTAssertEqual(appearance.colors, .porcelain)
+        XCTAssertEqual(appearance.layout, .status)
+        XCTAssertEqual(CardLayout.allCases, [.status, .list, .spaces, .board])
+        XCTAssertEqual(["comfortable", "compact", "command", "grouped"].compactMap(CardLayout.init(rawValue:)),
+                       CardLayout.allCases, "기존 설치의 저장된 레이아웃 선택을 유지한다")
+        XCTAssertEqual(appearance.colors, .sage)
         XCTAssertEqual(appearance.brightness, .system)
         for layout in CardLayout.allCases {
             appearance.layout = layout
@@ -82,7 +167,7 @@ final class CardAppearanceTests: XCTestCase {
             }
         }
         defaults.set("future-layout", forKey: "appearance.layout")
-        XCTAssertEqual(CardAppearance(store: defaults).layout, .comfortable)
+        XCTAssertEqual(CardAppearance(store: defaults).layout, .status)
         XCTAssertEqual(CardAppearance(store: defaults).colors, .sage)
         XCTAssertEqual(CardAppearance(store: defaults).brightness, .dark)
     }
@@ -121,13 +206,28 @@ final class CardAppearanceTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
         let store = ProfileStore(directory: directory)
-        // HTML과 같은 4개 앱·2개 Space를 페이크로 캡처한다. 실제 화면 API는 호출하지 않는다.
+        // README용 앱 20개·Space 3개를 페이크로 캡처한다. 실제 창 이동은 하지 않는다.
         let fixture = CardDesktopFixture()
+        fixture.applications = [
+            ("com.apple.Safari", "Safari"), ("com.tinyspeck.slackmacgap", "Slack"),
+            ("com.apple.finder", "Finder"), ("com.apple.mail", "Mail"),
+            ("com.apple.iCal", "Calendar"), ("com.apple.Notes", "Notes"),
+            ("com.apple.Terminal", "Terminal"), ("com.apple.dt.Xcode", "Xcode"),
+            ("com.linear", "Linear"), ("com.microsoft.VSCode", "Visual Studio Code"),
+            ("com.apple.Preview", "Preview"), ("com.apple.Music", "Music"),
+            ("md.obsidian", "Obsidian"), ("com.apple.Passwords", "암호"),
+            ("com.apple.reminders", "미리 알림"), ("com.apple.calculator", "계산기"),
+            ("com.apple.TextEdit", "TextEdit"), ("com.apple.Maps", "지도"),
+            ("com.apple.Photos", "사진"), ("com.apple.systempreferences", "시스템 설정")
+        ]
+        fixture.appsPerSpace = 7
         let firstWindows = await fixture.standardWindows(of: nil)
         fixture.currentSpace = 2
         let secondWindows = await fixture.standardWindows(of: nil)
+        fixture.currentSpace = 3
+        let thirdWindows = await fixture.standardWindows(of: nil)
         fixture.currentSpace = 1
-        let apps = (firstWindows + secondWindows).map {
+        let apps = (firstWindows + secondWindows + thirdWindows).map {
             TargetApp(bundleID: $0.appBundleID, displayName: $0.appName,
                       unitRect: UnitRect($0.frame, in: fixture.screens()[0].frame))
         }
@@ -137,13 +237,109 @@ final class CardAppearanceTests: XCTestCase {
         await controller.captureNow()
         fixture.currentSpace = 2
         await controller.captureNow()
+        fixture.currentSpace = 3
+        await controller.captureNow()
         fixture.currentSpace = 1
         await controller.cardOpened()
-        XCTAssertEqual(controller.sections.first?.spaceGroups.count, 2)
-        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 4)
+        XCTAssertEqual(controller.sections.first?.spaceGroups.count, 3)
+        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 20)
+        let destinations = CardPresentation.spaceSelections(in: controller.sections)
+        XCTAssertEqual(destinations.count, 3)
+        XCTAssertEqual(CardPresentation.resolvedSpaceSelection(destinations.last, in: controller.sections), destinations.last)
+        let stale = CardSpaceSelection(screenID: "unplugged-display", category: .group("gone"))
+        XCTAssertEqual(CardPresentation.resolvedSpaceSelection(stale, in: controller.sections), destinations.first)
+        XCTAssertNil(CardPresentation.resolvedSpaceSelection(destinations.first, in: []))
         await controller.restoreNow()
         try renderCombinations(controller)
         try renderSettings(controller, store: defaults)
+    }
+
+    @MainActor
+    func testStatusManagementAndSpaceNavigationUseLiveController() async throws {
+        let suite = "plugback-navigation-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let fixture = CardDesktopFixture()
+        let store = ProfileStore(directory: directory)
+        let apps = fixture.applications.map {
+            TargetApp(bundleID: $0.0, displayName: $0.1, unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5))
+        }
+        try store.save(["preview": Profile(screenID: "preview", screenName: "Studio Display", apps: apps)])
+        let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
+                                           store: store, defaults: defaults, spaceReader: fixture)
+        await controller.captureNow()
+        fixture.currentSpace = 2
+        await controller.captureNow()
+        fixture.currentSpace = 1
+        await controller.cardOpened()
+        let palette = CardColors.sage.palette(for: .dark)
+        let host = NSHostingView(rootView: Card(controller: controller, layout: .status, palette: palette)
+            .modifier(CardSurface(layout: .status, palette: palette)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        func settle() {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            host.setFrameSize(host.fittingSize)
+        }
+        func subviews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(subviews) }
+        func click(_ point: NSPoint, in view: NSView) throws {
+            let location = view.convert(point, to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location,
+                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                window.sendEvent(event)
+            }
+        }
+        settle()
+        let summaryHeight = host.frame.height
+        XCTAssertTrue(subviews(host).compactMap { $0 as? NSScrollView }.isEmpty)
+        // 관리 행은 고정 푸터 바로 위에 있다. 실제 클릭으로 내부 화면 전환을 검증한다.
+        try click(NSPoint(x: 120, y: host.isFlipped ? host.bounds.height - 65 : 65), in: host)
+        settle()
+        XCTAssertFalse(subviews(host).compactMap { $0 as? NSScrollView }.isEmpty, "관리에 들어가면 앱 목록을 표시한다")
+        XCTAssertFalse(subviews(host).compactMap { $0 as? NSTextField }.isEmpty, "관리 화면에는 검색 입력이 있다")
+        let managerBitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: managerBitmap)
+        try XCTUnwrap(managerBitmap.representation(using: .png, properties: [:])).write(
+            to: FileManager.default.temporaryDirectory.appendingPathComponent("plugback-manager.png"))
+        try click(NSPoint(x: 36, y: host.isFlipped ? 24 : host.bounds.height - 24), in: host)
+        settle()
+        XCTAssertEqual(host.frame.height, summaryHeight, accuracy: 1)
+        XCTAssertTrue(subviews(host).compactMap { $0 as? NSScrollView }.isEmpty)
+        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 4)
+
+        host.rootView = Card(controller: controller, layout: .board, palette: palette)
+            .modifier(CardSurface(layout: .board, palette: palette))
+        settle()
+        let scroll = try XCTUnwrap(subviews(host).compactMap { $0 as? NSScrollView }.first)
+        let document = try XCTUnwrap(scroll.documentView)
+        try click(NSPoint(x: 40, y: document.isFlipped ? 28 : document.bounds.height - 28), in: document)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        settle()
+        XCTAssertEqual(controller.sections.first?.profile?.apps.filter(\.isEnabled).count, 3,
+                       "아이콘을 누르면 실제 프로필에서 해당 앱을 제외한다")
+        XCTAssertEqual(controller.sections.first?.untrackedApps.count, 1)
+
+        let original = try XCTUnwrap(controller.sections.first)
+        let other = PlugbackController.ScreenSection(screenID: "second", name: original.name,
+            profile: original.profile, restoreSource: original.restoreSource, usesPendingSource: false,
+            spaceGroups: original.spaceGroups, spaceConfigurationDiffers: false,
+            untrackedApps: original.untrackedApps, lastResult: nil)
+        let destinations = CardPresentation.spaceSelections(in: [original, other])
+        XCTAssertEqual(Set(destinations).count, destinations.count, "서로 다른 화면의 같은 Space ID를 구분한다")
+        XCTAssertEqual(destinations.filter { $0.screenID == "second" }.count, 3)
+        let selected = try XCTUnwrap(destinations.last)
+        XCTAssertEqual(CardPresentation.resolvedSpaceSelection(selected, in: [original, other]), selected)
+        XCTAssertEqual(CardPresentation.resolvedSpaceSelection(selected, in: [original]), destinations.first)
     }
 
     @MainActor
@@ -168,29 +364,14 @@ final class CardAppearanceTests: XCTestCase {
                     XCTAssertLessThan(host.frame.height, 800)
                     let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                     host.cacheDisplay(in: host.bounds, to: bitmap)
-                    if layout == .grouped {
-                        // 안쪽 모서리가 네모면 이 픽셀은 배경색이 된다. 둥글면 바깥 프레임색이 보인다.
-                        let insetPixel = Int(7 * CGFloat(bitmap.pixelsWide) / host.bounds.width)
-                        let actual = try XCTUnwrap(bitmap.colorAt(x: insetPixel, y: insetPixel)?.usingColorSpace(.sRGB))
-                        // 같은 이미지의 직선 프레임을 기준으로 삼아 디스플레이 색 프로필 차이를 제거한다.
-                        let expected = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2,
-                            y: Int(3 * CGFloat(bitmap.pixelsWide) / host.bounds.width))?.usingColorSpace(.sRGB))
-                        XCTAssertEqual(actual.redComponent, expected.redComponent, accuracy: 0.035)
-                        XCTAssertEqual(actual.greenComponent, expected.greenComponent, accuracy: 0.035)
-                        XCTAssertEqual(actual.blueComponent, expected.blueComponent, accuracy: 0.035)
-                    }
                     let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
                     let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
                     attachment.name = "\(layout)-\(colors)-\(scheme)"
                     attachment.lifetime = .keepAlways
                     add(attachment)
-                    if colors == .porcelain && scheme == .light {
+                    if colors == .sage {
                         try png.write(to: FileManager.default.temporaryDirectory
-                            .appendingPathComponent("plugback-\(layout).png"))
-                    }
-                    if layout == .command && colors == .sage {
-                        try png.write(to: FileManager.default.temporaryDirectory
-                            .appendingPathComponent("plugback-command-sage-\(scheme).png"))
+                            .appendingPathComponent("plugback-\(layout)-\(scheme).png"))
                     }
                     window.orderOut(nil)
                 }
@@ -201,7 +382,7 @@ final class CardAppearanceTests: XCTestCase {
     @MainActor
     private func renderSettings(_ controller: PlugbackController, store: UserDefaults) throws {
         let appearance = CardAppearance(store: store)
-        appearance.layout = .grouped
+        appearance.layout = .board
         appearance.colors = .sage
         for scheme in [ColorScheme.light, .dark] {
             appearance.brightness = scheme == .dark ? .dark : .light
@@ -248,15 +429,17 @@ private struct AppearanceObserver: View {
 @MainActor
 private final class CardDesktopFixture: WindowGateway, ScreenProvider, SpaceReading {
     var currentSpace = 1
+    var applications = [("com.apple.Safari", "Safari"), ("com.tinyspeck.slackmacgap", "Slack"),
+                        ("com.apple.dt.Xcode", "Xcode"), ("com.linear", "Linear")]
+    var appsPerSpace = 2
+    var spaceCount: Int { (applications.count + appsPerSpace - 1) / appsPerSpace }
     func screens() -> [ScreenInfo] {
         [ScreenInfo(id: "preview", name: "Studio Display",
                     frame: CGRect(x: 0, y: 0, width: 2560, height: 1440), isBuiltin: false)]
     }
     func standardWindows(of bundleIDs: [String]?) async -> [WindowInfo] {
-        let apps = [("com.apple.Safari", "Safari"), ("com.tinyspeck.slackmacgap", "Slack"),
-                    ("com.apple.dt.Xcode", "Xcode"), ("com.linear", "Linear")]
-        return apps.enumerated().compactMap { index, app in
-            guard (index < 2 ? 1 : 2) == currentSpace else { return nil }
+        return applications.enumerated().compactMap { index, app in
+            guard index / appsPerSpace + 1 == currentSpace else { return nil }
             guard bundleIDs == nil || bundleIDs!.contains(app.0) else { return nil }
             return WindowInfo(id: index + 1, appBundleID: app.0, appName: app.1,
                               frame: CGRect(x: index * 100, y: 100, width: 800, height: 900),
@@ -268,10 +451,14 @@ private final class CardDesktopFixture: WindowGateway, ScreenProvider, SpaceRead
     func unminimize(windowID: Int) async -> CGRect? { nil }
     func openWindow(bundleID: String) async -> Bool { false }
     func stableSnapshot(windowServerIDs: [CGWindowID]) async -> SpaceSnapshotAvailability {
-        .available(SpaceSnapshot(displays: [.init(screenID: "preview", spaces: [
-            .init(runtimeID: SpaceRuntimeID(1), opaqueName: "one", localOrder: 1, kind: .regular, isCurrent: currentSpace == 1),
-            .init(runtimeID: SpaceRuntimeID(2), opaqueName: "two", localOrder: 2, kind: .regular, isCurrent: currentSpace == 2)
-        ])], membershipsByWindowServerID: [1: [SpaceRuntimeID(1)], 2: [SpaceRuntimeID(1)],
-                                          3: [SpaceRuntimeID(2)], 4: [SpaceRuntimeID(2)]]))
+        let spaces = (1...spaceCount).map { number in
+            SpaceSnapshot.Space(runtimeID: SpaceRuntimeID(UInt64(number)), opaqueName: "space-\(number)",
+                            localOrder: number, kind: .regular, isCurrent: currentSpace == number)
+        }
+        let memberships = Dictionary(uniqueKeysWithValues: applications.indices.map { index in
+            (UInt32(index + 1), [SpaceRuntimeID(UInt64(index / appsPerSpace + 1))])
+        })
+        return .available(SpaceSnapshot(displays: [.init(screenID: "preview", spaces: spaces)],
+                                        membershipsByWindowServerID: memberships))
     }
 }

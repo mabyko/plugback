@@ -1,7 +1,7 @@
 import PlugbackKit
 import SwiftUI
 
-// 카드 7존 — 고정 5존(헤더·결과 스트립·앱 목록·액션·푸터) + 조건부 2존(저장소 알림·지문 불일치 경고)
+// 공통 헤더·액션·결과·푸터와 레이아웃별 대상 앱 탐색. 오류·권한 안내는 레이아웃과 무관하다.
 // (docs/ARCHITECTURE.md MenuBarUI). UI 문구는 CONTEXT.md 용어 그대로, 은유 금지.
 // 권한 미승인이면 카드를 통째로 교체한다 — 정상 카드에 배너를 얹지 않는다.
 struct MenuBarCard: View {
@@ -30,23 +30,21 @@ struct MenuBarCard: View {
     }
 }
 
-// 액션은 목록 위(프로토타입 변형 B, 2026-09 확정) — 목록은 늘고 스크롤되므로 아래 두면 버튼 위치가
+// 액션은 모든 레이아웃의 목록 위(2026-09 밀도 시안) — 목록은 늘고 스크롤되므로 아래 두면 버튼 위치가
 // 내용 따라 움직인다. 위에 두면 메뉴바 바로 아래 고정이라 손이 먼저 닿고, 저장 확인 문구도 그 버튼 밑에 붙는다.
 struct Card: View {
     @ObservedObject var controller: PlugbackController
     let layout: CardLayout
     let palette: CardPalette
-    /// 목록 스크롤 캡 — 글자 크기에 비례해 같은 줄 수가 보이게 한다
-    @ScaledMetric(relativeTo: .callout) private var listCap: CGFloat = 320
-    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 21
+    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .headline) private var compactTitleSize: CGFloat = 15
-    @ScaledMetric(relativeTo: .title) private var displaySize: CGFloat = 28
+    @State private var showingManager = false
+
+    private var isManaging: Bool { layout == .status && showingManager }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.top, layout == .comfortable ? 8 : layout == .grouped ? 6 : layout == .command ? 1 : 4)
-                .background(layout == .command ? palette.soft : palette.background)
+            if isManaging { managerHeader } else { header }
             if let notice = controller.storeNotice {
                 separator
                 storeNotice(notice)
@@ -65,21 +63,22 @@ struct Card: View {
                     .font(.callout)
                 }
             }
-            if layout == .command { separator }
-            actions
-            if layout == .compact || layout == .command { separator }
-            if layout == .comfortable { paperSummary }
-            appList
+            if !isManaging { actions }
+            if layout == .status && !isManaging {
+                summary
+            } else {
+                CardAppBrowser(controller: controller, layout: layout, palette: palette)
+            }
             // 연결된 모든 화면의 결과를 합산한다 — 두 번째 화면의 실패 사유도 여기서 보인다.
             // 지문 불일치로 통째 건너뛴 화면은 lastResults가 이미 뺐다 — 그건 위 경고 배너의 몫이다.
             // 버튼(다음 행동) 아래, 목록 다음에 둔다 — 결과는 참고 정보라 맨 아래가 맞다.
-            if controller.isConnected, !controller.lastResults.isEmpty {
-                if layout != .grouped { separator }
+            if !isManaging, controller.isConnected, !controller.lastResults.isEmpty {
+                separator
                 zone {
                     CardResultStrip(results: controller.lastResults,
                                     restoredAt: controller.lastRestoredAt, palette: palette)
                 }
-                .background(layout == .grouped ? palette.background : palette.soft)
+                .background(palette.background)
             }
             separator
             footer
@@ -96,51 +95,14 @@ struct Card: View {
     }
 
     // 헤더·목록 밀도는 layout, 색은 palette만 따른다. 어느 쪽도 다른 설정을 바꾸지 않는다.
-    @ViewBuilder private var header: some View {
-        switch layout {
-        case .compact:
-            zone {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) { displaySymbol; screenTitle; Spacer(); headerBadge }
-                    profileSummary
-                }
-            }
-        case .comfortable:
-            zone {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        displaySymbol.font(.system(size: displaySize))
-                        Spacer()
-                        headerBadge
-                    }
-                    Text(CardPresentation.headerTitle(for: controller.screenPresence))
-                        .font(.system(size: titleSize, weight: .semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("꽂으면, 제자리로.")
-                        .font(.subheadline).foregroundStyle(palette.secondary)
-                }
-            }
-        case .command:
-            zone {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("plugback / 외장 화면")
-                        .font(.caption).foregroundStyle(palette.secondary)
-                    HStack(spacing: 8) { displaySymbol; screenTitle; Spacer(); headerBadge }
-                }
-            }
-            .background(palette.soft)
-        case .grouped:
-            zone {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Text("plugback").font(.subheadline.weight(.semibold))
-                        Spacer()
-                        headerBadge
-                    }
-                    HStack(spacing: 12) {
-                        displaySymbol.font(.title)
-                        VStack(alignment: .leading, spacing: 4) { screenTitle; profileSummary }
-                    }
+    private var header: some View {
+        zone {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    displaySymbol.font(.system(size: layout == .status ? 28 : 20))
+                    screenTitle
+                    Spacer(minLength: 4)
+                    headerBadge
                 }
             }
         }
@@ -154,41 +116,76 @@ struct Card: View {
 
     private var screenTitle: some View {
         Text(CardPresentation.headerTitle(for: controller.screenPresence))
-            .font(.system(size: compactTitleSize, weight: .semibold))
+            .font(.system(size: layout == .status ? titleSize : compactTitleSize, weight: .semibold))
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var profileSummary: some View {
-        Text("\(controller.hasRestorableProfile ? "프로필 있음" : "프로필 없음") · 대상 앱 \(targetCount)개")
-            .font(.subheadline).foregroundStyle(palette.secondary)
+    private var managerHeader: some View {
+        zone {
+            HStack(spacing: 8) {
+                Button { showingManager = false } label: {
+                    Label("돌아가기", systemImage: "chevron.left").labelStyle(.iconOnly)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("card.manager.back")
+                Text("대상 앱 관리").font(.headline)
+            }
+        }
     }
 
-    private var paperSummary: some View {
-        VStack(spacing: 15) {
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: 10) {
             separator
-            HStack(alignment: .firstTextBaseline, spacing: 22) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text("\(targetCount)").font(.title3.weight(.semibold))
-                    Text("대상 앱").font(.caption).foregroundStyle(palette.secondary)
+            HStack(spacing: 3) {
+                // 한 앱이 여러 화면에 저장되어 있어도 아이콘은 한 번만 보여준다.
+                let apps = controller.sections.flatMap { $0.profile?.apps.filter(\.isEnabled) ?? [] }
+                let unique = apps.reduce(into: [TargetApp]()) { result, app in
+                    if !result.contains(where: { $0.bundleID == app.bundleID }) { result.append(app) }
                 }
-                let spaceCount = controller.sections.reduce(0) { total, section in
-                    total + section.spaceGroups.filter {
-                        if case .regular = $0.kind { return true }
-                        return false
-                    }.count
+                ForEach(Array(unique.prefix(6)), id: \.bundleID) { app in
+                    CardAppIcon(bundleID: app.bundleID, size: 24)
                 }
-                if spaceCount > 0 {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text("\(spaceCount)").font(.title3.weight(.semibold))
-                        Text("저장된 Space").font(.caption).foregroundStyle(palette.secondary)
+                Spacer(minLength: 4)
+                let spaces = controller.sections.flatMap(\.spaceGroups).filter {
+                    if case .regular = $0.kind { return true }; return false
+                }.count
+                Text("대상 \(targetCount)개" + (spaces > 0 ? " · Space \(spaces)개" : ""))
+                    .font(.caption).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button { showingManager = true } label: {
+                HStack {
+                    Text("대상 앱 관리")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .frame(minHeight: 28).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).font(.callout).foregroundStyle(palette.secondary)
+            .accessibilityIdentifier("card.manager.open")
+            if controller.sections.count > 1 {
+                CardScrollView(maxHeight: 80) {
+                    ForEach(controller.sections) { section in
+                        Text(section.name).font(.caption.weight(.medium))
+                        sourceStatus(for: section)
                     }
                 }
-                Text(controller.hasRestorableProfile ? "프로필 있음" : "프로필 없음")
-                    .font(.caption).foregroundStyle(palette.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // 요약 화면에서도 복원을 마치기 위한 Space 안내를 숨기지 않는다.
+            let groups = controller.sections.flatMap(\.spaceGroups).filter { $0.guide != nil }
+            if !groups.isEmpty {
+                CardScrollView(maxHeight: 100) {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                        if let guide = group.guide {
+                            Label(CardPresentation.spaceGuide(guide), systemImage: "info.circle")
+                                .font(.caption).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
         }
-        .padding(.horizontal, layout.inset).padding(.top, 9).padding(.bottom, 18)
+        .padding(.horizontal, layout.inset).padding(.vertical, 10)
     }
 
     @ViewBuilder private var headerBadge: some View {
@@ -252,236 +249,59 @@ struct Card: View {
         }
     }
 
-    // 연결된 모든 화면의 섹션을 다 그린다 — 첫 화면만 보여주면 뒷 화면의 앱이 사라진 것처럼 보인다.
-    private var appList: some View {
-        Group {
-            let sections = controller.sections
-            if !controller.isConnected, !sections.contains(where: { $0.profile?.apps.isEmpty == false }) {
-                Text("외장 화면을 연결하면 그 화면의 프로필대로\n복원할 수 있습니다")
-                    .font(.callout).foregroundStyle(palette.secondary)
-            } else {
-                // 앱이 많으면 목록 부분만 스크롤된다 — 카드 전체가 화면을 넘지 않게.
-                // maxHeight만 두면 MenuBarExtra가 목록을 최소 높이로 접어 아무것도 안 보인다 —
-                // 콘텐츠 실측 높이로 명시적 높이를 잡고, 캡(320)을 넘을 때만 스크롤한다.
-                CardScrollView(maxHeight: listCap) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        let titles = CardPresentation.sectionTitles(names: sections.map(\.name))
-                        ForEach(Array(zip(sections, titles)), id: \.0.id) { section, title in
-                            screenSection(section, title: title, showTitle: sections.count > 1)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, layout == .grouped ? 13 : layout.inset)
-        .padding(.top, layout == .comfortable || layout == .grouped ? 0 : 7)
-        .padding(.bottom, layout == .comfortable ? 20 : 14)
-    }
-
-    /// 화면 하나의 섹션 — 그 화면의 프로필 앱, 저장하지 않는 앱, (실험실) 복원 소스.
-    /// 화면이 하나면 제목을 생략한다 — 헤더가 이미 그 이름이다.
-    @ViewBuilder
-    private func screenSection(_ section: PlugbackController.ScreenSection,
-                               title: String, showTitle: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if showTitle {
-                Text(title)
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(palette.secondary)
-            }
-            if let profile = section.profile, !profile.apps.isEmpty {
-                if section.spaceGroups.isEmpty {
-                    VStack(spacing: 0) {
-                        appRows(profile.apps.filter(\.isEnabled), in: section)
-                    }
-                    .padding(layout == .grouped ? 12 : 0)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(layout == .grouped ? palette.surface : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 11))
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(section.spaceGroups) { group in
-                            spaceGroup(group, in: section)
-                        }
-                    }
-                }
-            } else if controller.isConnected {
-                Text("창을 원하는 자리에 배치한 뒤 저장을 누르면\n여기에 대상 앱이 나타납니다")
-                    .font(.callout).foregroundStyle(palette.secondary)
-            }
-            // 실험실 — 이 화면의 복원 소스. 이기는 슬롯은 화면마다 다를 수 있어 섹션에 붙는다.
-            if controller.labAutoSlot, let slot = section.restoreSource {
-                Text(CardPresentation.sourceLabel(
-                    slot: slot, savedAt: section.profile?.savedAt,
-                    pending: section.usesPendingSource
-                ))
-                    .font(.subheadline).foregroundStyle(palette.secondary)
-            }
-            if !controller.labAutoSlot, section.spaceConfigurationDiffers {
-                Text(CardPresentation.manualSpaceConfigurationDifference)
-                    .font(.subheadline).foregroundStyle(palette.secondary)
-            }
-            untrackedRows(for: section)
-        }
-    }
-
-    private func spaceGroup(
-        _ group: PlugbackController.SpaceGroup,
-        in section: PlugbackController.ScreenSection
-    ) -> some View {
-        let alternate: Bool = {
-            if case .regular(let number, _) = group.kind { return number % 2 == 0 }
-            return false
-        }()
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                if layout == .grouped {
-                    Group {
-                        if case .regular(let number, _) = group.kind {
-                            Text(String(format: "%02d", number)).font(.caption.monospacedDigit())
-                        } else { Image(systemName: "square.stack").font(.caption) }
-                    }
-                    .frame(width: 21, height: 21)
-                    .foregroundStyle(alternate ? palette.groupAccent : palette.accent)
-                    .background(alternate ? palette.groupAccent.opacity(0.18) : palette.accentSoft,
-                                in: RoundedRectangle(cornerRadius: 6))
-                    .accessibilityHidden(true)
-                }
-                Text(CardPresentation.spaceGroupTitle(for: group.kind))
-                    .font(.subheadline.weight(.semibold)).monospacedDigit()
-                Spacer()
-                if let status = CardPresentation.spaceGroupStatus(for: group.kind, guide: group.guide) {
-                    Text(status).font(.caption).foregroundStyle(palette.secondary)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(palette.surface, in: RoundedRectangle(cornerRadius: 4))
-                }
-            }
-            .foregroundStyle(layout == .grouped ? palette.text : palette.secondary)
-            .padding(.top, layout == .grouped ? 0 : 9)
-            .padding(.bottom, 2)
-
-            if group.apps.isEmpty {
-                Text("저장된 앱 없음").font(.subheadline).foregroundStyle(palette.secondary)
-            } else {
-                appRows(group.apps, in: section)
-            }
-            if let guide = group.guide {
-                Label(CardPresentation.spaceGuide(guide), systemImage: "info.circle")
-                    .font(.subheadline)
-                    .foregroundStyle(palette.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(layout == .grouped ? palette.background : palette.accentSoft,
-                                in: RoundedRectangle(cornerRadius: 6))
-            }
-        }
-        .padding(layout == .grouped ? 12 : 0)
-        .background(layout == .grouped
-                    ? (alternate ? palette.groupAccent.opacity(0.10) : palette.surface) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 11))
-    }
-
-    @ViewBuilder
-    private func appRows(
-        _ apps: [TargetApp],
-        in section: PlugbackController.ScreenSection
-    ) -> some View {
-        // 체크된 앱만 위에 — 중요한 것이 위에 고정되고 나머지는 아래로 간다.
-        ForEach(apps, id: \.bundleID) { app in
-            CardAppRow(bundleID: app.bundleID, name: app.displayName,
-                   isEnabled: app.isEnabled, isRunning: isRunning(app.bundleID),
-                   layout: layout, palette: palette,
-                   setTracked: { tracked in
-                       Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
-                   },
-                   remove: {
-                       Task { await controller.remove(app.bundleID, on: section.screenID) }
-                   })
-        }
-    }
-
-    /// 실행 여부는 AppKit에 묻는다 — 손쉬운 사용 권한도 폴링도 필요 없다.
-    /// 카드를 열면 컨트롤러가 상태를 다시 공개하므로 그때 함께 다시 계산된다.
-    private func isRunning(_ bundleID: String) -> Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
-    }
-
-    /// 저장하지 않는 앱 — 껐던 대상 앱과 그 화면 프로필에 없는 앱이 같은 칸에 온다.
-    /// 체크박스의 뜻은 위 묶음과 같다: 「이 앱을 다루나」. 프로필 소속 여부는 내부 사정이다.
-    @ViewBuilder private func untrackedRows(for section: PlugbackController.ScreenSection) -> some View {
-        if !section.untrackedApps.isEmpty {
-            separator.padding(.top, 4)
-            Text(CardPresentation.untrackedHeader)
-                .font(.subheadline).foregroundStyle(palette.secondary)
-                .padding(.top, 2)
-            ForEach(section.untrackedApps, id: \.bundleID) { app in
-                CardAppRow(bundleID: app.bundleID, name: app.displayName,
-                    isEnabled: false, isRunning: nil, layout: layout, palette: palette,
-                    setTracked: { tracked in
-                        Task { await controller.setTracked(app.bundleID, tracked, on: section.screenID) }
-                    },
-                    remove: section.profile?.apps.contains(where: { $0.bundleID == app.bundleID }) == true
-                        ? { Task { await controller.remove(app.bundleID, on: section.screenID) } } : nil)
-            }
-        }
+    private func sourceStatus(for section: PlugbackController.ScreenSection) -> some View {
+        CardSourceStatus(section: section, labAutoSlot: controller.labAutoSlot, palette: palette)
     }
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 6) {
-                // 강조는 지금 할 수 있는 일을 따라간다 — 프로필이 없으면 저장을 강조한다.
-                let canSave = controller.isConnected && !controller.isRestoring && !controller.isSaveBlocked
-                // 어느 화면에든 프로필이 있으면 복원할 수 있다 — 첫 화면만 보던 판정은 뒷 화면을 잠갔다
-                let canRestore = controller.isConnected && controller.hasRestorableProfile && !controller.isRestoring
-                if layout == .command {
-                    VStack(spacing: 6) {
-                        CardCommandButton(title: controller.isRestoring ? "복원 중…" : "지금 레이아웃 복원",
-                            detail: "저장된 프로필의 대상 앱만 복원", symbol: "arrow.counterclockwise",
-                            prominent: controller.hasRestorableProfile, isBusy: controller.isRestoring,
-                            palette: palette) { Task { await controller.restoreNow() } }
-                            .disabled(!canRestore)
-                        CardCommandButton(title: "지금 레이아웃 저장",
-                            detail: "현재 외장 화면의 창 위치 저장", symbol: "tray.and.arrow.down",
-                            prominent: !controller.hasRestorableProfile, isBusy: false,
-                            palette: palette) { Task { await controller.captureNow() } }
-                            .disabled(!canSave)
-                    }
+            // 강조는 지금 할 수 있는 일을 따라간다 — 프로필이 없으면 저장을 강조한다.
+            let canSave = controller.isConnected && !controller.isRestoring && !controller.isSaveBlocked
+            // 어느 화면에든 프로필이 있으면 복원할 수 있다 — 첫 화면만 보던 판정은 뒷 화면을 잠갔다
+            let canRestore = controller.isConnected && controller.hasRestorableProfile && !controller.isRestoring
+            HStack(spacing: 8) {
+                if controller.hasRestorableProfile {
+                    restoreButton(enabled: canRestore, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true))
+                    saveButton(enabled: canSave, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false))
                 } else {
-                    HStack(spacing: 8) {
-                        if controller.hasRestorableProfile {
-                            restoreButton(enabled: canRestore, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true, tall: layout == .comfortable))
-                            saveButton(enabled: canSave, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false, tall: layout == .comfortable))
-                        } else {
-                            saveButton(enabled: canSave, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true, tall: layout == .comfortable))
-                            restoreButton(enabled: canRestore, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false, tall: layout == .comfortable))
-                        }
-                    }
-                    .controlSize(layout == .comfortable ? .large : .regular)
+                    saveButton(enabled: canSave, prominent: true).buttonStyle(CardActionStyle(palette: palette, prominent: true))
+                    restoreButton(enabled: canRestore, prominent: false).buttonStyle(CardActionStyle(palette: palette, prominent: false))
                 }
-                if let notice = controller.captureNotice {
-                    // 성공과 Space 관찰 실패 중 실제 마지막 결과 하나만 보여준다.
-                    Text(CardPresentation.captureNotice(notice))
-                        .font(.subheadline).foregroundStyle(palette.accent)
-                }
-                // 저장 금지는 알림을 닫아도 남는다 — 수동 저장도 막히므로 실험실과 무관하게 표시한다.
-                // 복원 소스(지금 복원되는 값)는 화면마다 다를 수 있어 각 섹션에 붙고,
-                // 여기는 수집(뽑을 때 저장될 값)의 전역 상태 한 줄이다.
-                // 소스와 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
-                if controller.isSaveBlocked {
-                    Text(CardPresentation.saveBlockedStatus)
-                        .font(.subheadline).foregroundStyle(palette.accent)
-                } else if controller.labAutoSlot {
-                    Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
-                                                       hasPending: controller.hasPendingCollect,
-                                                       spaceConfigurationChanged:
-                                                           controller.spaceConfigurationDiffers))
-                        .font(.subheadline).foregroundStyle(palette.secondary)
-                }
+            }
+            .controlSize(.regular)
+            if !controller.isConnected {
+                Text("모니터를 연결하면 복원할 수 있어요").font(.caption).foregroundStyle(palette.secondary)
+            } else if !controller.hasRestorableProfile {
+                Text("현재 배치를 저장하고 시작하세요").font(.caption).foregroundStyle(palette.secondary)
+            }
+            if layout == .spaces {
+                Text("전체 대상 앱 \(targetCount)개 복원").font(.caption).foregroundStyle(palette.secondary)
+            }
+            if controller.sections.count == 1, let section = controller.sections.first {
+                sourceStatus(for: section)
+            }
+            if let notice = controller.captureNotice {
+                // 성공과 Space 관찰 실패 중 실제 마지막 결과 하나만 보여준다.
+                Text(CardPresentation.captureNotice(notice))
+                    .font(.subheadline).foregroundStyle(palette.accent)
+            }
+            // 저장 금지는 알림을 닫아도 남는다 — 수동 저장도 막히므로 실험실과 무관하게 표시한다.
+            // 복원 소스와 별도로 수집(뽑을 때 저장될 값)의 전역 상태를 보여준다.
+            // 소스와 한 줄로 뭉치면 "수집됨"이 "저장됨"으로 읽힌다.
+            if controller.isSaveBlocked {
+                Text(CardPresentation.saveBlockedStatus)
+                    .font(.subheadline).foregroundStyle(palette.accent)
+            } else if controller.labAutoSlot {
+                Text(CardPresentation.pendingLabel(collectedAt: controller.lastCollectedAt,
+                                                   hasPending: controller.hasPendingCollect,
+                                                   spaceConfigurationChanged:
+                                                       controller.spaceConfigurationDiffers))
+                    .font(.subheadline).foregroundStyle(palette.secondary)
+            }
         }
-        .padding(.horizontal, layout == .command ? 10 : layout.inset)
-        .padding(.top, layout == .command ? 10 : 5)
-        .padding(.bottom, layout == .command ? 10 : 18)
+        .padding(.horizontal, layout.inset)
+        .padding(.top, 2)
+        .padding(.bottom, 10)
     }
 
     // 글자색은 라벨 안쪽에 건다 — 강조 스타일은 바깥의 foregroundStyle을 무시하고 흰 글자를 쓴다
@@ -505,7 +325,7 @@ struct Card: View {
                         Text("복원 중…")
                     }
                 } else {
-                    Label("지금 레이아웃 복원", systemImage: "arrow.counterclockwise")
+                    Label("지금 복원", systemImage: "arrow.counterclockwise")
                 }
             }
             .frame(maxWidth: .infinity)
@@ -530,14 +350,300 @@ struct Card: View {
         .font(.caption)
         .buttonStyle(.plain)
         .foregroundStyle(palette.secondary)
-        .padding(.horizontal, 14).padding(.vertical, 9)
-        .background(layout == .grouped ? palette.surface : palette.background)
+        .padding(.horizontal, layout.inset).padding(.vertical, 6)
+        .background(palette.background)
     }
 
     private func zone(@ViewBuilder _ content: () -> some View) -> some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, layout.inset).padding(.vertical, layout == .comfortable ? 18 : 14)
+            .padding(.horizontal, layout.inset).padding(.vertical, 10)
+    }
+}
+
+/// 화면 선택은 탐색 상태다. 저장·복원 범위는 컨트롤러가 그대로 결정한다.
+private struct CardAppBrowser: View {
+    @ObservedObject var controller: PlugbackController
+    let layout: CardLayout
+    let palette: CardPalette
+    @State private var search = ""
+    @State private var expandedScreens: Set<String> = []
+    @State private var selection: CardSpaceSelection?
+    @State private var showsExcluded = false
+    @ScaledMetric(relativeTo: .callout) private var listCap: CGFloat = 326
+
+    private var sections: [PlugbackController.ScreenSection] { controller.sections }
+    private var excludedCount: Int { sections.reduce(0) { $0 + $1.untrackedApps.count } }
+    private var targetCount: Int {
+        sections.reduce(0) { $0 + ($1.profile?.apps.filter(\.isEnabled).count ?? 0) }
+    }
+
+    var body: some View {
+        if layout == .spaces && !sections.isEmpty {
+            spaceBrowser
+        } else {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
+                    TextField("앱 검색", text: $search).textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("card.appSearch")
+                    if layout == .board {
+                        Button("제외 \(excludedCount)") { showsExcluded.toggle() }
+                            .buttonStyle(CardActionStyle(palette: palette, prominent: showsExcluded))
+                            .accessibilityValue(showsExcluded ? "선택됨" : "선택 안 됨")
+                    } else {
+                        Text("\(targetCount)개 대상").font(.caption).foregroundStyle(palette.secondary)
+                            .fixedSize()
+                    }
+                }
+                .padding(.trailing, layout.inset)
+                CardScrollView(maxHeight: layout == .board ? listCap + 24 : listCap) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if sections.isEmpty { emptyMessage }
+                        let titles = CardPresentation.sectionTitles(names: sections.map(\.name))
+                        ForEach(Array(zip(sections, titles)), id: \.0.id) { section, title in
+                            VStack(alignment: .leading, spacing: 7) {
+                                if sections.count > 1 {
+                                    Text(title).font(.callout.weight(.semibold))
+                                    CardSourceStatus(section: section, labAutoSlot: controller.labAutoSlot, palette: palette)
+                                }
+                                if layout == .board && showsExcluded {
+                                    excludedRows(section)
+                                } else {
+                                    targets(section)
+                                    if layout != .board { excludedDisclosure(section) }
+                                }
+                            }
+                        }
+                    }
+                }
+                if layout == .board {
+                    HStack {
+                        Text(showsExcluded ? CardPresentation.untrackedHeader : "\(targetCount)개 앱 선택됨")
+                        Spacer()
+                        Text("• 실행하지 않은 앱")
+                    }
+                    .font(.caption2).foregroundStyle(palette.secondary)
+                    .padding(.trailing, layout.inset)
+                }
+            }
+            .padding(.leading, layout.inset).padding(.top, 8).padding(.bottom, 12)
+        }
+    }
+
+    private var emptyMessage: some View {
+        Text(controller.isConnected ? "창을 원하는 자리에 배치한 뒤 저장을 눌러 주세요." : "외장 화면을 연결하면 저장된 배치로 복원할 수 있습니다.")
+            .font(.callout).foregroundStyle(palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func matches(_ name: String, _ bundleID: String) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || name.localizedCaseInsensitiveContains(query)
+            || bundleID.localizedCaseInsensitiveContains(query)
+    }
+
+    @ViewBuilder private func targets(_ section: PlugbackController.ScreenSection) -> some View {
+        let apps = (section.profile?.apps ?? []).filter { $0.isEnabled && matches($0.displayName, $0.bundleID) }
+        if apps.isEmpty {
+            Text(search.isEmpty ? "대상 앱이 없습니다. 저장하거나 제외 앱을 포함해 주세요." : "검색 결과가 없어요")
+                .font(.callout).foregroundStyle(palette.secondary)
+        } else if layout == .board {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 4), spacing: 4) {
+                ForEach(apps, id: \.bundleID) { app in
+                    CardAppTile(app: app, isRunning: isRunning(app.bundleID), palette: palette,
+                                setTracked: { setTracked(app.bundleID, $0, in: section) },
+                                remove: { Task { await controller.remove(app.bundleID, on: section.screenID) } })
+                }
+            }
+        } else {
+            appRows(apps, in: section)
+        }
+        ForEach(section.spaceGroups.filter { $0.guide != nil }) { group in
+            guide(group)
+        }
+    }
+
+    private func appRows(_ apps: [TargetApp], in section: PlugbackController.ScreenSection) -> some View {
+        VStack(spacing: 0) {
+            ForEach(apps, id: \.bundleID) { app in
+                CardAppRow(bundleID: app.bundleID, name: app.displayName,
+                    isEnabled: app.isEnabled, isRunning: isRunning(app.bundleID), layout: layout, palette: palette,
+                    setTracked: { setTracked(app.bundleID, $0, in: section) },
+                    remove: { Task { await controller.remove(app.bundleID, on: section.screenID) } })
+            }
+        }
+    }
+
+    private func setTracked(_ bundleID: String, _ tracked: Bool, in section: PlugbackController.ScreenSection) {
+        if !tracked { expandedScreens.insert(section.screenID) }
+        Task { await controller.setTracked(bundleID, tracked, on: section.screenID) }
+    }
+
+    private func isRunning(_ bundleID: String) -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    }
+
+    @ViewBuilder private func excludedRows(_ section: PlugbackController.ScreenSection) -> some View {
+        let apps = section.untrackedApps.filter { matches($0.displayName, $0.bundleID) }
+        if apps.isEmpty {
+            Text(search.isEmpty ? "저장하지 않는 앱이 없습니다" : "검색 결과가 없어요")
+                .font(.callout).foregroundStyle(palette.secondary)
+        }
+        VStack(spacing: 0) {
+            ForEach(apps, id: \.bundleID) { app in
+                CardAppRow(bundleID: app.bundleID, name: app.displayName, isEnabled: false,
+                    isRunning: nil, layout: layout, palette: palette,
+                    setTracked: { setTracked(app.bundleID, $0, in: section) },
+                    remove: section.profile?.apps.contains(where: { $0.bundleID == app.bundleID }) == true
+                        ? { Task { await controller.remove(app.bundleID, on: section.screenID) } } : nil)
+            }
+        }
+    }
+
+    @ViewBuilder private func excludedDisclosure(_ section: PlugbackController.ScreenSection) -> some View {
+        if !section.untrackedApps.isEmpty {
+            palette.border.frame(height: 1).padding(.top, 4)
+            let expanded = Binding(
+                get: { !search.isEmpty || expandedScreens.contains(section.screenID) },
+                set: { if $0 { expandedScreens.insert(section.screenID) }
+                       else { expandedScreens.remove(section.screenID) } })
+            DisclosureGroup(isExpanded: expanded) {
+                excludedRows(section).padding(.top, 4)
+            } label: {
+                Button { expanded.wrappedValue.toggle() } label: {
+                    Text("\(CardPresentation.untrackedHeader) \(section.untrackedApps.count)개")
+                        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(expanded.wrappedValue ? "펼쳐짐" : "접힘")
+            }
+            .font(.caption).foregroundStyle(palette.secondary).padding(.vertical, 4)
+        }
+    }
+
+    private var spaceCap: CGFloat {
+        let rowCount = sections.map { section in
+            max(section.untrackedApps.count, section.spaceGroups.map { $0.apps.count }.max()
+                ?? section.profile?.apps.filter(\.isEnabled).count ?? 0)
+        }.max() ?? 0
+        return min(listCap, max(180, CGFloat(rowCount) * 30 + 50))
+    }
+
+    private var spaceBrowser: some View {
+        let destinations = CardPresentation.spaceSelections(in: sections)
+        let current = CardPresentation.resolvedSpaceSelection(selection, in: sections)
+        return HStack(alignment: .top, spacing: 0) {
+            CardScrollView(maxHeight: spaceCap) {
+                VStack(alignment: .leading, spacing: 4) {
+                    let titles = CardPresentation.sectionTitles(names: sections.map(\.name))
+                    ForEach(Array(zip(sections, titles)), id: \.0.id) { section, title in
+                        if sections.count > 1 {
+                            Text(title).font(.caption2).foregroundStyle(palette.secondary)
+                                .padding(.top, 5).fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(destinations.filter { $0.screenID == section.screenID }, id: \.self) { item in
+                            spaceButton(item, section: section, selected: current == item)
+                        }
+                    }
+                }
+            }
+            .padding(.leading, 7).padding(.vertical, 10)
+            .frame(width: 112, height: spaceCap + 20, alignment: .top)
+            .background(palette.surface)
+            CardScrollView(maxHeight: spaceCap) {
+                if let current, let section = sections.first(where: { $0.screenID == current.screenID }) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if sections.count > 1 {
+                            CardSourceStatus(section: section, labAutoSlot: controller.labAutoSlot, palette: palette)
+                        }
+                        switch current.category {
+                        case .all:
+                            Text("대상 앱").font(.callout.weight(.semibold))
+                            targets(section)
+                        case .excluded:
+                            Text(CardPresentation.untrackedHeader).font(.callout.weight(.semibold))
+                            excludedRows(section)
+                        case .group(let id):
+                            if let group = section.spaceGroups.first(where: { $0.id == id }) {
+                                HStack {
+                                    Text(CardPresentation.spaceGroupTitle(for: group.kind)).font(.callout.weight(.semibold))
+                                    Spacer(minLength: 2)
+                                    if let status = CardPresentation.spaceGroupStatus(for: group.kind, guide: group.guide) {
+                                        Text(status).font(.caption2).foregroundStyle(palette.secondary)
+                                    }
+                                }
+                                if group.apps.isEmpty {
+                                    Text("저장된 앱 없음").font(.caption).foregroundStyle(palette.secondary)
+                                } else { appRows(group.apps, in: section) }
+                                guide(group)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.leading, 10).padding(.vertical, 10)
+        }
+        .overlay(alignment: .top) { palette.border.frame(height: 1) }
+    }
+
+    private func spaceButton(_ item: CardSpaceSelection, section: PlugbackController.ScreenSection,
+                             selected: Bool) -> some View {
+        let group = section.spaceGroups.first { .group($0.id) == item.category }
+        let title: String
+        let count: Int
+        switch item.category {
+        case .all: title = "대상 앱"; count = section.profile?.apps.filter(\.isEnabled).count ?? 0
+        case .excluded: title = "제외 앱"; count = section.untrackedApps.count
+        case .group: title = group.map { CardPresentation.spaceGroupTitle(for: $0.kind) } ?? "Space"; count = group?.apps.count ?? 0
+        }
+        return Button { selection = item } label: {
+            HStack(spacing: 3) {
+                Text(title).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 1)
+                if group?.guide != nil { Image(systemName: "info.circle").font(.caption2) }
+                Text("\(count)").font(.caption2).monospacedDigit()
+            }
+            .font(.caption).padding(.horizontal, 7).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(selected ? palette.onAccent : palette.text)
+            .background(selected ? palette.accent : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(section.name), \(title), 앱 \(count)개")
+        .accessibilityValue(selected ? "선택됨" : "선택 안 됨")
+        .help("목록만 전환합니다. 지금 복원은 전체 대상 앱에 적용됩니다.")
+    }
+
+    @ViewBuilder private func guide(_ group: PlugbackController.SpaceGroup) -> some View {
+        if let guide = group.guide {
+            Label(CardPresentation.spaceGuide(guide), systemImage: "info.circle")
+                .font(.caption).foregroundStyle(palette.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                .background(palette.accentSoft, in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+}
+
+private struct CardSourceStatus: View {
+    let section: PlugbackController.ScreenSection
+    let labAutoSlot: Bool
+    let palette: CardPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let slot = section.restoreSource {
+                Text(CardPresentation.sourceLabel(slot: slot, savedAt: section.profile?.savedAt,
+                                                  pending: section.usesPendingSource))
+            }
+            if !labAutoSlot, section.spaceConfigurationDiffers {
+                Text(CardPresentation.manualSpaceConfigurationDifference)
+            }
+        }
+        .font(.caption).foregroundStyle(palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -612,11 +718,11 @@ private struct PermissionOnboarding: View {
 }
 
 #if DEBUG
-#Preview("빈 카드 · B + Porcelain") {
-    Card(controller: SpaceProbe.placeholderController, layout: .comfortable,
-         palette: CardColors.porcelain.palette(for: .light))
-        .frame(width: CardLayout.comfortable.width)
-        .background(CardColors.porcelain.palette(for: .light).background)
+#Preview("빈 카드 · A + Sage") {
+    Card(controller: SpaceProbe.placeholderController, layout: .status,
+         palette: CardColors.sage.palette(for: .light))
+        .frame(width: CardLayout.status.width)
+        .background(CardColors.sage.palette(for: .light).background)
         .environment(\.colorScheme, .light)
 }
 #endif

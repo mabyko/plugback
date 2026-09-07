@@ -172,9 +172,9 @@ enum CardPresentation {
             return "대기 중 변경 없음 · 확인 \(relative(collectedAt, now))"
         }
         if spaceConfigurationChanged {
-            return "대기 중 · Space 구성 변경 — 뽑을 때 저장"
+            return "저장 대기 · Space 구성 변경 — 뽑을 때 저장"
         }
-        return "대기 중 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
+        return "저장 대기 · \(relative(collectedAt, now)) 배치 — 뽑을 때 저장"
     }
 
     static let manualSpaceConfigurationDifference =
@@ -209,5 +209,31 @@ enum CardPresentation {
             let failed = results.map(\.failedCount).reduce(0, +)
             return "이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)"
         }
+    }
+}
+
+/// 같은 Space ID라도 화면이 다르면 별개다. 제외 앱은 실제 Space로 취급하지 않는다.
+struct CardSpaceSelection: Hashable {
+    enum Category: Hashable { case all, group(String), excluded }
+    let screenID: String
+    let category: Category
+}
+
+extension CardPresentation {
+    static func spaceSelections(in sections: [PlugbackController.ScreenSection]) -> [CardSpaceSelection] {
+        sections.flatMap { section in
+            let groups: [CardSpaceSelection.Category] = section.spaceGroups.isEmpty
+                ? [.all] : section.spaceGroups.map { .group($0.id) }
+            return (groups + (section.untrackedApps.isEmpty ? [] : [.excluded])).map {
+                CardSpaceSelection(screenID: section.screenID, category: $0)
+            }
+        }
+    }
+
+    static func resolvedSpaceSelection(_ selection: CardSpaceSelection?,
+                                       in sections: [PlugbackController.ScreenSection]) -> CardSpaceSelection? {
+        let items = spaceSelections(in: sections)
+        if let selection, items.contains(selection) { return selection }
+        return items.first
     }
 }

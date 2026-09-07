@@ -7,8 +7,8 @@ struct CardAppearance: DynamicProperty {
     @AppStorage var brightness: CardBrightness
 
     init(store: UserDefaults? = nil) {
-        _layout = AppStorage(wrappedValue: .comfortable, "appearance.layout", store: store)
-        _colors = AppStorage(wrappedValue: .porcelain, "appearance.colors", store: store)
+        _layout = AppStorage(wrappedValue: .status, "appearance.layout", store: store)
+        _colors = AppStorage(wrappedValue: .sage, "appearance.colors", store: store)
         _brightness = AppStorage(wrappedValue: .system, "appearance.brightness", store: store)
     }
 
@@ -18,47 +18,44 @@ struct CardAppearance: DynamicProperty {
 }
 
 enum CardLayout: String, CaseIterable {
-    case compact, comfortable, command, grouped
+    // 기존 설치의 선택값을 유지한다. 표시 순서는 새 시안 A–D를 따른다.
+    case status = "comfortable"
+    case list = "compact"
+    case spaces = "command"
+    case board = "grouped"
 
     var title: String {
         switch self {
-        case .compact: "A · 간결한 목록"
-        case .comfortable: "B · 여유 있는 목록"
-        case .command: "C · 명령 중심"
-        case .grouped: "D · Space 구획"
+        case .status: "A · 상태 카드"
+        case .list: "B · 빠른 목록"
+        case .spaces: "C · Space 탐색"
+        case .board: "D · 아이콘 보드"
         }
     }
 
     var detail: String {
         switch self {
-        case .compact: "짧은 헤더와 촘촘한 목록으로 한눈에 확인합니다."
-        case .comfortable: "큰 제목과 넉넉한 행 간격으로 편하게 읽습니다."
-        case .command: "복원·저장 명령과 설명을 위에 모읍니다."
-        case .grouped: "각 Space의 대상 앱과 안내를 하나의 구획에 담습니다."
+        case .status: "작은 카드에서 복원하고, 대상 앱은 관리 화면에서 고릅니다."
+        case .list: "검색 가능한 촘촘한 목록에서 대상 앱을 바로 고릅니다."
+        case .spaces: "저장된 Space별로 앱을 살펴봅니다. 복원은 전체 대상에 적용됩니다."
+        case .board: "앱 아이콘을 한눈에 보고 복원 대상을 고릅니다."
         }
     }
 
     var width: CGFloat {
         switch self {
-        case .compact: 376
-        case .comfortable: 380
-        case .command: 400
-        case .grouped: 402
+        case .status: 360
+        case .list: 364
+        case .spaces: 440
+        case .board: 400
         }
     }
 
-    var inset: CGFloat { self == .comfortable ? 26 : 20 }
-    var rowPadding: CGFloat { self == .comfortable ? 6 : 3 }
-    var frameWidth: CGFloat { self == .grouped ? 6 : 1 }
+    var inset: CGFloat { self == .status ? 22 : 16 }
+    var rowPadding: CGFloat { 2 }
+    var frameWidth: CGFloat { 1 }
     var innerCornerRadius: CGFloat { cornerRadius - frameWidth }
-    var cornerRadius: CGFloat {
-        switch self {
-        case .compact: 11
-        case .comfortable: 16
-        case .command: 10
-        case .grouped: 18
-        }
-    }
+    var cornerRadius: CGFloat { 17 }
 }
 
 /// 콘텐츠와 바깥 프레임을 각각 자른다. 헤더·푸터의 배경도 안쪽 곡선을 따른다.
@@ -72,7 +69,7 @@ struct CardSurface: ViewModifier {
             .background(palette.background)
             .clipShape(RoundedRectangle(cornerRadius: layout.innerCornerRadius))
             .padding(layout.frameWidth)
-            .background(layout == .grouped ? palette.frame : palette.border)
+            .background(palette.border)
             .clipShape(RoundedRectangle(cornerRadius: layout.cornerRadius))
             .frame(width: layout.width)
             .tint(palette.accent)
@@ -217,7 +214,7 @@ struct AppearanceSection: View {
 
 #Preview("모양 설정") {
     Form {
-        AppearanceSection(layout: .constant(.grouped), colors: .constant(.porcelain),
+        AppearanceSection(layout: .constant(.status), colors: .constant(.porcelain),
                           brightness: .constant(.system))
     }
     .formStyle(.grouped)
