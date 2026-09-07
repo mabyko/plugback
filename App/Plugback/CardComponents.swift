@@ -115,10 +115,8 @@ struct CardAppRow: View {
     let palette: CardPalette
     let setTracked: (Bool) -> Void
     let remove: (() -> Void)?
-    @State private var appIcon: NSImage?
     @State private var hovered = false
-    @ScaledMetric(relativeTo: .callout) private var iconSize: CGFloat = 20
-    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 32
+    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 30
 
     var body: some View {
         HStack(spacing: 8) {
@@ -130,10 +128,10 @@ struct CardAppRow: View {
                 }
                 .padding(.vertical, layout.rowPadding)
                 .frame(maxWidth: .infinity,
-                       minHeight: rowHeight + (layout == .comfortable ? 2 : layout == .grouped ? 0 : -2),
+                       minHeight: rowHeight,
                        alignment: .leading)
             }
-            .toggleStyle(CardToggleStyle(palette: palette, controlOnTrailingEdge: layout == .command))
+            .toggleStyle(CardToggleStyle(palette: palette))
             .accessibilityLabel(name)
             .help(isEnabled ? "복원 대상에서 제외" : "복원 대상에 포함")
             if !isEnabled, let remove {
@@ -152,22 +150,11 @@ struct CardAppRow: View {
         .contextMenu {
             if let remove { Button("프로필에서 삭제", role: .destructive, action: remove) }
         }
-        .task(id: bundleID) {
-            // body 재계산마다 파일을 읽지 않는다. 설치되지 않은 앱에는 표준 기호를 쓴다.
-            appIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-                .map { NSWorkspace.shared.icon(forFile: $0.path) }
-        }
     }
 
     private var identity: some View {
         HStack(spacing: 8) {
-            Group {
-                if let appIcon { Image(nsImage: appIcon).resizable() }
-                else { Image(systemName: "app").resizable() }
-            }
-            .scaledToFit()
-            .frame(width: iconSize, height: iconSize)
-            .accessibilityHidden(true)
+            CardAppIcon(bundleID: bundleID, size: 20)
             Text(name).font(.body)
                 .foregroundStyle(isEnabled ? palette.text : palette.secondary)
                 .lineLimit(1).truncationMode(.tail)
@@ -220,7 +207,7 @@ struct CardResultStrip: View {
                     }
                 } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
+                        Text("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         if let restoredAt {
@@ -244,52 +231,69 @@ struct CardResultStrip: View {
     }
 }
 
-/// 명령형 레이아웃도 실제 Button을 쓴다. 키보드 포커스와 비활성 상태를 명확히 남긴다.
-struct CardCommandButton: View {
-    let title: String
-    let detail: String
-    let symbol: String
-    let prominent: Bool
-    let isBusy: Bool
-    let palette: CardPalette
-    let action: () -> Void
-    @Environment(\.isEnabled) private var isEnabled
-    @FocusState private var focused: Bool
-    @State private var hovered = false
+/// 목록·요약·보드에서 같은 설치 아이콘을 쓴다. 파일 조회는 identity가 바뀔 때만 한다.
+struct CardAppIcon: View {
+    let bundleID: String
+    var size: CGFloat = 24
+    @State private var image: NSImage?
+    @ScaledMetric(relativeTo: .callout) private var scale: CGFloat = 1
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Group {
-                    if isBusy { ProgressView().controlSize(.small) }
-                    else { Image(systemName: symbol).font(prominent ? .title3 : .body) }
-                }
-                .frame(width: 28, height: prominent ? 28 : 20)
-                .foregroundStyle(prominent ? palette.onAccent : palette.secondary)
-                .background(prominent ? palette.accent : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(prominent ? .body.weight(.medium) : .callout)
-                        .foregroundStyle(prominent ? palette.text : palette.secondary)
-                    if prominent {
-                        Text(detail).font(.caption).foregroundStyle(palette.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
+        Group {
+            if let image { Image(nsImage: image).resizable() }
+            else { Image(systemName: "app").resizable() }
+        }
+        .scaledToFit()
+        .frame(width: size * scale, height: size * scale)
+        .accessibilityHidden(true)
+        .task(id: bundleID) {
+            image = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        }
+    }
+}
+
+struct CardAppTile: View {
+    let app: TargetApp
+    let isRunning: Bool
+    let palette: CardPalette
+    let setTracked: (Bool) -> Void
+    let remove: () -> Void
+    @ScaledMetric(relativeTo: .caption2) private var tileHeight: CGFloat = 62
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button { setTracked(!app.isEnabled) } label: {
+            VStack(spacing: 5) {
+                CardAppIcon(bundleID: app.bundleID, size: 28)
+                Text(app.displayName).font(.caption2).lineLimit(1).truncationMode(.tail)
             }
-            .padding(.horizontal, 10).padding(.vertical, prominent ? 8 : 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(prominent ? palette.accentSoft : (hovered && isEnabled ? palette.soft : palette.background),
-                        in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(focused ? palette.accent : (hovered && isEnabled ? palette.border : Color.clear),
-                              lineWidth: focused ? 2 : 1))
+            .frame(maxWidth: .infinity, minHeight: tileHeight)
+            .padding(.horizontal, 3)
+            .overlay(alignment: .topLeading) {
+                Image(systemName: app.isEnabled ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 11)).foregroundStyle(palette.accent)
+                    .padding(3)
+            }
+            .overlay(alignment: .topTrailing) {
+                if !isRunning {
+                    Circle().fill(palette.secondary).frame(width: 4, height: 4).padding(5)
+                }
+            }
+            .background(hovered ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
-            .opacity(isEnabled ? 1 : 0.45)
         }
         .buttonStyle(CardPressStyle())
+        .foregroundStyle(palette.text)
         .focused($focused)
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(focused ? palette.accent : Color.clear, lineWidth: 2))
         .onHover { hovered = $0 }
-        .help(detail)
+        .help("\(app.displayName)\(isRunning ? "" : " · 꺼짐")\n복원 대상에서 제외")
+        .accessibilityRepresentation {
+            Toggle(app.displayName, isOn: Binding(get: { app.isEnabled }, set: setTracked))
+                .accessibilityHint(isRunning ? "" : "실행하지 않은 앱")
+        }
+        .contextMenu { Button("프로필에서 삭제", role: .destructive, action: remove) }
     }
 }

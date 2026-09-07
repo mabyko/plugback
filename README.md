@@ -19,16 +19,33 @@ Status: pre-release. Implementation complete (M1-M5), pending on-device
 verification; no signed release yet. Design documents live in
 [docs/](docs/) (currently written in Korean).
 
-## Design preview
+## Four layouts
 
-The original four menu bar design concepts: Graphite, Porcelain, Command, and
-Sage. This prototype screenshot shows the initial designs; the current app
-includes later refinements.
+Choose a layout in **Settings → Appearance**. **A · Status card** is the default:
+restore at the top, with app selection one click away. Colors and light/dark
+appearance can be changed independently.
 
-![Original Plugback design concepts: A Graphite, B Porcelain, C Command, and D Sage](prototypes/theme-directions-overview.png)
+<table>
+  <tr><th>A · Status card (default)</th><th>B · Quick list</th></tr>
+  <tr>
+    <td valign="top"><img src="assets/layout-status.png" width="360" alt="Status card: restore and save at the top, saved profile status, app icons, and a button to manage target apps." /></td>
+    <td valign="top"><img src="assets/layout-list.png" width="364" alt="Quick list: top restore controls, app search, and a compact scrollable list of target apps." /></td>
+  </tr>
+  <tr><th>C · Space browser</th><th>D · Icon board</th></tr>
+  <tr>
+    <td valign="top"><img src="assets/layout-spaces.png" width="440" alt="Space browser: top restore controls and a sidebar for browsing apps saved in each Space." /></td>
+    <td valign="top"><img src="assets/layout-board.png" width="400" alt="Icon board: top restore controls, app search, an excluded-app filter, and a grid of selectable app icons." /></td>
+  </tr>
+</table>
 
-Open [the HTML prototype](prototypes/theme-directions.html) locally to explore
-the designs, or read the [design notes](docs/THEME_DIRECTIONS.md).
+Native SwiftUI screenshots using a sample profile with 20 apps across three
+Spaces, in Sage dark mode. Browsing a Space filters the list; **Restore now**
+still restores all target apps. Excluded apps can be included again; stored
+app records can also be removed.
+
+Open [the interactive prototype](prototypes/density-directions.html) locally
+to compare layouts with 8 or 20 apps, or read the
+[design notes](docs/THEME_DIRECTIONS.md).
 
 ## Build from source
 
