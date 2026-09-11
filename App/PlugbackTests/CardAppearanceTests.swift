@@ -15,18 +15,29 @@ final class CardAppearanceTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
         let fixture = CardDesktopFixture()
+        // 지금 화면에 창이 있는 앱이 첫 묶음이다 — 목록이 길어지려면 화면에도 앱이 많아야 한다
+        fixture.applications = (0..<20).map { ("preview.visible.\($0)", "화면 앱 \($0)") }
+        fixture.appsPerSpace = 20
         let store = ProfileStore(directory: directory)
-        let apps = (0...20).map { index in
-            TargetApp(bundleID: "preview.app.\(index)",
-                      displayName: index == 0 ? "저장했던 앱" : "대상 앱 \(index)",
-                      isEnabled: index != 0, unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5))
+        let key = WorkspaceKey(screenIDs: ["preview"])
+        let placements = (0...20).map { index in
+            WindowPlacement(bundleID: "preview.app.\(index)",
+                            displayName: index == 0 ? "저장했던 앱" : "대상 앱 \(index)",
+                            screenID: "preview", space: nil, unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5))
         }
-        try store.save(["preview": Profile(screenID: "preview", screenName: "LG HDR 4K", apps: apps)])
+        let record = WorkspaceRecord(
+            key: key,
+            apps: placements.map { AppSelection(bundleID: $0.bundleID, displayName: $0.displayName, isEnabled: $0.bundleID != "preview.app.0") },
+            saved: WorkspaceSnapshot(key: key, screens: [ScreenRecord(id: "preview", name: "LG HDR 4K")],
+                                     placements: placements, savedAt: Date())
+        )
+        try store.save([key: record])
         let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
                                            store: store, defaults: defaults, spaceReader: fixture)
-        controller.labAutoSlot = true
         await controller.cardOpened()
-        XCTAssertEqual(controller.sections.first?.untrackedApps.count, 3)
+        XCTAssertEqual(controller.sections.first?.presentApps.count, 20, "화면의 앱은 저장 전이어도 첫 묶음에 보인다")
+        XCTAssertEqual(controller.sections.first?.absentSavedApps.count, 20, "저장만 된 앱은 접힌 묶음으로 내려간다")
+        XCTAssertEqual(controller.sections.first?.excludedApps.count, 1)
 
         func subviews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(subviews) }
         for style in [NSScroller.Style.overlay, .legacy] {
@@ -66,7 +77,7 @@ final class CardAppearanceTests: XCTestCase {
             let collapsedHeight = document.bounds.height
             try clickDisclosure()
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
-            XCTAssertGreaterThan(document.bounds.height, collapsedHeight, "제외 앱을 펼치면 목록이 늘어난다")
+            XCTAssertGreaterThan(document.bounds.height, collapsedHeight, "접힌 묶음을 펼치면 목록이 늘어난다")
             scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
             scroll.reflectScrolledClipView(scroll.contentView)
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -83,7 +94,7 @@ final class CardAppearanceTests: XCTestCase {
             try clickDisclosure()
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             XCTAssertEqual(document.bounds.height, collapsedHeight, accuracy: 1, "다시 누르면 목록이 접힌다")
-            XCTAssertEqual(controller.sections.first?.profile?.apps.count, 21, "접기는 저장 기록을 바꾸지 않는다")
+            XCTAssertEqual(controller.allWorkspaces.first?.windowCount, 21, "접기는 저장 기록을 바꾸지 않는다")
         }
     }
 
@@ -206,7 +217,7 @@ final class CardAppearanceTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
         let store = ProfileStore(directory: directory)
-        // README용 앱 20개·Space 3개를 페이크로 캡처한다. 실제 창 이동은 하지 않는다.
+        // README용 앱 20개·Space 3개를 페이크로 저장한다. 실제 창 이동은 하지 않는다.
         let fixture = CardDesktopFixture()
         fixture.applications = [
             ("com.apple.Safari", "Safari"), ("com.tinyspeck.slackmacgap", "Slack"),
@@ -221,19 +232,9 @@ final class CardAppearanceTests: XCTestCase {
             ("com.apple.Photos", "사진"), ("com.apple.systempreferences", "시스템 설정")
         ]
         fixture.appsPerSpace = 7
-        let firstWindows = await fixture.standardWindows(of: nil)
-        fixture.currentSpace = 2
-        let secondWindows = await fixture.standardWindows(of: nil)
-        fixture.currentSpace = 3
-        let thirdWindows = await fixture.standardWindows(of: nil)
-        fixture.currentSpace = 1
-        let apps = (firstWindows + secondWindows + thirdWindows).map {
-            TargetApp(bundleID: $0.appBundleID, displayName: $0.appName,
-                      unitRect: UnitRect($0.frame, in: fixture.screens()[0].frame))
-        }
-        try store.save(["preview": Profile(screenID: "preview", screenName: "Studio Display", apps: apps)])
         let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
                                            store: store, defaults: defaults, spaceReader: fixture)
+        // Space를 차례로 방문해 저장하면 작업 환경 기록이 누적된다 (S02) — 관찰하지 못한 Space의 기록은 유지된다.
         await controller.captureNow()
         fixture.currentSpace = 2
         await controller.captureNow()
@@ -242,7 +243,8 @@ final class CardAppearanceTests: XCTestCase {
         fixture.currentSpace = 1
         await controller.cardOpened()
         XCTAssertEqual(controller.sections.first?.spaceGroups.count, 3)
-        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 20)
+        XCTAssertEqual(controller.allWorkspaces.first?.windowCount, 20)
+        XCTAssertEqual(controller.sections.first?.apps.count, 20)
         let destinations = CardPresentation.spaceSelections(in: controller.sections)
         XCTAssertEqual(destinations.count, 3)
         XCTAssertEqual(CardPresentation.resolvedSpaceSelection(destinations.last, in: controller.sections), destinations.last)
@@ -265,10 +267,6 @@ final class CardAppearanceTests: XCTestCase {
         }
         let fixture = CardDesktopFixture()
         let store = ProfileStore(directory: directory)
-        let apps = fixture.applications.map {
-            TargetApp(bundleID: $0.0, displayName: $0.1, unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 0.5))
-        }
-        try store.save(["preview": Profile(screenID: "preview", screenName: "Studio Display", apps: apps)])
         let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
                                            store: store, defaults: defaults, spaceReader: fixture)
         await controller.captureNow()
@@ -315,7 +313,7 @@ final class CardAppearanceTests: XCTestCase {
         settle()
         XCTAssertEqual(host.frame.height, summaryHeight, accuracy: 1)
         XCTAssertTrue(subviews(host).compactMap { $0 as? NSScrollView }.isEmpty)
-        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 4)
+        XCTAssertEqual(controller.sections.first?.apps.count, 4)
 
         host.rootView = Card(controller: controller, layout: .board, palette: palette)
             .modifier(CardSurface(layout: .board, palette: palette))
@@ -325,15 +323,16 @@ final class CardAppearanceTests: XCTestCase {
         try click(NSPoint(x: 40, y: document.isFlipped ? 28 : document.bounds.height - 28), in: document)
         try await Task.sleep(nanoseconds: 100_000_000)
         settle()
-        XCTAssertEqual(controller.sections.first?.profile?.apps.filter(\.isEnabled).count, 3,
-                       "아이콘을 누르면 실제 프로필에서 해당 앱을 제외한다")
-        XCTAssertEqual(controller.sections.first?.untrackedApps.count, 1)
+        XCTAssertEqual(controller.sections.first?.apps.count, 3,
+                       "아이콘을 누르면 실제 작업 환경에서 해당 앱을 제외한다")
+        XCTAssertEqual(controller.sections.first?.excludedApps.count, 1)
 
         let original = try XCTUnwrap(controller.sections.first)
-        let other = PlugbackController.ScreenSection(screenID: "second", name: original.name,
-            profile: original.profile, restoreSource: original.restoreSource, usesPendingSource: false,
-            spaceGroups: original.spaceGroups, spaceConfigurationDiffers: false,
-            untrackedApps: original.untrackedApps, lastResult: nil)
+        let other = PlugbackController.ScreenSection(screenID: "second", label: original.label,
+            hasSnapshot: original.hasSnapshot, savedAt: original.savedAt, savedBy: original.savedBy,
+            apps: original.apps, presentApps: original.presentApps, absentSavedApps: original.absentSavedApps,
+            excludedApps: original.excludedApps, spaceGroups: original.spaceGroups, spaceConfigurationDiffers: false,
+            lastResult: nil)
         let destinations = CardPresentation.spaceSelections(in: [original, other])
         XCTAssertEqual(Set(destinations).count, destinations.count, "서로 다른 화면의 같은 Space ID를 구분한다")
         XCTAssertEqual(destinations.filter { $0.screenID == "second" }.count, 3)
@@ -388,14 +387,14 @@ final class CardAppearanceTests: XCTestCase {
             appearance.brightness = scheme == .dark ? .dark : .light
             for pane in SettingsPane.allCases {
                 let host = NSHostingView(rootView: SettingsView(controller: controller, initialPane: pane, store: store))
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 600),
                                       styleMask: [.borderless], backing: .buffered, defer: false)
                 window.contentView = host
                 host.layoutSubtreeIfNeeded()
                 RunLoop.main.run(until: Date().addingTimeInterval(0.05))
                 host.layoutSubtreeIfNeeded()
                 XCTAssertEqual(host.fittingSize.width, 520, accuracy: 1)
-                XCTAssertEqual(host.fittingSize.height, 560, accuracy: 1)
+                XCTAssertEqual(host.fittingSize.height, 600, accuracy: 1)
                 let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                 host.cacheDisplay(in: host.bounds, to: bitmap)
                 let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))

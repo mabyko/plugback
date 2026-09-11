@@ -6,3 +6,4 @@ xcuserdata/
 DerivedData/
 *.profraw
 App/Config/Local.xcconfig
+.swiftpm/

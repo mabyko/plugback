@@ -33,13 +33,32 @@ public struct UnitRect: Codable, Equatable, Sendable {
 
 /// 화면 지문 — 키가 아니라 검증용이다 (ARCHITECTURE ScreenID).
 /// UUID는 같은데 지문이 다르면 "OS가 UUID 배정을 바꿨다"는 신호이므로 복원하지 않는다.
-public struct ScreenFingerprint: Codable, Equatable, Sendable {
+public struct ScreenFingerprint: Codable, Equatable, Hashable, Sendable {
     public let vendor: UInt32
     public let model: UInt32
     public let serial: UInt32
 
     public init(vendor: UInt32, model: UInt32, serial: UInt32) {
         self.vendor = vendor; self.model = model; self.serial = serial
+    }
+}
+
+/// 맥 본체에서 케이블이 꽂힌 포트의 위치 (표시용 — 식별 키가 아니다, P20).
+/// IORegistry의 `port-location` 문자열을 그대로 보존하고, 알려진 값만 이름으로 매핑한다.
+public enum PortLocation: Codable, Equatable, Hashable, Sendable {
+    case leftBack, leftFront, rightBack, rightFront, left, right
+    case other(String)
+
+    public init(rawLocation: String) {
+        switch rawLocation {
+        case "left-back": self = .leftBack
+        case "left-front": self = .leftFront
+        case "right-back": self = .rightBack
+        case "right-front": self = .rightFront
+        case "left": self = .left
+        case "right": self = .right
+        default: self = .other(rawLocation)
+        }
     }
 }
 
@@ -50,11 +69,13 @@ public struct ScreenInfo: Equatable, Sendable {
     public let frame: CGRect
     public let isBuiltin: Bool
     public let fingerprint: ScreenFingerprint?
+    /// 지금 연결된 포트의 위치. 확인하지 못하면 nil — 추정 위치를 지어내지 않는다.
+    public let portLocation: PortLocation?
 
     public init(id: String, name: String, frame: CGRect, isBuiltin: Bool,
-                fingerprint: ScreenFingerprint? = nil) {
+                fingerprint: ScreenFingerprint? = nil, portLocation: PortLocation? = nil) {
         self.id = id; self.name = name; self.frame = frame; self.isBuiltin = isBuiltin
-        self.fingerprint = fingerprint
+        self.fingerprint = fingerprint; self.portLocation = portLocation
     }
 
     /// 창의 소속 화면 판정 — 중심점 규칙 (F-03.2). 저장과 복원이 이 하나의 규칙을 공유한다.
@@ -62,11 +83,10 @@ public struct ScreenInfo: Equatable, Sendable {
 }
 
 /// 카드 헤더의 화면 상태 — 상태는 이 셋뿐이다 (ARCHITECTURE 고정 결정: 빈 상태에서도 카드는 비지 않는다).
-/// 기억 상태는 식별자와 이름만 든다 — frame을 지어낸 가짜 ScreenInfo를 만들지 않기 위해서다.
 public enum ScreenPresence: Equatable, Sendable {
     /// 외장 화면이 지금 연결되어 있다. count는 연결된 외장 화면 수 (다중 화면 표시용).
     case connected(ScreenInfo, count: Int)
-    /// 외장 화면이 없는 동안 아는 화면 하나(방금 분리된 화면, 재시작 직후엔 이름순 첫 프로필)의 이름과 프로필 유무를 보여준다.
+    /// 외장 화면이 없는 동안 아는 화면 하나(방금 분리된 화면, 재시작 직후엔 이름순 첫 저장본)의 이름과 저장본 유무를 보여준다.
     case remembered(screenID: String, name: String)
     /// 아는 화면이 없다 — 첫 실행.
     case none
@@ -80,8 +100,8 @@ public enum WindowFullscreenState: Equatable, Sendable {
     case unknown
 }
 
-/// 표준 창 하나. id와 windowServerID는 마지막 게이트웨이 열거에만 유효하다.
-/// 앱 재시작을 넘는 창 식별자는 없다 (FUNCTIONAL_SPEC 부록 3).
+/// 표준 창 하나. id는 마지막 게이트웨이 열거에만 유효하다. windowServerID는 창이 살아 있는 동안
+/// 같은 실제 창을 가리키는 실행 중 식별자다 — 재시작을 넘는 창 식별자는 없다 (FUNCTIONAL_SPEC 부록 3).
 public struct WindowInfo: Equatable, Sendable {
     public let id: Int
     public let appBundleID: String
@@ -93,33 +113,35 @@ public struct WindowInfo: Equatable, Sendable {
     /// 저장·수집·카드 목록은 없는 창으로 보고, 복원은 그대로 옮긴다 (F-03.2).
     public let isHidden: Bool
     public let windowServerID: CGWindowID?
+    /// 직접 지정 화면의 표시용 제목. 저장·진단 기록에는 넣지 않는다 (3.7절).
+    public let title: String?
 
     public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
                 isFullscreen: Bool = false, isMinimized: Bool = false, isHidden: Bool = false,
-                windowServerID: CGWindowID? = nil) {
+                windowServerID: CGWindowID? = nil, title: String? = nil) {
         self.id = id; self.appBundleID = appBundleID; self.appName = appName
         self.frame = frame
         fullscreenState = isFullscreen ? .fullscreen : .windowed
         self.isMinimized = isMinimized; self.isHidden = isHidden
-        self.windowServerID = windowServerID
+        self.windowServerID = windowServerID; self.title = title
     }
 
     public init(id: Int, appBundleID: String, appName: String, frame: CGRect,
                 fullscreenState: WindowFullscreenState, isMinimized: Bool = false,
-                isHidden: Bool = false, windowServerID: CGWindowID? = nil) {
+                isHidden: Bool = false, windowServerID: CGWindowID? = nil, title: String? = nil) {
         self.id = id; self.appBundleID = appBundleID; self.appName = appName
         self.frame = frame; self.fullscreenState = fullscreenState
         self.isMinimized = isMinimized; self.isHidden = isHidden
-        self.windowServerID = windowServerID
+        self.windowServerID = windowServerID; self.title = title
     }
 
-    /// 기존 flat 복원 경로의 source compatibility. unknown은 종전처럼 false지만,
-    /// Space-aware 경로는 fullscreenState를 직접 보고 unknown을 움직이지 않는다.
     public var isFullscreen: Bool { fullscreenState == .fullscreen }
     public var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
 }
 
-/// 대상 앱 항목 (F-04.1). 비율 좌표는 앱당 하나 — 복원은 첫 표준 창에 한다 (US-005 AC-3).
+// MARK: - 구버전 파일 형식 (읽기·이전 전용)
+
+/// 구버전(화면별 프로필) 대상 앱 항목. 새 파일에는 쓰지 않는다.
 public struct TargetApp: Codable, Equatable, Sendable {
     public let bundleID: String
     public var displayName: String
@@ -132,15 +154,12 @@ public struct TargetApp: Codable, Equatable, Sendable {
     }
 }
 
-/// 프로필 — 화면 식별자 하나당 하나 (F-04.1).
+/// 구버전 프로필 — 화면 식별자 하나당 하나. `profiles.json`을 읽어 작업 환경으로 이전할 때만 쓴다.
 public struct Profile: Codable, Equatable, Sendable {
     public let screenID: String
     public var screenName: String
     public var apps: [TargetApp]
-    /// 저장 당시 화면 지문. 복원 직전 검증에 쓴다 — 없으면(구버전 파일) 검증을 건너뛴다.
     public var fingerprint: ScreenFingerprint?
-    /// 이 슬롯이 마지막으로 저장된 시각. 복원 소스 판정("더 최근 것이 이긴다")의 유일한 근거다.
-    /// 구버전 파일은 nil — 아주 오래된 것으로 취급한다.
     public var savedAt: Date?
 
     public init(screenID: String, screenName: String, apps: [TargetApp] = [],
@@ -150,25 +169,16 @@ public struct Profile: Codable, Equatable, Sendable {
     }
 }
 
-/// 프로필 슬롯 (실험실 · 자동 슬롯). 수동 슬롯의 키는 화면 식별자 그대로다 —
-/// 실험을 걷어내도 기존 파일이 그대로 읽히고 마이그레이션이 없다.
-public enum Slot: String, Equatable, Sendable {
+/// 저장이 어느 경로로 완료됐는지 (표시용). 구버전의 슬롯 키 접미사도 여기서 해석한다.
+public enum Slot: String, Codable, Equatable, Sendable {
     case manual, auto
 
-    /// 자동 슬롯만 접미사를 단다. 화면 식별자에는 '#'이 없다(WindowServer UUID).
     static let autoSuffix = "#auto"
-
-    func key(_ screenID: String) -> String {
-        self == .auto ? screenID + Slot.autoSuffix : screenID
-    }
-
-    /// 저장소 키가 자동 슬롯의 것인가 — 프로필 목록에서 걸러낼 때 쓴다.
+    func key(_ screenID: String) -> String { self == .auto ? screenID + Slot.autoSuffix : screenID }
     static func isAutoKey(_ key: String) -> Bool { key.hasSuffix(autoSuffix) }
 }
 
-/// 이 외장 화면에 창이 있지만 프로필에 없는 앱 — **복원이 건드리지 않는다.**
-/// 카드가 이것을 보여주는 이유는 비침해가 이 제품의 약속이기 때문이다:
-/// "왜 내 앱이 목록에 없지?"의 답이 문서에만 있으면 약속이 보이지 않는다.
+/// 이 외장 화면에 창이 있지만 저장본에 없는 앱 — 다음 저장에 기본 포함된다(D4). 제외하려면 체크를 끈다.
 public struct UntrackedApp: Equatable, Sendable {
     public let bundleID: String
     public let displayName: String
@@ -178,14 +188,55 @@ public struct UntrackedApp: Equatable, Sendable {
     }
 }
 
+// MARK: - 복원 결과
+
 /// 건너뜀 사유 (F-02.2). 사용자가 이해할 문구로의 변환은 UI의 몫이다.
 public enum SkipReason: Equatable, Sendable {
     case appNotRunning
     case fullscreen
     case minimized
     case alreadyInPlace
-    /// 앱은 실행 중인데 표준 창이 하나도 없다.
+    /// 앱은 실행 중인데 배정할 표준 창이 없다.
     case noWindow
+    /// 같은 작업 환경에서 닫힌 것으로 확인한 저장 창 — 다음 저장 성공까지 제외 (D9).
+    case closedInWorkspace
+    /// 자동 복원 도중 사용자가 직접 조작한 창 — 이번 자동 복원에서 보호 (D5).
+    case userInteraction
+}
+
+/// 확인이 필요한 이유 — 사용자의 「남은 창 복원」으로만 재개한다 (D8).
+public enum ConfirmationReason: Equatable, Sendable {
+    /// 같은 앱의 후보 창이 여럿이고 직접 지정이 켜져 있다. 후보의 windowServerID를 함께 전한다.
+    case ambiguousCandidates([CGWindowID])
+    /// 저장한 창이 현재 없고, 닫힌 시점·환경을 확인할 수 없다 (W21).
+    case closureUnknown
+    /// 저장한 Space를 현재 찾을 수 없다 (P06).
+    case spaceMissing
+    /// Space 상태를 확인할 수 없다 (snapshot 없음·판정 불가).
+    case spaceUnavailable
+    /// 개별 Spaces 설정이 꺼져 있거나 확인할 수 없다 (D6).
+    case spacesUnsupported
+    /// 후보 창이 목적 화면의 다른 Space에 있다 — 사용자가 옮긴 뒤 재개 (P05).
+    case windowOnAnotherSpace
+    /// 앱 실행·창 생성을 요청했으나 창을 확인하지 못했다.
+    case windowCreationFailed
+}
+
+/// 미전송 조작을 보류한 이유.
+public enum HoldReason: Equatable, Sendable {
+    case screenLocked
+    case lockStateUndetermined
+}
+
+/// 요청이 취소된 이유.
+public enum CancelReason: Equatable, Sendable {
+    case userCancelled
+    case newRequest
+    case newSave
+    case workspaceChanged
+    case targetRemoved
+    case automaticRestoreDisabled
+    case spacesUnsupported
 }
 
 /// 화면 통째 건너뜀 사유 — 앱 단위(SkipReason)가 아니라 그 화면의 복원 자체를 하지 않은 이유.
@@ -194,8 +245,8 @@ public enum ScreenSkipReason: Equatable, Sendable {
     case fingerprintMismatch
 }
 
-/// 복원 결과 (F-05.1: 이동 n · 건너뜀 n · 실패 n + 사유).
-/// 어느 화면의 결과인지 함께 기록한다 — 다른 화면의 카드에 이 결과를 보여주면 안 된다 (화면별 프로필 원칙, US-003).
+/// 복원 결과 — 저장 창 하나마다 항목 하나 (D1). 모든 대상 기록이 결과에 남는다.
+/// 어느 화면의 결과인지 함께 기록한다 — 다른 화면의 카드에 이 결과를 보여주면 안 된다.
 public struct RestoreResult: Equatable, Sendable {
     public let screenID: String
     /// nil이면 정상 복원. 값이 있으면 이 화면은 통째로 건너뛰었고 entries는 비어 있다.
@@ -205,15 +256,26 @@ public struct RestoreResult: Equatable, Sendable {
         case moved
         case skipped(SkipReason)
         case failed
+        /// 목적 Space가 비활성 — 유효한 요청 동안 방문 이벤트를 기다린다 (시간 제한 없음, D8).
+        case awaitingVisit
+        /// 저장 Space가 다른 화면에 남아 있다 — 사용자가 Mission Control에서 옮겨야 한다.
+        case awaitingSpaceMove(sourceScreenID: String)
+        case needsConfirmation(ConfirmationReason)
+        case held(HoldReason)
+        case cancelled(CancelReason)
     }
 
     public struct Entry: Equatable, Sendable {
+        public let placementID: UUID
         public let bundleID: String
         public let displayName: String
+        public let space: SpaceHint?
         public let outcome: Outcome
 
-        public init(bundleID: String, displayName: String, outcome: Outcome) {
-            self.bundleID = bundleID; self.displayName = displayName; self.outcome = outcome
+        public init(placementID: UUID, bundleID: String, displayName: String,
+                    space: SpaceHint? = nil, outcome: Outcome) {
+            self.placementID = placementID; self.bundleID = bundleID
+            self.displayName = displayName; self.space = space; self.outcome = outcome
         }
     }
 
@@ -229,5 +291,19 @@ public struct RestoreResult: Equatable, Sendable {
     public var failedCount: Int { entries.filter { $0.outcome == .failed }.count }
     public var skippedCount: Int {
         entries.filter { if case .skipped = $0.outcome { return true } else { return false } }.count
+    }
+    public var waitingCount: Int {
+        entries.filter {
+            switch $0.outcome {
+            case .awaitingVisit, .awaitingSpaceMove, .held: return true
+            default: return false
+            }
+        }.count
+    }
+    public var confirmationCount: Int {
+        entries.filter { if case .needsConfirmation = $0.outcome { return true } else { return false } }.count
+    }
+    public var cancelledCount: Int {
+        entries.filter { if case .cancelled = $0.outcome { return true } else { return false } }.count
     }
 }

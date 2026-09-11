@@ -4,117 +4,93 @@
 
 이 문서는 외장 화면 연결이나 복원 버튼 한 번이 창 이동까지 이어지는 순서만 설명한다. 조건의 기준은 [FUNCTIONAL_SPEC.md](./FUNCTIONAL_SPEC.md), 용어는 [CONTEXT.md](../CONTEXT.md)를 따른다.
 
-Plugback이 직접 바꾸는 것은 대상 앱의 표준 창 위치뿐이다. Space 화면 소속, Space 순서, native fullscreen 상태는 쓰지 않는다.
+Plugback이 직접 바꾸는 것은 대상 앱의 표준 창 위치와, 실험실 옵션이 켜졌을 때의 앱 실행·창 열기 요청뿐이다. Space 화면 소속, Space 순서, native fullscreen 상태는 쓰지 않는다.
 
 ---
 
 ## A · 이벤트 층
 
-복원을 새로 시작하는 입력은 둘뿐이다.
+복원 요청을 새로 시작하는 입력은 셋이다.
 
-1. `DisplayWatcher`가 안정된 외장 화면 연결을 알리고 복원 모드가 자동이다.
-2. 사용자가 카드 버튼이나 시스템 단축어로 수동 복원을 실행한다.
+1. `DisplayWatcher`가 안정된 화면 조합의 변화를 알리고, 복원 모드가 자동이며, 새 작업 환경의 저장본이 있다.
+2. 사용자가 카드 버튼이나 시스템 단축어로 「지금 복원」을 실행한다.
+3. 사용자가 「남은 창 복원」으로 확인 필요·대기 항목을 재개한다 (기존 요청 안에서 사용자 요청으로 취급).
 
-`ActiveSpaceWatcher`와 `MissionControlWatcher`는 새 복원을 만들지 않는다. 이미 시작한 안내형 복원이 있으면 그 상태만 다시 확인한다. 진행 중 안내가 없을 때는 자동 슬롯 수집 신호로 쓴다.
+`ActiveSpaceWatcher`와 `MissionControlWatcher`는 새 요청을 만들지 않는다. 진행 중 요청의 방문 대기·이동 안내 항목만 다시 판정하고, 그 뒤 수집 신호로 쓴다. 잠금 해제 알림은 잠금 보류 항목만 재개한다.
 
 ```
-외장 화면 연결 ── DisplayWatcher ─┐
-복원 버튼·단축어 ─────────────────┼─▶ PlugbackController.restoreNow
-                                  │
-Mission Control 닫힘 ─────────────┤
-활성 Space 변화 ──────────────────┘  (진행 중 recovery만 recheck)
+화면 조합 변화 ── DisplayWatcher ─┐  (떠나는 환경 확정 → 새 환경 선택 → 자동이면 요청)
+복원 버튼·단축어 ─────────────────┼─▶ PlugbackController.performRestore → RestoreSession.start
+남은 창 복원 ─────────────────────┘                                        └ RestoreSession.resume(.user)
+Mission Control 닫힘 ─────────────┐
+활성 Space 변화 ──────────────────┼─▶ RestoreSession.resume(.waiting) → 수집
+잠금 해제 ────────────────────────┘─▶ RestoreSession.resume(.unlock)
 ```
 
-DisplayWatcher 안에서는 원시 화면 이벤트 압축, 유효 화면 판정, 잠자기·잠금 억제가 먼저 끝난다(F-01). 이 단계 전에는 프로필이나 창을 읽지 않는다.
+DisplayWatcher 안에서는 원시 화면 이벤트 압축, 유효 화면 판정, 잠자기 억제·잠금 미루기가 먼저 끝난다(F-01). 원시 변경 신호가 오면 수집은 안정화까지 멈춘다.
 
 ---
 
-## B · 정책·세션 층
+## B · 요청 층
 
-컨트롤러는 화면과 복원 소스를 고르고, `RestoreSession`은 한 번 시작한 안내의 수명만 관리한다.
-
-### 새 복원
+컨트롤러는 작업 환경과 복원 소스를 고르고, `RestoreSession`은 한 요청의 수명을 관리한다.
 
 ```
 PlugbackController
-  ├─ 화면 목록·권한 동기화
-  ├─ 화면별 최신 복원 소스 선택
-  └─ RestoreSession.restore
-       ├─ 이전 recovery 폐기
+  ├─ 화면 목록·권한·개별 Spaces 조건 동기화
+  ├─ 현재 작업 환경의 마지막 저장본 선택 (소스 고정)
+  └─ RestoreSession.start(origin: 자동 | 사용자)
+       ├─ 이전 요청의 남은 작업 취소
        ├─ DesktopObservation.drain
        ├─ 같은 회차의 (표준 창, stable Space snapshot) 한 번 읽기
-       ├─ 시작 시 실제 잔류 Space만 recovery로 등록
-       └─ RestoreEngine.restore
+       ├─ RestoreEngine.plan — 저장 창마다 결정
+       ├─ 실행·생성이 필요하면 (옵션·닫힌 환경 통과분만) 요청 뒤 다시 읽고 다시 plan
+       └─ 이동 실행 — 이동마다 요청 유효성·잠금·사용자 조작 확인
 ```
 
-프로필에 Space overlay가 없으면 기존 선택 복원처럼 표준 창을 복원한다. binding이 있는데 snapshot이나 membership을 확실히 판정하지 못하면 평면 복원으로 내려가지 않고 그 앱을 건드리지 않는다.
+저장 창 하나의 결정은 다음 순서다.
 
-저장된 일반 Space의 시작 상태별 동작은 다음과 같다.
-
-| 시작 상태 | 동작 |
+| 확인 | 실패·대기 시 결과 |
 |---|---|
-| 목적 화면의 현재 Space | 묶인 표준 창을 바로 복원 |
-| 목적 화면의 비활성 Space | 건드리지 않음. 일반 방문 복원을 만들지 않음 |
-| 다른 화면의 잔류 Space | 출발·목적 화면 안내를 가진 recovery 생성 |
-| 없음·중복·불명·fullscreen | fail-closed. 창과 Space를 건드리지 않음 |
+| 앱이 제외되지 않았나 | 결과 없음 (진행 중 제외됐으면 취소) |
+| 화면 지문이 맞나 | 화면 통째 건너뜀 |
+| 같은 환경에서 닫힌 자리인가 | 「이 환경에서 닫아 건너뜀」 |
+| 저장 Space가 현재인가 | 비활성 → 방문 대기, 잔류 → 이동 안내, 없음·불명 → 확인 필요 |
+| 대응할 창이 있나 | 연결 우선 → 직접 지정(ON·모호) 확인 필요 → 전체 이동 거리 최소 배정 |
+| 창이 없으면 | 옵션 OFF → 건너뜀 사유, 옵션 ON·다른 환경에서 닫힘 → 실행·생성, 닫힌 환경 불명 → 확인 필요 |
+| 이동 직전 | 요청 무효 → 중단, 잠금·판정 불가 → 잠금 보류, 자동 요청의 사용자 조작 창 → 건너뜀 |
+| 이동 뒤 | 실제 좌표 확인, 1회 재시도, 실패 기록 |
 
-### 안내 이어가기
+### 남은 항목의 재판정
 
-```
-잔류 감지
-  → 카드: "출발 화면 → 목적 화면 · Mission Control에서 옮겨 주세요"
-  → 사용자가 Space를 한 번 이동
-  → Mission Control 닫힘
-  → RestoreSession.recheck
-      ├─ 여전히 다른 화면: 이동 안내 유지
-      ├─ 목적 화면의 비활성 Space: 방문 안내
-      ├─ 목적 화면의 현재 Space: 해당 recovery의 창만 복원하고 완료
-      └─ 판정 불가: 안내 불가 표시, 무동작
-  → 사용자가 방문 안내된 Space를 한 번 엶
-  → 활성 Space 이벤트
-  → 같은 recheck가 창 위치를 복원하고 recovery 종료
-```
+| 이벤트 | 다시 보는 항목 |
+|---|---|
+| Space 전환·Mission Control 닫힘 | 방문 대기·이동 안내 |
+| 잠금 해제 확인 | 잠금 보류 |
+| 사용자 「남은 창 복원」 | 방문 대기·이동 안내·확인 필요·잠금 보류 전부 (사용자 요청으로 취급) |
 
-대상 앱이 없는 저장 Space는 recovery를 만들지 않는다. 자동·수동 모드는 recovery를 시작하는 시점만 바꾸며, 시작된 recovery는 어느 모드에서도 이벤트에 따라 이어진다.
-
-Space 이벤트 직후 첫 snapshot이 이전 상태일 수 있어 정착 간격 뒤 딱 한 번만 재확인한다. 주기 폴링이나 재시도 루프는 없다.
-
-새 복원, 저장, 대상 앱 변경, 프로필 삭제, 복원 소스 변경은 기존 recovery를 폐기한다. 사용자가 새 배치를 선언했는데 옛 안내가 살아남지 않게 하기 위해서다.
+완료한 창은 어느 재판정에서도 다시 옮기지 않는다. 취소 규칙은 F-02.6이다.
 
 ---
 
-## C · 화면 층
+## C · 저장 층
 
-`RestoreEngine`은 화면 식별자 순서로 처리한다.
+수집은 복원과 같은 `DesktopObservation`을 쓰되 복원 실행 구간과 화면 안정화 전에는 돌지 않는다.
 
-1. 저장 지문과 현재 지문이 다르면 화면 전체를 건너뛴다.
-2. 같은 대상 앱이 여러 화면 프로필에 있으면 먼저 온 적격 화면이 한 번만 담당한다.
-3. 일반 복원은 화면의 모든 담당 앱을, recovery 완료 복원은 그 recovery에 묶인 앱만 받는다.
-4. 결과는 화면별 `RestoreResult`로 돌려준다.
-
-Space 자체의 화면 소속이나 순서를 바꾸는 호출은 이 층에 없다.
+```
+수집 트리거 (창 이동 정착 · 앱 전환 · 앱 종료 · Space 이벤트 뒤)
+  → 전체 표준 창 + Space snapshot 한 번 읽기
+  → 창 연결 갱신 · 사라진 창의 닫힌 환경 기록 (자동 저장과 무관)
+  → 자동 저장 ON이면 저장 대기 이력 갱신 (복원 착지 위치는 제외)
+작업 환경 이탈 · 정상 종료
+  → 이력이 마지막 저장본과 다르면 저장 완료
+```
 
 ---
 
 ## D · 앱 층
 
-대상 앱 하나마다 다음 순서를 따른다.
-
-```
-실행 중인가?
-  ├─ 아니오 → 건너뜀
-  └─ 예
-      → 같은 observation의 표준 창에서 안전한 한 창 선택
-      → 전체화면이면 건너뜀
-      → 최소화면 기본 건너뜀, 옵션이 켜졌으면 Dock에서 꺼냄
-      → 이미 제자리면 건너뜀
-      → 목표 비율 좌표로 이동
-      → 실제 좌표 확인
-          ├─ 허용 오차 안 → 이동 완료
-          └─ 밖/응답 없음 → 1회 재시도 후 실패
-```
-
-꺼진 앱은 실행하지 않는다. 실행 중인데 창이 없는 legacy 대상만 옵션에 따라 새 창을 열 수 있다. Space binding이 있는 비활성·불명 대상에는 새 창을 만들지 않는다.
+`WindowGateway`가 AX로 하는 일은 창 열거(제목·창 ID 포함), 이동·최소화 해제와 실제 좌표 재판독, 앱 실행·기본 창 열기·메뉴의 새 창 항목 누르기, 창 앞으로 가져오기뿐이다. 앱 실행은 실험실 부모 옵션이 켜졌을 때만 일어난다.
 
 ---
 
@@ -122,7 +98,7 @@ Space 자체의 화면 소속이나 순서를 바꾸는 호출은 이 층에 없
 
 | 층 | 소유 모듈 | 결정 |
 |---|---|---|
-| A | DisplayWatcher · ActiveSpaceWatcher · MissionControlWatcher | 언제 새 복원을 시작하고, 언제 기존 안내를 다시 볼지 |
-| B | PlugbackController · RestoreSession · DesktopObservation | 어떤 복원 소스와 한 observation을 쓰고, recovery를 언제 끝낼지 |
-| C | RestoreEngine | 어느 화면이 어느 앱을 한 번 담당할지 |
-| D | RestoreEngine · WindowGateway | 어느 창을 건너뛰고 어디로 옮기며 성공을 어떻게 검증할지 |
+| A | DisplayWatcher · ActiveSpaceWatcher · MissionControlWatcher · CollectTrigger | 언제 새 요청을 시작하고, 언제 남은 항목을 다시 볼지 |
+| B | PlugbackController · RestoreSession · RestoreEngine · WindowMatching · DesktopObservation | 어떤 소스와 관찰을 쓰고, 저장 창마다 무엇을 할지 |
+| C | WorkspaceLibrary · CaptureEngine | 무엇을 이력으로 모으고 언제 저장본이 되는지 |
+| D | WindowGateway | 어느 창을 어떻게 옮기고 성공을 어떻게 검증할지 |

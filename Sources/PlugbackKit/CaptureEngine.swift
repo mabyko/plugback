@@ -1,207 +1,124 @@
 import CoreGraphics
+import Foundation
 
-/// 저장 엔진 (F-03). 거의 순수 함수 — 게이트웨이가 준 스냅샷만 받는다.
+/// 저장·수집 엔진 (F-03). 거의 순수 함수 — 한 번의 관찰(창 목록 + Space snapshot)을 작업 환경 기록으로 바꾼다.
+/// 창 하나가 창 위치 기록 하나다(D1). 같은 실제 창의 이동과 새 창 추가는 실행 중 연결(placement ↔ windowServerID)로 구별한다.
+/// 관찰하지 못한 기존 기록은 보존하고, 같은 환경에서 닫힌 것으로 확인한 기록과 내장 화면으로 옮긴 창의 기록만 뺀다(D4·D9).
 public enum CaptureEngine {
-    /// 지금 이 외장 화면에 창이 있는 앱의 항목만 갱신하고, 나머지 기존 항목은 그대로 유지한다 (F-03.3 병합).
-    /// 창의 소속 화면은 중심점으로 판정한다 (F-03.2). 내장 화면이 오면 아무것도 갱신하지 않는다 — 내장 배치는 저장 대상이 아니다 (F-03.2).
-    public static func capture(
-        windows: [WindowInfo],
-        on screen: ScreenInfo,
-        merging existing: Profile?
-    ) -> Profile {
-        var profile = existing ?? Profile(screenID: screen.id, screenName: screen.name)
-        profile.screenName = screen.name
-
-        guard !screen.isBuiltin, screen.frame.width > 0, screen.frame.height > 0 else { return profile }
-
-        // 앱별 첫 표준 창 하나 — 비율 좌표는 앱당 하나다 (F-04.1).
-        // 창 목록의 순서(z-순서)를 유지해야 신규 앱의 목록 순서가 저장마다 뒤바뀌지 않는다.
-        var ordered: [(bundleID: String, window: WindowInfo)] = []
-        var seen = Set<String>()
-        for window in windows
-        where !window.isMinimized && !window.isFullscreen && screen.contains(window) {
-            if seen.insert(window.appBundleID).inserted {
-                ordered.append((window.appBundleID, window))
-            }
-        }
-
-        for (bundleID, window) in ordered {
-            merge(window, bundleID: bundleID, on: screen, into: &profile)
-        }
-        return profile
+    struct Observation: Equatable {
+        var placements: [WindowPlacement]
+        var screens: [ScreenRecord]
+        /// 이번 관찰에서 실제 창과 연결된 저장 자리. 갱신된 기존 자리와 새 자리 모두 포함한다.
+        var links: [UUID: CGWindowID]
+        /// 외장 화면에서 표준 창을 확인한 앱 — 제외하지 않았다면 기본 포함 대상이다 (D4).
+        var observedApps: [String: String]
+        /// 연결된 창이 내장 화면으로 옮겨진 것을 확인한 기존 자리 — 새 이력에서 뺀다 (D4).
+        var droppedPlacementIDs: Set<UUID>
+        /// 이번에 현재 Space로 확인한 화면별 일반 Space 이름 (관찰 범위 표시용).
+        var observedSpaceNames: [String: Set<String>]
     }
 
-    /// frame과 Space binding을 같은 창 선택 결과에서 만드는 Space-aware 캡처.
-    /// 확실하지 않은 bundle은 기존 좌표를 유지하고 overlay만 unresolved로 바꾼다.
-    static func capture(
+    /// - windows: 한 열거의 표준 창 전부. 숨김·최소화·전체화면(불명 포함)은 기록하지 않는다 (F-03.2).
+    /// - screens: 작업 환경의 외장 화면들. 내장·다른 화면에 있는 창은 기록하지 않는다.
+    /// - base: 보존할 기존 기록 (마지막 저장본 또는 저장 대기 이력).
+    /// - links: 기존 저장 자리 ↔ 실행 중 창의 유효한 연결.
+    /// - droppable: 이 환경에서 외장 화면에 있는 것을 확인한 적 있는 연결 자리 — 내장에서 발견되면 사용자가 옮긴 것이다.
+    ///   화면 구성 변경으로 macOS가 내장에 모은 창은 여기 없으므로 기록을 보존한다 (W17·S17).
+    static func observe(
         windows: [WindowInfo],
-        on screen: ScreenInfo,
-        merging existing: ResolvedProfile?,
-        snapshot: SpaceSnapshot,
-        updating bundleIDs: Set<String>? = nil
-    ) -> ResolvedProfile {
-        var result = existing ?? ResolvedProfile(
-            profile: Profile(screenID: screen.id, screenName: screen.name),
-            overlay: SlotSpaceOverlay()
+        screens: [ScreenInfo],
+        snapshot: SpaceSnapshot?,
+        base: WorkspaceSnapshot?,
+        links: [UUID: CGWindowID],
+        excludedBundleIDs: Set<String>,
+        closedPlacementIDs: Set<UUID>,
+        droppable: Set<UUID>? = nil
+    ) -> Observation {
+        let droppable = droppable ?? Set(links.keys)
+        let externals = screens.filter { !$0.isBuiltin && $0.frame.width > 0 && $0.frame.height > 0 }
+        let placementByWindow: [CGWindowID: UUID] = Dictionary(
+            links.compactMap { id, wsid in base?.placements.contains { $0.id == id } == true ? (wsid, id) : nil },
+            uniquingKeysWith: { first, _ in first }
         )
-        result.profile.screenName = screen.name
-        guard !screen.isBuiltin, screen.frame.width > 0, screen.frame.height > 0 else {
-            return result
-        }
+        var updated: [UUID: WindowPlacement] = [:]
+        var appended: [WindowPlacement] = []
+        var newLinks: [UUID: CGWindowID] = [:]
+        var observedApps: [String: String] = [:]
+        var dropped: Set<UUID> = []
+        var observedSpaces: [String: Set<String>] = [:]
 
-        var overlay = result.overlay ?? SlotSpaceOverlay()
-        if let regularSpaces = regularSpaces(on: screen, in: snapshot) {
-            overlay.regularSpaces = regularSpaces
-        }
-        var seen = Set<String>()
-        for selected in windows
-        where !selected.isMinimized
-            && selected.fullscreenState == .windowed
-            && screen.contains(selected) {
-            let bundleID = selected.appBundleID
-            guard bundleIDs?.contains(bundleID) ?? true else { continue }
-            guard seen.insert(bundleID).inserted else { continue }
-            let bundleWindows = windows.filter { $0.appBundleID == bundleID }
-            let binding = binding(
-                bundleWindows: bundleWindows, on: screen, snapshot: snapshot
-            )
-            overlay.byBundle[bundleID] = binding
-            switch binding {
-            case .regular:
-                merge(selected, bundleID: bundleID, on: screen, into: &result.profile)
-            case .unresolved:
+        for window in windows where !window.isHidden && !window.isMinimized
+            && window.fullscreenState == .windowed {
+            // 제외한 앱의 기록은 건드리지 않는다 — 다시 켜면 저장돼 있던 자리로 돌아온다 (US-006 AC-2).
+            guard !excludedBundleIDs.contains(window.appBundleID) else { continue }
+            let linked = window.windowServerID.flatMap { placementByWindow[$0] }
+            guard let screen = externals.first(where: { $0.contains(window) }) else {
+                // 연결을 유지한 채 외장 창을 내장·작업 환경 밖으로 옮겼다 — 저장 완료 뒤부터 외장 복원 대상에서 뺀다 (D4).
+                if let linked, droppable.contains(linked) { dropped.insert(linked) }
                 continue
             }
-        }
-        overlay.keepOnly(Set(result.profile.apps.map(\.bundleID)))
-        result.overlay = overlay
-        return result
-    }
 
-    /// 자동 슬롯의 수집 정책. 현재 외장 화면에서 갱신할 앱과 다른 화면으로 명확히
-    /// 떠난 앱을 한 pair 안에서 처리한다.
-    static func collect(
-        windows: [WindowInfo],
-        on screen: ScreenInfo,
-        merging existing: ResolvedProfile,
-        snapshot: SpaceSnapshot?
-    ) -> ResolvedProfile {
-        let disabled = Set(
-            existing.profile.apps.filter { !$0.isEnabled }.map(\.bundleID)
-        )
-        let updating = Set(windows.map(\.appBundleID)).subtracting(disabled)
-        let presentElsewhere = Set(windows.lazy
-            .filter { !$0.isMinimized }
-            .map(\.appBundleID))
-            .subtracting(Set(windows.lazy
-                .filter { screen.contains($0) }
-                .map(\.appBundleID)))
-            .subtracting(disabled)
-
-        var result: ResolvedProfile
-        if let snapshot {
-            result = capture(
-                windows: windows, on: screen, merging: existing,
-                snapshot: snapshot, updating: updating
-            )
-        } else {
-            let selected = windows.filter { updating.contains($0.appBundleID) }
-            result = ResolvedProfile(
-                profile: capture(
-                    windows: selected, on: screen, merging: existing.profile
-                ),
-                overlay: nil
-            )
-        }
-
-        result.profile.apps.removeAll { presentElsewhere.contains($0.bundleID) }
-        var overlay = result.overlay ?? SlotSpaceOverlay()
-        overlay.keepOnly(Set(result.profile.apps.map(\.bundleID)))
-
-        result.overlay = overlay.isEmpty ? nil : overlay
-        return result
-    }
-
-    /// 앱 membership과 무관하게 화면 소속을 기억한다. 이름이 없거나 snapshot 전체에서
-    /// 중복인 Space는 되찾을 안전한 identity가 없으므로 기록하지 않는다.
-    private static func regularSpaces(
-        on screen: ScreenInfo, in snapshot: SpaceSnapshot
-    ) -> [SpaceHint]? {
-        guard let display = snapshot.onlyDisplay(screen.id) else { return nil }
-        return display.spaces.compactMap { space in
-            SpacePlacement.of(space.runtimeID, on: screen.id, in: snapshot)
-                .onTarget?.identity
-        }
-    }
-
-    private static func binding(
-        bundleWindows: [WindowInfo],
-        on screen: ScreenInfo,
-        snapshot: SpaceSnapshot
-    ) -> SpaceBinding {
-        if bundleWindows.contains(where: { $0.fullscreenState == .unknown }) {
-            return .unresolved(reason: .fullscreenUnknown)
-        }
-        if bundleWindows.contains(where: { $0.fullscreenState == .fullscreen }) {
-            return .unresolved(reason: .fullscreen)
-        }
-
-        let placement = SpacePlacement.of(
-            windowServerIDs: bundleWindows.map(\.windowServerID),
-            on: screen.id,
-            in: snapshot
-        )
-        if let found = placement.found, found.screenID != screen.id {
-            return .unresolved(reason: .stranded)
-        }
-        switch placement {
-        case .current(let found):
-            guard let identity = found.identity else {
-                return .unresolved(reason: .nameUnavailable)
+            var hint: SpaceHint?
+            if let snapshot {
+                switch SpacePlacement.of(windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot) {
+                case .current(let found):
+                    guard let identity = found.identity else { continue }
+                    hint = identity
+                    observedSpaces[screen.id, default: []].insert(identity.opaqueName)
+                default:
+                    // 비활성 Space·잔류·판정 불가는 이번에 확인한 것이 아니다 — 기존 기록을 유지한다 (S01·S04).
+                    continue
+                }
             }
-            return .regular(identity)
-        case .inactive:
-            return .unresolved(reason: .inactive)
-        case .stranded:
-            return .unresolved(reason: .stranded)
-        case .fullscreen:
-            return .unresolved(reason: .fullscreen)
-        case .unsupported:
-            return .unresolved(reason: .unsupportedSpace)
-        case .missing:
-            return .unresolved(reason: .spaceMissing)
-        case .unknown(let ambiguity):
-            return .unresolved(reason: blockReason(for: ambiguity))
+            observedApps[window.appBundleID] = window.appName
+            let rect = UnitRect(window.frame, in: screen.frame)
+            if let linked, let existing = base?.placements.first(where: { $0.id == linked }) {
+                var next = existing
+                next.displayName = window.appName
+                next.screenID = screen.id
+                next.space = hint
+                // 허용 오차 안의 차이는 좌표를 갱신하지 않는다 (드리프트 방지, F-08.4).
+                let sameSpot = existing.screenID == screen.id && existing.space == hint
+                    && RestoreEngine.approximatelyEqual(existing.unitRect.frame(in: screen.frame), window.frame)
+                if !sameSpot { next.unitRect = rect }
+                updated[linked] = next
+                if let wsid = window.windowServerID { newLinks[linked] = wsid }
+            } else {
+                let placement = WindowPlacement(bundleID: window.appBundleID, displayName: window.appName,
+                                                screenID: screen.id, space: hint, unitRect: rect)
+                appended.append(placement)
+                if let wsid = window.windowServerID { newLinks[placement.id] = wsid }
+            }
         }
-    }
 
-    private static func blockReason(
-        for ambiguity: SpacePlacement.Ambiguity
-    ) -> SpaceBlockReason {
-        switch ambiguity {
-        case .windowUnjoined: return .windowUnjoined
-        case .membership: return .membershipUnavailable
-        case .multipleSpaces: return .multipleSpaces
-        case .name: return .nameUnavailable
-        case .noSnapshot, .display, .runtimeID: return .spaceMissing
+        var placements: [WindowPlacement] = []
+        for existing in base?.placements ?? [] {
+            if let next = updated[existing.id] {
+                placements.append(next)
+            } else if dropped.contains(existing.id) || closedPlacementIDs.contains(existing.id) {
+                continue
+            } else {
+                placements.append(existing) // 관찰하지 못한 기록은 보존한다 (S04)
+            }
         }
-    }
+        placements.append(contentsOf: appended)
 
-    private static func merge(
-        _ window: WindowInfo, bundleID: String, on screen: ScreenInfo, into profile: inout Profile
-    ) {
-        let rect = UnitRect(window.frame, in: screen.frame)
-        if let index = profile.apps.firstIndex(where: { $0.bundleID == bundleID }) {
-            profile.apps[index].displayName = window.appName
-            // 허용 오차 안의 차이는 좌표를 갱신하지 않는다 (드리프트 방지).
-            let stored = profile.apps[index].unitRect.frame(in: screen.frame)
-            guard !RestoreEngine.approximatelyEqual(window.frame, stored) else { return }
-            profile.apps[index].unitRect = rect
-        } else {
-            profile.apps.append(TargetApp(
-                bundleID: bundleID, displayName: window.appName, unitRect: rect
-            ))
+        let screenRecords = externals.map { screen -> ScreenRecord in
+            var record = base?.screen(screen.id)
+                ?? ScreenRecord(id: screen.id, name: screen.name)
+            record.name = screen.name
+            record.fingerprint = screen.fingerprint
+            record.portLocation = screen.portLocation
+            if let snapshot, let display = snapshot.onlyDisplay(screen.id) {
+                record.regularSpaces = display.spaces.compactMap { space in
+                    SpacePlacement.of(space.runtimeID, on: screen.id, in: snapshot).onTarget?.identity
+                }
+            }
+            return record
         }
-    }
 
+        return Observation(placements: placements, screens: screenRecords, links: newLinks,
+                           observedApps: observedApps, droppedPlacementIDs: dropped,
+                           observedSpaceNames: observedSpaces)
+    }
 }

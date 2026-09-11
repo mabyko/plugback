@@ -1,250 +1,269 @@
 import CoreGraphics
 import Foundation
 
-/// 복원 옵션 (F-02.2 예외 설정들). 옵션이 늘어도 restore 시그니처는 안 넓어진다.
-struct RestoreOptions: Sendable {
+/// 복원 옵션 (F-02.2 예외 설정과 실험실). 옵션이 늘어도 plan 시그니처는 안 넓어진다.
+struct RestoreOptions: Sendable, Equatable {
     /// 최소화된 창도 Dock에서 꺼내 복원 (기본 꺼짐 — 최소화는 사용자의 의도다).
-    var restoreMinimized: Bool
-    /// 실행 중인데 창이 없는 앱에 새 창을 열게 해 복원 (기본 꺼짐). 꺼진 앱은 실행하지 않는다.
-    var reopenWindowless: Bool
+    var restoreMinimized = false
+    /// 실험실 · 종료된 앱 다시 열기 (부모). OFF이면 앱 실행·명시적 창 생성을 전부 막는다.
+    var reopenClosedApps = false
+    /// 실험실 · 실행 중인 앱 창 되살리기 — 실제 창이 0개일 때 기본 창 하나 열기 허용.
+    var reviveWindowlessApps = false
+    /// 실험실 · 부족한 창 추가로 열기 — 창이 하나 이상 있을 때 부족분 추가 열기 허용.
+    var openMissingWindows = false
+    /// 실험실 · 복원할 창 직접 지정 — 모호한 후보를 자동 배정하지 않고 사용자에게 맡긴다.
+    var directAssignment = false
 
-    init(restoreMinimized: Bool = false, reopenWindowless: Bool = false) {
+    init(restoreMinimized: Bool = false, reopenClosedApps: Bool = false,
+         reviveWindowlessApps: Bool = false, openMissingWindows: Bool = false,
+         directAssignment: Bool = false) {
         self.restoreMinimized = restoreMinimized
-        self.reopenWindowless = reopenWindowless
+        self.reopenClosedApps = reopenClosedApps
+        self.reviveWindowlessApps = reviveWindowlessApps
+        self.openMissingWindows = openMissingWindows
+        self.directAssignment = directAssignment
     }
 }
 
-/// Space-aware 경로의 순수 선택 결과. 사용자 안내 수명은 RestoreSession의 일이다.
-enum SpaceWindowSelection: Equatable, Sendable {
-    case legacy
-    case window(WindowInfo)
-    case inactive
-    case unavailable
-    case fullscreen
-}
-
-/// 선택 복원 엔진 (F-02). 프로필에 없는 앱과 내장 화면의 창은 존재 자체를 모른다.
-/// 격리 자유 — 어느 액터에도 묶이지 않는다. AX의 실행 흐름은 게이트웨이 어댑터의 것이다 (F-02.4).
-/// 복원 정책 전부가 여기 산다: 창 선택, 건너뜀 판정, 지문 검증(F-01.4),
-/// 다중 화면 중복 제거(F-01.6), 이동 검증·재시도(F-02.3), 새 창 열기 후 복원.
+/// 선택 복원 엔진 (F-02). 한 작업 환경 저장본과 한 번의 관찰을 받아 저장 창마다 할 일을 정한다.
+/// 격리 자유 — 어느 액터에도 묶이지 않는 순수 정책 모듈. 실행(이동·실행·생성)은 RestoreSession의 일이다.
+///
+/// 정책 전부가 여기 산다: Space 조건 판정, 확인된 연결 우선·직접 지정·전체 이동 거리 배정(D3),
+/// 닫힌 환경 판정과 다시 열기 허용(D9·3.5절), 건너뜀 사유, 지문 검증(F-01.4). 앱 전역 선점은 없다 —
+/// 같은 실제 창을 두 자리에 배정하지 않는 것은 배정 단계가 보장한다.
 enum RestoreEngine {
     /// 이동 후 검증 허용 오차. 실기기 측정 후 조정할 수 있는 초기값이다 (F-02.3).
     static let tolerance: CGFloat = 5
 
-    static func isEligible(_ resolved: ResolvedProfile, on screen: ScreenInfo) -> Bool {
-        guard let saved = resolved.profile.fingerprint, let live = screen.fingerprint else {
-            return true
-        }
+    struct Input {
+        var source: WorkspaceSnapshot
+        var enabled: (String) -> Bool
+        var closedPlacementIDs: Set<UUID>
+        var screens: [ScreenInfo]
+        var windows: [WindowInfo]
+        var unavailableBundleIDs: Set<String>
+        var snapshot: SpaceSnapshot?
+        /// reader가 있는데 snapshot이 없으면 Space 지정 기록을 평면 복원으로 강등하지 않는다 (O02).
+        var spaceObservationEnabled: Bool
+        var links: [UUID: WorkspaceLibrary.WindowLink]
+        var userChoices: [UUID: CGWindowID]
+        var runningBundleIDs: Set<String>
+        var options: RestoreOptions
+        /// 이 요청에서 이미 실행·생성을 요청한 앱 — 같은 요청을 반복 전송하지 않는다.
+        var creationAttempted: Set<String>
+    }
+
+    enum Creation: Equatable, Sendable {
+        case launch
+        case revive
+        case additional(missing: Int)
+    }
+
+    enum Decision: Equatable, Sendable {
+        case move(windowID: Int, windowServerID: CGWindowID?, target: CGRect, minimized: Bool)
+        case outcome(RestoreResult.Outcome)
+    }
+
+    struct Plan: Equatable, Sendable {
+        var decisions: [UUID: Decision] = [:]
+        var screenSkips: [String: ScreenSkipReason] = [:]
+        /// 앱별 실행·생성 필요. 옵션과 닫힌 환경 판정을 이미 통과한 것만 담는다.
+        var creations: [String: Creation] = [:]
+    }
+
+    static func isEligible(_ saved: ScreenRecord?, on screen: ScreenInfo) -> Bool {
+        guard let saved = saved?.fingerprint, let live = screen.fingerprint else { return true }
         return saved == live
     }
 
-    /// 한 복원 회차의 화면별 담당 앱. 지문 불일치 화면을 먼저 제외한 뒤 식별자 순으로
-    /// 선점하므로 세션·엔진·Space 재배치가 같은 F-01.4/F-01.6 판정을 쓴다.
-    static func claimedApps(
-        in resolved: [String: ResolvedProfile], screens: [ScreenInfo]
-    ) -> [(screenID: String, pair: ResolvedProfile, app: TargetApp)] {
-        var claimed = Set<String>()
-        var result: [(String, ResolvedProfile, TargetApp)] = []
-        for screen in screens.sorted(by: { $0.id < $1.id }) {
-            guard let pair = resolved[screen.id], isEligible(pair, on: screen) else { continue }
-            for app in pair.profile.apps
-            where app.isEnabled && claimed.insert(app.bundleID).inserted {
-                result.append((screen.id, pair, app))
-            }
-        }
-        return result
+    private enum SpaceCheck {
+        case ready
+        case blocked(RestoreResult.Outcome)
     }
 
-    /// binding이 있는 bundle은 이 결과 하나만 따른다. 실패해도 legacy 선택으로 내려가지 않는다.
-    static func selectSpaceWindow(
-        bundleID: String,
-        in resolved: ResolvedProfile,
-        on screen: ScreenInfo,
-        windows: [WindowInfo],
-        snapshot: SpaceSnapshot?
-    ) -> SpaceWindowSelection {
-        guard let binding = resolved.overlay?.byBundle[bundleID] else { return .legacy }
-        let hint: SpaceHint
-        switch binding {
-        case .regular(let value):
-            hint = value
-        case .unresolved:
-            return .unavailable
-        }
-        let boundPlacement = SpacePlacement.of(hint, on: screen.id, in: snapshot)
-        let boundIsCurrent: Bool
-        switch boundPlacement {
-        case .current:
-            boundIsCurrent = true
-        case .inactive:
-            boundIsCurrent = false
-        case .fullscreen(let found) where found.screenID == screen.id:
-            return .fullscreen
-        default:
-            return .unavailable
+    static func plan(_ input: Input) -> Plan {
+        var plan = Plan()
+        let screensByID = Dictionary(uniqueKeysWithValues: input.screens.map { ($0.id, $0) })
+        for screen in input.screens where !isEligible(input.source.screen(screen.id), on: screen) {
+            plan.screenSkips[screen.id] = .fingerprintMismatch
         }
 
-        let candidates = windows.filter { $0.appBundleID == bundleID }
-        // 저장 뒤 native fullscreen이 된 앱은 원래 regular Space가 비활성이어도 현재 type 4에서
-        // AXFullScreen으로 보인다. 이 강한 신호를 먼저 소비해야 "대기"로 영원히 남지 않는다.
-        if candidates.contains(where: { $0.fullscreenState == .fullscreen }) {
-            return .fullscreen
-        }
-        guard !candidates.contains(where: { $0.fullscreenState == .unknown }) else {
-            return .unavailable
-        }
-        guard boundIsCurrent else { return .inactive }
-        guard !candidates.isEmpty else { return .unavailable }
-
-        guard candidates.count == 1, let window = candidates.first else {
-            return .unavailable
-        }
-        switch SpacePlacement.of(
-            windowServerIDs: [window.windowServerID], on: screen.id, in: snapshot
-        ) {
-        case .fullscreen:
-            return .fullscreen
-        case .unsupported, .missing, .unknown:
-            return .unavailable
-        case .inactive:
-            return .inactive
-        case .current:
-            break
-        case .stranded(let found):
-            // 분리 후 창은 다른 화면의 현재 일반 Space로 밀려난다. 목표 Space가 현재라면
-            // 그 창을 데려오는 것이 복원이고, 숨겨진 Space의 창만 건드리지 않으면 된다.
-            guard found.space.isCurrent else { return .inactive }
-        }
-        return .window(window)
-    }
-
-    /// 이미 한 번 열거한 창과 같은 회차의 Space snapshot만 쓴다. 이 함수 안에서는 창을
-    /// 다시 열거하지 않으므로 선택에 쓴 gateway window ID가 move가 끝날 때까지 유효하다.
-    static func restore(
-        resolved: [String: ResolvedProfile],
-        screens: [ScreenInfo],
-        windows: [WindowInfo],
-        snapshot: SpaceSnapshot?,
-        onlyBundles: [String: Set<String>]? = nil,
-        using gateway: WindowGateway,
-        options: RestoreOptions = RestoreOptions()
-    ) async -> [RestoreResult] {
-        var results: [RestoreResult] = []
-        let claimedByScreen = Dictionary(
-            grouping: claimedApps(in: resolved, screens: screens),
-            by: { $0.screenID }
-        )
-        for screen in screens.sorted(by: { $0.id < $1.id }) {
-            guard let pair = resolved[screen.id] else { continue }
-            if !isEligible(pair, on: screen) {
-                results.append(RestoreResult(
-                    screenID: screen.id, screenSkipReason: .fingerprintMismatch
-                ))
+        // 1. 자리별 선행 조건 — 화면·지문·닫힘·Space
+        var ready: [UUID: (WindowPlacement, ScreenInfo)] = [:]
+        for placement in input.source.placements where input.enabled(placement.bundleID) {
+            guard let screen = screensByID[placement.screenID], plan.screenSkips[screen.id] == nil else { continue }
+            if input.closedPlacementIDs.contains(placement.id) {
+                plan.decisions[placement.id] = .outcome(.skipped(.closedInWorkspace))
                 continue
             }
+            switch spaceCheck(placement, on: screen, input: input) {
+            case .ready: ready[placement.id] = (placement, screen)
+            case .blocked(let outcome): plan.decisions[placement.id] = .outcome(outcome)
+            }
+        }
 
-            let uniqueApps = claimedByScreen[screen.id]?.map(\.app) ?? []
-            let selectedApps = if let onlyBundles {
-                uniqueApps.filter { onlyBundles[screen.id]?.contains($0.bundleID) == true }
+        // 2. 앱별 창 대응
+        let readyByApp = Dictionary(grouping: ready.values, by: { $0.0.bundleID })
+        for (bundleID, items) in readyByApp {
+            assign(bundleID: bundleID, items: items.sorted { $0.0.id.uuidString < $1.0.id.uuidString },
+                   input: input, plan: &plan)
+        }
+        return plan
+    }
+
+    private static func spaceCheck(_ placement: WindowPlacement, on screen: ScreenInfo, input: Input) -> SpaceCheck {
+        guard let hint = placement.space else { return .ready }
+        guard input.spaceObservationEnabled else { return .ready } // reader 없는 flat 실행 (테스트·프로브)
+        guard let snapshot = input.snapshot else { return .blocked(.needsConfirmation(.spaceUnavailable)) }
+        switch SpacePlacement.of(hint, on: screen.id, in: snapshot) {
+        case .current: return .ready
+        case .inactive: return .blocked(.awaitingVisit)
+        case .stranded(let found): return .blocked(.awaitingSpaceMove(sourceScreenID: found.screenID))
+        case .missing: return .blocked(.needsConfirmation(.spaceMissing))
+        case .fullscreen, .unsupported, .unknown: return .blocked(.needsConfirmation(.spaceUnavailable))
+        }
+    }
+
+    private enum Eligibility { case eligible, fullscreen, minimized, otherSpace, unknown }
+
+    private static func eligibility(_ window: WindowInfo, input: Input) -> Eligibility {
+        switch window.fullscreenState {
+        case .fullscreen: return .fullscreen
+        case .unknown where input.spaceObservationEnabled: return .unknown
+        case .unknown, .windowed: break
+        }
+        if window.isMinimized && !input.options.restoreMinimized { return .minimized }
+        guard input.spaceObservationEnabled, let snapshot = input.snapshot else { return .eligible }
+        return spaceEligibility(of: window.windowServerID, in: snapshot)
+    }
+
+    /// 창이 어느 화면의 현재 일반 Space에 있으면 frame 이동으로 데려올 수 있다. 비활성 Space의 창은 옮겨도 그 Space에 남는다 (P05).
+    private static func spaceEligibility(of windowServerID: CGWindowID?, in snapshot: SpaceSnapshot) -> Eligibility {
+        guard let windowServerID, let memberships = snapshot.membershipsByWindowServerID[windowServerID],
+              memberships.count == 1, let runtimeID = memberships.first else { return .unknown }
+        for display in snapshot.displays {
+            guard let space = display.spaces.first(where: { $0.runtimeID == runtimeID }) else { continue }
+            switch space.kind {
+            case .fullscreen: return .fullscreen
+            case .unknown: return .unknown
+            case .regular: return space.isCurrent ? .eligible : .otherSpace
+            }
+        }
+        return .unknown
+    }
+
+    private static func assign(bundleID: String, items: [(WindowPlacement, ScreenInfo)], input: Input, plan: inout Plan) {
+        let appWindows = input.windows.filter { $0.appBundleID == bundleID }
+        let sourceIDs = Set(input.source.placements.filter { $0.bundleID == bundleID }.map(\.id))
+        // 이 앱의 살아 있는 연결 — 그 창은 해당 자리 전용이다.
+        var reservedByWindow: [CGWindowID: UUID] = [:]
+        for id in sourceIDs {
+            if let link = input.links[id], link.status == .live { reservedByWindow[link.windowServerID] = id }
+        }
+        for (id, wsid) in input.userChoices where sourceIDs.contains(id) { reservedByWindow[wsid] = id }
+
+        var assigned: [UUID: WindowInfo] = [:]
+        var remaining: [(WindowPlacement, ScreenInfo)] = []
+        var eligible: [WindowInfo] = []
+        var ineligible: [Eligibility] = []
+        for window in appWindows {
+            switch eligibility(window, input: input) {
+            case .eligible: eligible.append(window)
+            case let other: ineligible.append(other)
+            }
+        }
+        // 확인된 연결·사용자 지정을 먼저 고정한다.
+        for (placement, screen) in items {
+            let preferred = input.userChoices[placement.id]
+                ?? input.links[placement.id].flatMap { $0.status == .live ? $0.windowServerID : nil }
+            if let preferred, let window = eligible.first(where: { $0.windowServerID == preferred }) {
+                assigned[placement.id] = window
             } else {
-                uniqueApps
+                remaining.append((placement, screen))
             }
-            if onlyBundles != nil, selectedApps.isEmpty { continue }
-            var result = RestoreResult(screenID: screen.id)
-            for app in selectedApps {
-                guard await gateway.isRunning(bundleID: app.bundleID) else {
-                    result.entries.append(.init(
-                        bundleID: app.bundleID, displayName: app.displayName,
-                        outcome: .skipped(.appNotRunning)
-                    ))
-                    continue
+        }
+        let assignedIDs = Set(assigned.values.compactMap(\.windowServerID))
+        var candidates = eligible.filter { window in
+            guard let wsid = window.windowServerID else { return true }
+            if assignedIDs.contains(wsid) { return false }
+            if let owner = reservedByWindow[wsid], assigned[owner] == nil, !remaining.contains(where: { $0.0.id == owner }) {
+                return false // 다른 자리(대기 중)의 창은 데려오지 않는다
+            }
+            return true
+        }
+        candidates.sort { ($0.windowServerID ?? 0, $0.id) < ($1.windowServerID ?? 0, $1.id) }
+
+        if !remaining.isEmpty, !candidates.isEmpty {
+            let ambiguous = candidates.count >= 2 || remaining.count >= 2
+            if input.options.directAssignment && ambiguous {
+                let ids = candidates.compactMap(\.windowServerID)
+                for (placement, _) in remaining {
+                    plan.decisions[placement.id] = .outcome(.needsConfirmation(.ambiguousCandidates(ids)))
                 }
-
-                let outcome: RestoreResult.Outcome
-                switch selectSpaceWindow(
-                    bundleID: app.bundleID, in: pair, on: screen,
-                    windows: windows, snapshot: snapshot
-                ) {
-                case .legacy:
-                    let candidates = windows.filter { $0.appBundleID == app.bundleID }
-                    guard !candidates.isEmpty else {
-                        result.entries.append(.init(
-                            bundleID: app.bundleID, displayName: app.displayName,
-                            outcome: .skipped(.noWindow)
-                        ))
-                        continue
-                    }
-                    switch pickWindow(from: candidates, on: screen, options: options) {
-                    case .skip(let reason): outcome = .skipped(reason)
-                    case .window(let window):
-                        outcome = await restore(app, window: window, on: screen,
-                                                using: gateway, options: options)
-                    }
-                case .window(let window):
-                    outcome = await restore(
-                        app, window: window, on: screen, using: gateway, options: options
-                    )
-                case .fullscreen:
-                    outcome = .skipped(.fullscreen)
-                case .inactive, .unavailable:
-                    continue
-                }
-
-                result.entries.append(.init(
-                    bundleID: app.bundleID, displayName: app.displayName, outcome: outcome
-                ))
-            }
-            results.append(result)
-        }
-        return results
-    }
-
-    private static func restore(
-        _ app: TargetApp, window: WindowInfo, on screen: ScreenInfo,
-        using gateway: WindowGateway, options: RestoreOptions
-    ) async -> RestoreResult.Outcome {
-        // Dock에서 먼저 꺼낸다 — 최소화 상태로는 이동 결과가 보이지 않는다 (F-02.2).
-        // 꺼낸 뒤의 재판독 프레임으로 판정한다 — 열거 시점 스냅샷은 이미 스테일이다.
-        var currentFrame = window.frame
-        if window.isMinimized {
-            guard options.restoreMinimized else { return .skipped(.minimized) }
-            guard let fresh = await gateway.unminimize(windowID: window.id) else { return .skipped(.minimized) }
-            currentFrame = fresh
-        }
-
-        let target = app.unitRect.frame(in: screen.frame)
-        if approximatelyEqual(currentFrame, target) { return .skipped(.alreadyInPlace) }
-
-        // 이동 → 검증 → 1회 재시도 (F-02.3). 재시도도 실패하면 실패로 기록하고 멈추지 않는다.
-        for _ in 0..<2 {
-            if let actual = await gateway.move(windowID: window.id, to: target),
-               approximatelyEqual(actual, target) {
-                return .moved
+                remaining.removeAll()
+            } else {
+                let slots = remaining.map { WindowMatching.Slot(id: $0.0.id, target: $0.0.unitRect.frame(in: $0.1.frame)) }
+                let pool = candidates.enumerated().map { WindowMatching.Candidate(index: $0.offset, frame: $0.element.frame) }
+                let matches = WindowMatching.assign(slots: slots, candidates: pool)
+                for (placementID, index) in matches { assigned[placementID] = candidates[index] }
+                remaining.removeAll { matches[$0.0.id] != nil }
             }
         }
-        return .failed
-    }
 
-    // MARK: - 공유 코어
-
-    /// 창 선택 규칙 (F-02.1의 4, 요구사항 다).
-    /// 대상 화면의 창이 있으면 그중에서 — 없으면 첫 표준 창을 어디서든 데려온다.
-    /// 케이블을 뽑으면 macOS가 창을 내장으로 옮겨두므로, 데려오지 못하면 핵심 시나리오가 성립하지 않는다.
-    /// 이동 가능한 첫 창을 고르되 보이는 창 우선, 최소화 창은 옵션이 켜졌을 때만 차선.
-    /// 전부 이동 불가면 사유는 창 순서와 무관하게 전체화면 우선 — 창 순서는 불안정하다 (부록 3).
-    private enum Pick { case window(WindowInfo), skip(SkipReason) }
-
-    private static func pickWindow(
-        from all: [WindowInfo], on screen: ScreenInfo?, options: RestoreOptions
-    ) -> Pick {
-        let onScreen = screen.map { s in all.filter { s.contains($0) } } ?? []
-        let candidates = onScreen.isEmpty ? all : onScreen
-        let movable = candidates.filter { !$0.isFullscreen }
-        guard let window = movable.first(where: { !$0.isMinimized })
-                ?? (options.restoreMinimized ? movable.first : nil) else {
-            return .skip(candidates.contains(where: \.isFullscreen) ? .fullscreen : .minimized)
+        for (placement, screen) in items {
+            guard let window = assigned[placement.id] else { continue }
+            let target = placement.unitRect.frame(in: screen.frame)
+            if !window.isMinimized && approximatelyEqual(window.frame, target) {
+                plan.decisions[placement.id] = .outcome(.skipped(.alreadyInPlace))
+            } else {
+                plan.decisions[placement.id] = .move(windowID: window.id, windowServerID: window.windowServerID,
+                                                     target: target, minimized: window.isMinimized)
+            }
         }
-        return .window(window)
+
+        // 3. 창이 부족한 자리 — 닫힌 환경과 다시 열기 옵션 (D9·3.5절)
+        guard !remaining.isEmpty else { return }
+        let running = input.runningBundleIDs.contains(bundleID)
+        let options = input.options
+        let attempted = { (kind: String) in input.creationAttempted.contains("\(bundleID)|\(kind)") }
+
+        // 옵션이 허용하는 생성 경로. 창이 있는데 전체화면·최소화·다른 Space라서 못 쓰는 경우는 생성 대상이 아니다.
+        let base: RestoreResult.Outcome
+        var creation: Creation?
+        if !running {
+            base = .skipped(.appNotRunning)
+            if options.reopenClosedApps, !attempted("launch") { creation = .launch }
+        } else if appWindows.isEmpty {
+            base = .skipped(.noWindow)
+            if options.reopenClosedApps, options.reviveWindowlessApps, !attempted("revive") { creation = .revive }
+        } else if eligible.isEmpty {
+            if ineligible.contains(.fullscreen) { base = .skipped(.fullscreen) }
+            else if ineligible.contains(.minimized) { base = .skipped(.minimized) }
+            else if ineligible.contains(.otherSpace) { base = .needsConfirmation(.windowOnAnotherSpace) }
+            else { base = .needsConfirmation(.spaceUnavailable) }
+        } else {
+            base = .skipped(.noWindow) // 창은 있지만 자리보다 적다 (W10)
+            if options.reopenClosedApps, options.openMissingWindows, !attempted("additional") {
+                creation = .additional(missing: remaining.count)
+            }
+        }
+        guard let creation else {
+            for (placement, _) in remaining { plan.decisions[placement.id] = .outcome(base) }
+            return
+        }
+        // 생성은 다른 환경·연결 해제 중 닫힌 것으로 확인한 자리에만 한다. 닫힌 시점·환경을 모르면 보류한다 (W21).
+        var creatable = 0
+        for (placement, _) in remaining {
+            if case .lost(let key)? = input.links[placement.id]?.status, key != input.source.key {
+                plan.decisions[placement.id] = .outcome(base)
+                creatable += 1
+            } else {
+                plan.decisions[placement.id] = .outcome(.needsConfirmation(.closureUnknown))
+            }
+        }
+        guard creatable > 0 else { return }
+        if case .additional = creation { plan.creations[bundleID] = .additional(missing: creatable) }
+        else { plan.creations[bundleID] = creation }
     }
 
     /// internal — CaptureEngine의 드리프트 방지가 같은 판정을 써야 한다.

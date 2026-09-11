@@ -6,7 +6,7 @@
 
 상태: 조사 노트. Apple이 보장한 사실, 추론, 로컬 측정, 외부 사례를 구분한다.
 
-후속 결정과 구현 단계는 [활성 Space 기반 복원 구현 계획](../ACTIVE_SPACE_RESTORE_PLAN.md)에 있다.
+후속 결정은 [FUNCTIONAL_SPEC](../FUNCTIONAL_SPEC.md)과 [RESTORE_FLOW](../RESTORE_FLOW.md)에 있다.
 
 > **현재 제품 결정(2026-09-01):** 제품은 Mission Control을 자동 조작하지 않는다. read-only로 잔류 Space와 출발·목적 화면을 안내하고, 사용자가 옮긴 뒤 표준 창 위치만 자동 복원한다.
 
@@ -164,7 +164,7 @@ Space 자체를 화면 사이로 옮기는 자동 변경은 더 위험하다. [y
 
 ## 후속 실측 전의 최소 v1 권장안
 
-아래는 Plugback 앱 신원 프로브를 만들기 전의 보수적 결론이다. 이후 활성·비활성 AX 대조가 끝나면서 [활성 Space 기반 복원 구현 계획](../ACTIVE_SPACE_RESTORE_PLAN.md)으로 대체됐다. private write를 금지하고 `Desktop N`을 저장하지 않는 안전선은 그대로다.
+아래는 Plugback 앱 신원 프로브를 만들기 전의 보수적 결론이다. 이후 활성·비활성 AX 대조가 끝나면서 안내형 복원(현재 [FUNCTIONAL_SPEC](../FUNCTIONAL_SPEC.md))으로 대체됐다. private write를 금지하고 `Desktop N`을 저장하지 않는 안전선은 그대로다.
 
 1. **Space 복원 모델을 추가하지 않는다.** `Desktop 1/2` 순번, private UUID, 창 제목을 프로필 키로 저장하지 않는다.
 2. **기존 수동 복원 모드를 재사용한다.** 여러 Space를 쓰는 사용자는 외장 화면 연결 → Mission Control에서 Space 정리 → Plugback 수동 복원 순서로 사용한다. 새 모드나 새 설정은 필요 없다.
@@ -294,7 +294,7 @@ Plugback의 창 객체는 공개 Accessibility의 `AXUIElement`다. 공개 AX �
 
 ### Plugback의 최소 모델
 
-첫 vertical slice는 영속 `Profile`에 **Space 필드를 저장하지 않는다.** 현재 실측은 읽기가 가능하다는 증거이지 비활성 Space 자동 복원이 안전하다는 증거가 아니다. 같은 프로세스 안의 메모리 overlay만 쓰는 후속 결정은 [활성 Space 기반 복원 구현 계획](../ACTIVE_SPACE_RESTORE_PLAN.md)에 있다.
+첫 vertical slice는 영속 `Profile`에 **Space 필드를 저장하지 않는다.** 현재 실측은 읽기가 가능하다는 증거이지 비활성 Space 자동 복원이 안전하다는 증거가 아니다. 메모리 overlay만 쓰기로 했던 후속 결정은 2026-09-11에 폐지되어 Space 정보를 파일에 보존한다([FUNCTIONAL_SPEC F-03](../FUNCTIONAL_SPEC.md)).
 
 특히 runtime topology 감지와 Space·창 mutation은 별도 capability다. 이번 결과는 전자를 보여줄 뿐이며, 후자에는 여전히 공개 API가 없다. 감지가 성공했다는 이유로 private 창 이동이나 Dock/Mission Control 조작을 활성화하지 않는다.
 

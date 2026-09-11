@@ -14,10 +14,10 @@ private typealias AXUIElementGetWindowFunction = @convention(c) (
 public actor AXWindowGateway: WindowGateway, WindowMoveSource {
     private var refs: [Int: AXUIElement] = [:]
     private var nextID = 1
-    /// openWindow가 창 등장을 기다리는 한도. 무거운 앱의 실측에 맞춰 조정하는 보정 노브.
+    private var lastEnumerationFailures: Set<String> = []
+    /// openWindow·launch가 창 등장을 기다리는 한도. 무거운 앱의 실측에 맞춰 조정하는 보정 노브.
     private let windowWaitDeadline: TimeInterval
     /// 창 목록 조회가 한도를 넘겼을 때 한 번만 쓰는 재시도 한도 (F-02.4의 250ms는 평시 한도다).
-    /// 화면 재구성 순간의 앱은 느리다 — 실기기 측정 후 조정하는 보정 노브다.
     private let retryTimeout: TimeInterval
     private let axWindowID: AXUIElementGetWindowFunction?
 
@@ -43,6 +43,7 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
         // ID 수명 계약: 마지막 열거만 유효 — 이전 열거의 참조를 비워 죽은 ID가
         // 조용히 성공하는 것을 막고, 장기 실행 시 refs의 무한 증식도 막는다.
         refs.removeAll()
+        lastEnumerationFailures.removeAll()
         // 앱 목록은 NSWorkspace(메인)에서 한 번에 — AX 순회는 actor 실행기에서
         let apps: [(pid: pid_t, bundleID: String, name: String, hidden: Bool)] = await MainActor.run {
             NSWorkspace.shared.runningApplications.compactMap { app in
@@ -59,15 +60,16 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
             AXUIElementSetMessagingTimeout(appElement, 0.25)
 
             // 열거 실패는 "창 없음"이 아니다 — 화면 재구성 직후 실제로 한도를 넘긴다(실측 2026-08-18).
-            // 여기서 조용히 넘기면 창이 멀쩡한 앱이 "창이 없어 건너뜀"으로 보고된다. 한 번은 넉넉히 다시 묻는다.
             var windows: [AXUIElement]? = copy(appElement, kAXWindowsAttribute)
             if windows == nil {
                 AXUIElementSetMessagingTimeout(appElement, Float(retryTimeout))
                 windows = copy(appElement, kAXWindowsAttribute)
             }
-            guard let windows else { continue }
+            guard let windows else {
+                lastEnumerationFailures.insert(app.bundleID) // 조회 실패를 창 0개로 기록하지 않는다 (O07)
+                continue
+            }
             for element in windows {
-                // 타임아웃은 요소별이다 — 창 요소에도 걸어야 move()·재검증이 기본값(수 초)을 타지 않는다
                 AXUIElementSetMessagingTimeout(element, 0.25)
                 guard let subrole: String = copy(element, kAXSubroleAttribute),
                       subrole == kAXStandardWindowSubrole as String,
@@ -77,6 +79,7 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
                 var rawWindowID: CGWindowID = 0
                 let windowServerID = axWindowID?(element, &rawWindowID) == .success
                     ? rawWindowID : nil
+                let title: String? = copy(element, kAXTitleAttribute)
 
                 let id = nextID
                 nextID += 1
@@ -85,10 +88,18 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
                                          appName: app.name,
                                          frame: frame, fullscreenState: fullscreen,
                                          isMinimized: minimized, isHidden: app.hidden,
-                                         windowServerID: windowServerID))
+                                         windowServerID: windowServerID, title: title))
             }
         }
         return result
+    }
+
+    public func enumerationFailures() async -> Set<String> { lastEnumerationFailures }
+
+    /// 공개 API — 모든 Space·최소화·숨김 창을 포함한 WindowServer 창 목록. 창 이름은 읽지 않는다.
+    public func existingWindowServerIDs() async -> Set<CGWindowID>? {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        return Set(list.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
     }
 
     public func move(windowID: Int, to target: CGRect) async -> CGRect? {
@@ -107,11 +118,14 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
         guard let element = refs[windowID],
               AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success
         else { return nil }
-        // 성공 반환값을 믿지 않는다 — 최소화 상태와 프레임을 실제로 다시 읽는다 (F-02.3과 같은 처방).
-        // 수락한 척 최소화를 유지하는 앱이면 nil — 보이지 않는 창을 옮기고 .moved로 보고하지 않는다.
         let stillMinimized: Bool = copy(element, kAXMinimizedAttribute) ?? false
         guard !stillMinimized else { return nil }
         return frame(of: element)
+    }
+
+    public func raise(windowID: Int) async -> Bool {
+        guard let element = refs[windowID] else { return false }
+        return AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success
     }
 
     public func isRunning(bundleID: String) async -> Bool {
@@ -130,30 +144,75 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
             }), let url = app.bundleURL else { return false }
             let config = NSWorkspace.OpenConfiguration()
             config.activates = false // 창만 열게 한다 — 포커스는 훔치지 않는다
-            // 완료 핸들러 판을 명시 — async 판은 실패를 던지지만, 성공 여부는 어차피 폴링이 판정한다
             NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
             return true
         }
         guard opened else { return false }
+        return await waitForWindows(of: bundleID, atLeast: 1)
+    }
 
-        // 창 등장 폴링 — 빠른 앱은 첫 확인에서 끝나고, 늦는 앱도 한도까지 잡는다.
-        // 이벤트에 반응해 시작되는 유한 대기라 F-07이 허용한다.
-        let deadline = Date().addingTimeInterval(windowWaitDeadline)
+    public func launch(bundleID: String) async -> Bool {
+        // 종료된 앱의 실행 (3.5절 「종료된 앱 다시 열기」). 실행 중이면 새 창 열기와 같다.
+        let requested = await MainActor.run { () -> Bool in
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return false }
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+            return true
+        }
+        guard requested else { return false }
+        return await waitForWindows(of: bundleID, atLeast: 1, deadline: windowWaitDeadline * 3)
+    }
+
+    public func openAdditionalWindow(bundleID: String) async -> Bool {
+        // ponytail: 범용 「새 창」 API는 없다. 앱의 메뉴 막대에서 파일 > 새 창(New Window) 항목을 AX로 누른다 —
+        // 앱마다 항목 이름·지원이 다르므로 실기기 검증 항목이다. 못 찾으면 false로 사유를 남긴다.
+        let before = await standardWindows(of: [bundleID]).count
+        let pid: pid_t? = await MainActor.run {
+            NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular && $0.bundleIdentifier == bundleID
+            }?.processIdentifier
+        }
+        guard let pid else { return false }
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.5)
+        guard let menuBar: AXUIElement = copy(application, kAXMenuBarAttribute),
+              let menus: [AXUIElement] = copy(menuBar, kAXChildrenAttribute) else { return false }
+        let newWindowTitles = ["New Window", "새로운 윈도우", "새 윈도우", "새로운 창", "새 창"]
+        var pressed = false
+        search: for menu in menus.prefix(4) { // Apple·앱·파일 메뉴 안에서만 찾는다
+            guard let items: [AXUIElement] = copy(menu, kAXChildrenAttribute) else { continue }
+            for submenu in items {
+                guard let entries: [AXUIElement] = copy(submenu, kAXChildrenAttribute) else { continue }
+                for entry in entries {
+                    guard let title: String = copy(entry, kAXTitleAttribute),
+                          newWindowTitles.contains(where: { title.hasPrefix($0) }) else { continue }
+                    guard AXUIElementPerformAction(entry, kAXPressAction as CFString) == .success else { continue }
+                    pressed = true
+                    break search
+                }
+            }
+        }
+        guard pressed else { return false }
+        return await waitForWindows(of: bundleID, atLeast: before + 1)
+    }
+
+    private func waitForWindows(of bundleID: String, atLeast count: Int, deadline: TimeInterval? = nil) async -> Bool {
+        // 창 등장 폴링 — 이벤트에 반응해 시작되는 유한 대기라 F-07이 허용한다.
+        let limit = Date().addingTimeInterval(deadline ?? windowWaitDeadline)
         repeat {
             try? await Task.sleep(nanoseconds: 200_000_000)
-            if await standardWindows(of: [bundleID]).isEmpty == false { return true }
-        } while Date() < deadline
+            if await standardWindows(of: [bundleID]).count >= count { return true }
+        } while Date() < limit
         return false
     }
 
-    // MARK: - 창 이동 관찰 (실험실 · 자동 슬롯)
+    // MARK: - 창 이동 관찰
 
     // ponytail: 앱에 게이트웨이는 하나뿐이라 관찰자도 하나로 둔다.
-    // 인스턴스 프로퍼티로 두면 actor(비메인)가 MainActor 객체를 들게 되고, 그 격리를 푸는 값이 없다.
     @MainActor private static let moveObserver = WindowMoveObserver()
 
     public func observeWindowMoves(of bundleIDs: [String], onSettled: @escaping @Sendable () -> Void) async {
-        // pid로 등록한다 — AX 옵저버는 프로세스 단위다. 앱 목록 조회는 NSWorkspace(메인)의 일이다.
         await MainActor.run {
             let pids = bundleIDs.isEmpty ? [] : NSWorkspace.shared.runningApplications.compactMap {
                 app -> pid_t? in
@@ -162,6 +221,18 @@ public actor AXWindowGateway: WindowGateway, WindowMoveSource {
                 return app.processIdentifier
             }
             Self.moveObserver.observe(pids: pids, onSettled: onSettled)
+        }
+    }
+
+    public func observeWindowInteractions(_ onWindowMoved: @escaping @Sendable (CGWindowID) -> Void) async {
+        let resolver = axWindowID
+        await MainActor.run {
+            Self.moveObserver.onWindowMoved = { element in
+                guard let resolver else { return }
+                var raw: CGWindowID = 0
+                guard resolver(element, &raw) == .success else { return }
+                onWindowMoved(raw)
+            }
         }
     }
 
