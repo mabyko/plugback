@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-/// 언제 자동 슬롯이 움직여야 하는지를 답하는 모듈 (실험실, F-08.3).
+/// 언제 수집이 돌아야 하는지를 답하는 모듈 (F-08.3). 자동 저장 OFF에서도 창 연결·닫힘 판정을 위해 돈다.
 ///
 /// 신호원은 **창 이동**과 **앱 전환**이다. Mission Control 닫힘은 안내형 복원과
 /// 순서를 공유하므로 컨트롤러가 watcher 하나를 소유한다.
@@ -20,13 +20,18 @@ public final class CollectTrigger {
     public init(moveSource: WindowMoveSource?,
                 minimumInterval: TimeInterval = 10,
                 onTerminating: @escaping () -> Void = {},
+                onAppTerminated: @escaping (String) -> Void = { _ in },
                 onCollect: @escaping () -> Void) {
         self.moveSource = moveSource
         self.onCollect = onCollect
         self.activity = ActivityWatcher(minimumInterval: minimumInterval,
                                         onTerminating: onTerminating,
+                                        onAppTerminated: onAppTerminated,
                                         onCollect: onCollect)
     }
+
+    /// 앱 종료를 알림 없이 주입한다 — 테스트용.
+    func appTerminated(_ bundleID: String) { activity.appTerminated(bundleID) }
 
     /// 앱 전환 구독을 시작한다. 창 이동은 대상이 정해져야 하므로 `retarget`이 켠다.
     public func start() {

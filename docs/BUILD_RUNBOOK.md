@@ -43,7 +43,16 @@ ln -s /path/to/main/checkout/App/Config/Local.xcconfig App/Config/Local.xcconfig
 swift test   # PlugbackKit — 정책 전부, 앱 빌드 없이
 ```
 
-판정: `Executed N tests, with 0 failures`. 2초 안에 끝난다. 실패하면 3번으로 넘어가지 않는다.
+판정: `Executed N tests, with 0 failures`. 5초 안에 끝난다. 실패하면 3번으로 넘어가지 않는다.
+`CollectTriggerTests`는 실제 NSWorkspace 알림 센터를 쓰므로, 실행 중에 사용자가 앱을 전환하면 드물게 횟수가 어긋난다 — 다시 실행한다.
+
+제품 계약 검사(R1–R6·잠금 순서)는 별도 임시 패키지에서 돈다:
+
+```bash
+bash Scripts/check-product-restore.sh
+```
+
+판정: `Executed 15 tests, with 0 failures`. 사용자 프로필 폴더에는 닿지 않는다.
 
 앱 쪽 표현 매핑(문구·점·헤더·단축어 다이얼로그)은 별도 테스트 타깃이 지킨다:
 
@@ -67,8 +76,8 @@ Release 빌드는 `-configuration Release`, 경로도 `.../Products/Release/`로
 
 Debug는 Finder·Dock에서 `Plugback Debug`와 파란 `D` 배지 앱 아이콘, 메뉴바에서
 기존 glyph 오른쪽 아래의 작은 벌레 배지로 보인다. Release의 `Plugback` 이름과 기존 아이콘은 바뀌지 않는다.
-Debug 프로필은 `~/Library/Application Support/Plugback Debug/profiles.json`에 저장되어
-Release의 `~/Library/Application Support/Plugback/profiles.json`을 읽거나 덮어쓰지 않는다.
+Debug 기록은 `~/Library/Application Support/Plugback Debug/workspaces.json`(진단 기록은 같은 폴더의 `diagnostics.json`)에 저장되어
+Release의 `~/Library/Application Support/Plugback/`을 읽거나 덮어쓰지 않는다. 구버전 `profiles.json`은 첫 실행에서 읽어 이전하되 수정하지 않는다.
 
 ## 4. 실기기에서 실행
 
@@ -113,11 +122,13 @@ swift run screen-probe
 
 ## 7. 실기기 확인 시나리오
 
-1. 외장 화면을 연결한 상태에서 대상 앱 창을 원하는 자리에 놓는다
-2. 메뉴에서 저장
-3. 케이블을 뽑는다 (창이 내장 화면으로 몰린다)
+1. 외장 화면을 연결한 상태에서 대상 앱 창을 원하는 자리에 놓는다 (같은 앱의 창 둘을 좌·우로 두면 창별 기록도 함께 확인된다)
+2. 메뉴에서 저장 — 「저장됨 · 앱 n개 · 창 n개」
+3. 케이블을 뽑는다 (창이 내장 화면으로 몰린다) — 자동 저장 ON이면 떠나는 환경의 이력이 이때 저장된다
 4. 다시 꽂는다
-5. 판정: 대상 앱 창만 저장한 자리로 돌아오고, 내장 화면에 있던 다른 창은 그대로다
+5. 판정: 대상 앱 창들만 저장한 자리로 돌아오고, 내장 화면에 있던 다른 창은 그대로다. 카드의 결과에 저장 창마다 한 줄이 보인다
+
+두 번째 외장 화면이 있으면 A 단독과 A+B에서 각각 저장하고, 조합마다 자기 저장본으로 복원되는지 본다.
 
 ## 문제 해결
 

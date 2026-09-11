@@ -1,24 +1,24 @@
 import AppKit
 import ApplicationServices
 
-/// 창 이동·크기 변경 알림의 노이즈를 "정착했다" 1회로 압축한다 (F-08.3).
+/// 창 이동·크기 변경 알림의 노이즈를 "정착했다" 1회로 압축하고, 원시 알림의 창 요소는 그대로 전달한다.
 /// DisplayWatcher가 연결 이벤트에 하는 것과 같은 처방 — 원시 이벤트 폭주를 의미 있는 1회로.
 ///
 /// AX 옵저버는 실행 루프에 붙으므로 메인에서 산다. AXWindowGateway가 소유하며,
 /// 다른 앱의 AX를 만지는 것은 여전히 게이트웨이 안뿐이다 (docs/ARCHITECTURE.md).
 ///
 /// 알림은 **앱 요소**에 건다 — 그 앱의 모든 창을 덮고, 등록 뒤에 열린 창도 포함된다.
+/// Chrome 실측(2026-09-11)에서는 마우스 버튼을 누른 동안에도 같은 창의 이동 알림이 반복해서 왔다 —
+/// 「이동이 끝날 때 1회」를 모든 앱에 전제하지 않는다.
 @MainActor
 final class WindowMoveObserver {
     /// 창이 정착했다고 볼 때까지의 대기. 실기기 측정 후 조정하는 보정 노브다.
-    ///
-    /// 처음엔 드래그 중 폭주를 막으려 1초를 뒀는데, 알림은 **이동이 끝날 때 1회만** 온다
-    /// (Apple 문서). 그래서 이 대기가 실제로 하는 일은 창 여러 개를 연달아 옮길 때
-    /// 한 번으로 묶는 것뿐이다 — 그 역할에는 0.3초로 충분하고, 체감은 즉시가 된다.
     private let settleInterval: TimeInterval
     private var observers: [pid_t: AXObserver] = [:]
     private var pending: DispatchWorkItem?
     private var onSettled: (@Sendable () -> Void)?
+    /// 원시 알림마다 창 요소로 부른다 — 사용자 조작 보호가 쓴다. 등록 대상 앱의 창만 온다.
+    var onWindowMoved: ((AXUIElement) -> Void)?
 
     init(settleInterval: TimeInterval = 0.3) {
         self.settleInterval = settleInterval
@@ -46,13 +46,12 @@ final class WindowMoveObserver {
             CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
             observers[pid] = observer
         }
-        // 해제 시 예약된 발화를 거둔다. 콜백이 이미 교체됐으므로 동작으로는 관측되지 않는 정리다 —
-        // 메인 큐에 남은 블록을 그냥 두지 않으려는 것뿐이다.
         if wanted.isEmpty { pending?.cancel(); pending = nil }
     }
 
     // internal — 테스트가 AX 없이 직접 주입한다 (DisplayWatcher와 같은 방식).
-    func windowMoved() {
+    func windowMoved(_ element: AXUIElement? = nil) {
+        if let element { onWindowMoved?(element) }
         pending?.cancel()
         let item = DispatchWorkItem { [weak self] in
             Task { @MainActor in
@@ -72,5 +71,6 @@ private func windowMoveCallback(_ observer: AXObserver, _ element: AXUIElement,
                                 _ notification: CFString, _ refcon: UnsafeMutableRawPointer?) {
     guard let refcon else { return }
     let target = Unmanaged<WindowMoveObserver>.fromOpaque(refcon).takeUnretainedValue()
-    MainActor.assumeIsolated { target.windowMoved() }
+    nonisolated(unsafe) let moved = element // 실행 루프 소스가 메인에 있어 이 호출은 메인에서 온다
+    MainActor.assumeIsolated { target.windowMoved(moved) }
 }

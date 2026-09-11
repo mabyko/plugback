@@ -111,6 +111,9 @@ struct CardAppRow: View {
     let name: String
     let isEnabled: Bool
     let isRunning: Bool?
+    var windowCount: Int = 0
+    /// false면 「저장 전」 — 지금 화면에 있어 다음 저장에 포함되지만 아직 기록은 없다.
+    var isSaved: Bool = true
     let layout: CardLayout
     let palette: CardPalette
     let setTracked: (Bool) -> Void
@@ -159,6 +162,12 @@ struct CardAppRow: View {
                 .foregroundStyle(isEnabled ? palette.text : palette.secondary)
                 .lineLimit(1).truncationMode(.tail)
                 .help("\(name)\n\(bundleID)")
+            if !isSaved {
+                Text(CardPresentation.unsavedBadge).font(.caption2).foregroundStyle(palette.secondary).fixedSize()
+            } else if windowCount > 1 {
+                // 같은 앱의 창이 여럿이면 각각 기록한다 (D1) — 몇 개인지 보여준다
+                Text("창 \(windowCount)개").font(.caption2).foregroundStyle(palette.secondary).fixedSize()
+            }
         }
     }
 
@@ -179,8 +188,6 @@ struct CardResultStrip: View {
     @ScaledMetric(relativeTo: .callout) private var detailCap: CGFloat = 144
 
     var body: some View {
-        let moved = results.reduce(0) { $0 + $1.movedCount }
-        let skipped = results.reduce(0) { $0 + $1.skippedCount }
         let failed = results.reduce(0) { $0 + $1.failedCount }
         VStack(alignment: .leading, spacing: 6) {
             if failed > 0 {
@@ -196,7 +203,8 @@ struct CardResultStrip: View {
                     CardScrollView(maxHeight: detailCap) {
                         VStack(alignment: .leading, spacing: 5) {
                             ForEach(results, id: \.screenID) { result in
-                                ForEach(result.entries, id: \.bundleID) { entry in
+                                // 저장 창마다 한 항목이다 (D1) — 같은 앱의 창을 하나로 합치지 않는다
+                                ForEach(result.entries, id: \.placementID) { entry in
                                     Label("\(entry.displayName) — \(CardPresentation.describe(entry.outcome))",
                                           systemImage: CardPresentation.symbolName(for: entry.outcome))
                                         .foregroundStyle(entry.outcome == .failed ? palette.text : palette.secondary)
@@ -207,14 +215,14 @@ struct CardResultStrip: View {
                     }
                 } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)")
+                        Text("마지막 복원 · \(CardPresentation.summary(results))")
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         if let restoredAt {
                             Text(CardPresentation.relative(restoredAt)).fixedSize()
                         }
                     }
-                    .accessibilityLabel("마지막 복원 · 이동 \(moved) · 건너뜀 \(skipped) · 실패 \(failed)"
+                    .accessibilityLabel("마지막 복원 · \(CardPresentation.summary(results))"
                                         + (restoredAt.map { " · \(CardPresentation.relative($0))" } ?? ""))
                 }
                 .help("마지막 복원 결과 펼치기")
@@ -254,7 +262,7 @@ struct CardAppIcon: View {
 }
 
 struct CardAppTile: View {
-    let app: TargetApp
+    let app: PlugbackController.AppRow
     let isRunning: Bool
     let palette: CardPalette
     let setTracked: (Bool) -> Void

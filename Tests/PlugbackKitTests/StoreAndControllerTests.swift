@@ -6,8 +6,7 @@ final class ProfileStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("plugback-tests-\(UUID().uuidString)", isDirectory: true)
+        dir = temporaryDirectory("store")
     }
 
     override func tearDown() {
@@ -15,51 +14,96 @@ final class ProfileStoreTests: XCTestCase {
         super.tearDown()
     }
 
+    private let screen = ScreenInfo(id: "ext-1", name: "LG", frame: CGRect(x: 0, y: 0, width: 1000, height: 1000), isBuiltin: false)
+
     func testRoundTrip() throws {
         let store = ProfileStore(directory: dir)
-        let profiles = ["ext-1": Profile(screenID: "ext-1", screenName: "LG", apps: [
-            TargetApp(bundleID: "com.chrome", displayName: "Chrome",
-                      unitRect: UnitRect(x: 0.5, y: 0, width: 0.5, height: 1)),
-        ])]
-        try store.save(profiles)
+        let snapshot = WorkspaceSnapshot.flat(screen: screen, apps: [("com.chrome", UnitRect(x: 0.5, y: 0, width: 0.5, height: 1))])
+        var record = WorkspaceRecord.with(snapshot)
+        record.closedPlacementIDs = [snapshot.placements[0].id]
+        try store.save([snapshot.key: record])
         let outcome = ProfileStore(directory: dir).load()
-        XCTAssertEqual(outcome.profiles, profiles)
+        XCTAssertEqual(outcome.workspaces, [snapshot.key: record])
         XCTAssertNil(outcome.trouble)
+        XCTAssertFalse(outcome.migratedFromLegacy)
     }
 
     func testCorruptedFileIsBackedUpAndReset() throws {
-        // 손상 파일은 백업 후 초기화 — 앱이 죽지 않는다 (F-04.2, US-011 AC-5)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data("{{{ not json".utf8).write(to: dir.appendingPathComponent("profiles.json"))
+        try Data("{{{ not json".utf8).write(to: dir.appendingPathComponent("workspaces.json"))
 
         let outcome = ProfileStore(directory: dir).load()
-        XCTAssertTrue(outcome.profiles.isEmpty)
+        XCTAssertTrue(outcome.workspaces.isEmpty)
         guard case .corruptionBackedUp(let backupURL) = try XCTUnwrap(outcome.trouble) else {
             return XCTFail("\(String(describing: outcome.trouble))")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("profiles.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("workspaces.json").path))
     }
 
     func testUnreadableFileIsReportedNotTreatedAsFirstRun() throws {
-        // 읽기 실패 ≠ 첫 실행 — 파일을 건드리지 않고 보고한다 (덮어쓰기 데이터 손실 방지)
-        // profiles.json 자리에 디렉터리를 놓으면 "존재하지만 읽을 수 없음"이 결정적으로 재현된다
-        let fileAsDir = dir.appendingPathComponent("profiles.json")
+        let fileAsDir = dir.appendingPathComponent("workspaces.json")
         try FileManager.default.createDirectory(at: fileAsDir, withIntermediateDirectories: true)
-
         let outcome = ProfileStore(directory: dir).load()
-        XCTAssertTrue(outcome.profiles.isEmpty)
+        XCTAssertTrue(outcome.workspaces.isEmpty)
         XCTAssertEqual(outcome.trouble, .unreadable)
-        // 파일(디렉터리)이 그대로 남아 있다 — 백업·초기화하지 않는다
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileAsDir.path))
+    }
+
+    func testNewerFileVersionIsPreservedAndBlocksWrites() throws {
+        // 이후 버전의 형식은 손상이 아니다 — 원본을 보존하고 쓰기를 막는다 (DSK10)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"version": 99, "workspaces": {}}"#.utf8).write(to: dir.appendingPathComponent("workspaces.json"))
+        let outcome = ProfileStore(directory: dir).load()
+        XCTAssertEqual(outcome.trouble, .unsupportedVersion(99))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("workspaces.json").path))
     }
 
     func testWriteFailureIsReported() throws {
         let store = ProfileStore(directory: dir)
-        _ = store.load() // 없는 파일을 정상적인 첫 실행으로 읽은 뒤 쓰기 경로만 막는다
+        _ = store.load()
         try Data("not-a-directory".utf8).write(to: dir)
-
         XCTAssertThrowsError(try store.save([:]))
+    }
+
+    func testLegacyProfilesMigrateToSingleScreenWorkspacesAndTheOriginalStays() throws {
+        // 구버전 화면별 프로필 → 화면 하나짜리 작업 환경. 조합·Space 정보는 지어내지 않고 원본은 그대로 둔다 (DSK05)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manual = Profile(screenID: "ext-1", screenName: "LG", apps: [
+            TargetApp(bundleID: "com.chrome", displayName: "Chrome", isEnabled: false,
+                      unitRect: UnitRect(x: 0, y: 0, width: 0.5, height: 1)),
+            TargetApp(bundleID: "com.slack", displayName: "Slack", unitRect: UnitRect(x: 0.5, y: 0, width: 0.5, height: 1)),
+        ], fingerprint: ScreenFingerprint(vendor: 1, model: 2, serial: 3), savedAt: Date(timeIntervalSince1970: 100))
+        let auto = Profile(screenID: "ext-1", screenName: "LG", apps: [
+            TargetApp(bundleID: "com.chrome", displayName: "Chrome", unitRect: UnitRect(x: 0.25, y: 0, width: 0.5, height: 1)),
+        ], savedAt: Date(timeIntervalSince1970: 200))
+        let autoOnly = Profile(screenID: "ext-3", screenName: "LG ULTRAFINE", apps: [
+            TargetApp(bundleID: "com.slack", displayName: "Slack", unitRect: UnitRect(x: 0, y: 0, width: 1, height: 1)),
+        ], savedAt: Date(timeIntervalSince1970: 300))
+        let legacy = try JSONEncoder().encode(["ext-1": manual, "ext-1#auto": auto,
+                                              "ext-2": Profile(screenID: "ext-2", screenName: "DELL"),
+                                              "ext-3#auto": autoOnly])
+        try legacy.write(to: dir.appendingPathComponent("profiles.json"))
+
+        let plain = ProfileStore(directory: dir).load()
+        XCTAssertTrue(plain.migratedFromLegacy)
+        XCTAssertEqual(Set(plain.workspaces.keys), [WorkspaceKey(screenIDs: ["ext-1"]), WorkspaceKey(screenIDs: ["ext-2"])])
+        let record = try XCTUnwrap(plain.workspaces[WorkspaceKey(screenIDs: ["ext-1"])])
+        XCTAssertEqual(record.saved?.savedBy, .manual, "옛 자동 슬롯 선택이 없었으면 수동 프로필이다")
+        XCTAssertEqual(record.saved?.placements.map(\.bundleID), ["com.chrome", "com.slack"])
+        XCTAssertNil(record.saved?.placements.first?.space, "Space 정보를 지어내지 않는다")
+        XCTAssertEqual(record.apps.first { $0.bundleID == "com.chrome" }?.isEnabled, false, "제외 선택은 보존된다")
+        XCTAssertEqual(record.saved?.screens.first?.fingerprint, manual.fingerprint)
+
+        XCTAssertNil(plain.workspaces[WorkspaceKey(screenIDs: ["ext-3"])], "자동 슬롯이 꺼져 있었으면 자동 슬롯만 있는 화면은 옛 규칙대로 쓰지 않는다")
+
+        let withAuto = ProfileStore(directory: dir).load(preferLegacyAutoSlots: true)
+        XCTAssertEqual(withAuto.workspaces[WorkspaceKey(screenIDs: ["ext-1"])]?.saved?.savedBy, .auto,
+                       "옛 자동 슬롯이 켜져 있었고 더 최근이면 그 기록이 복원 소스였다")
+        XCTAssertEqual(withAuto.workspaces[WorkspaceKey(screenIDs: ["ext-3"])]?.saved?.placements.map(\.bundleID), ["com.slack"],
+                       "자동 슬롯만 있는 화면도 자동 슬롯이 켜져 있었으면 가져온다")
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("profiles.json")), legacy, "원본 파일은 건드리지 않는다")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("workspaces.json").path))
     }
 }
 
@@ -67,13 +111,12 @@ private let builtin = ScreenInfo(id: "builtin", name: "내장 화면",
                                  frame: CGRect(x: 0, y: 0, width: 1512, height: 982), isBuiltin: true)
 private let external = ScreenInfo(id: "ext-1", name: "LG UltraFine 27",
                                   frame: CGRect(x: 1512, y: 0, width: 2560, height: 1440), isBuiltin: false)
+private let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
+                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
 
 @MainActor
 final class PlugbackControllerTests: XCTestCase {
-    // XCTest는 테스트 메서드마다 새 인스턴스를 만든다 — setUp 없이 프로퍼티 초기화로 충분하고,
-    // nonisolated한 setUp/tearDown이 @MainActor 상태를 만지는 격리 경고도 원천 차단된다.
-    private nonisolated let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("plugback-tests-\(UUID().uuidString)", isDirectory: true)
+    private nonisolated let dir = temporaryDirectory("controller")
     private var gateway = FakeWindowGateway()
     private var screens: FakeScreenProvider = {
         let provider = FakeScreenProvider()
@@ -93,372 +136,362 @@ final class PlugbackControllerTests: XCTestCase {
                            store: ProfileStore(directory: dir), defaults: testDefaults)
     }
 
+    private func chrome(_ id: Int = 1, at frame: CGRect) -> WindowInfo {
+        WindowInfo(id: id, appBundleID: "com.chrome", appName: "Chrome", frame: frame, windowServerID: CGWindowID(100 + id))
+    }
+    private let saved = CGRect(x: 1512, y: 0, width: 1280, height: 1440)
+    private let messy = CGRect(x: 2500, y: 500, width: 800, height: 600)
+
     func testCaptureThenRestoreRoundTrip() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
-        await controller.captureNow()
-        XCTAssertEqual(controller.sections.first?.profile?.apps.map(\.bundleID), ["com.chrome"])
+        let awaited1 = await controller.captureNow()
+        XCTAssertEqual(awaited1, .captured(appCount: 1, windowCount: 1))
+        XCTAssertEqual(controller.sections.first?.apps.map(\.bundleID), ["com.chrome"])
 
-        // 창이 어질러졌다 → 수동 복원 (US-007 AC-1)
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.windowsList[0] = chrome(at: messy)
         await controller.restoreNow()
         XCTAssertEqual(controller.sections.first?.lastResult?.movedCount, 1)
-        XCTAssertEqual(gateway.windowsList[0].frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
+        XCTAssertEqual(gateway.windowsList[0].frame, saved)
     }
 
     func testProfileSurvivesRelaunch() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let first = makeController()
         await first.captureNow()
 
         let second = makeController()
         await second.cardOpened()
-        XCTAssertEqual(second.sections.first?.profile?.apps.map(\.bundleID), ["com.chrome"])
+        XCTAssertEqual(second.sections.first?.apps.map(\.bundleID), ["com.chrome"])
     }
 
-    func testRestoreWithoutProfileMovesNothing() async {
-        // 프로필 없는 화면에서 수동 복원 → 아무 창도 움직이지 않는다 (US-007 AC-5)
+    func testRestoreWithoutASnapshotMovesNothing() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
+        gateway.windowsList = [chrome(at: messy)]
         let controller = makeController()
-        await controller.restoreNow()
+        let awaited2 = await controller.restoreNow()
+        XCTAssertEqual(awaited2, .restored([]))
         XCTAssertNil(controller.sections.first?.lastResult)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
-    func testDisconnectKeepsLastScreenAndProfile() async {
-        // 화면을 뽑아도 마지막 화면 이름과 프로필 유무는 남는다 (ARCHITECTURE 고정 결정)
+
+    func testDisconnectKeepsLastScreenAndSnapshot() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
 
-        screens.screensList = [builtin] // 외장 화면 분리
+        screens.screensList = [builtin]
         await controller.cardOpened()
         XCTAssertEqual(controller.screenPresence, .remembered(screenID: "ext-1", name: "LG UltraFine 27"))
-        XCTAssertEqual(controller.sections.first?.profile?.apps.count, 1)
-    }
-
-    func testCardScreenSharesRestoreOrderOnTwoScreens() async {
-        // "현재 화면"의 정의는 하나 — 식별자 정렬상 첫 화면. 공급자가 어떤 순서로 주든
-        // 카드와 중복 제거(F-01.6)가 같은 첫 화면을 쓴다.
-        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
-                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
-        screens.screensList = [builtin, external2, external] // 일부러 역순 공급
-        gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [
-            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),  // ext-1
-            WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),   // ext-2 — 두 프로필에 등록됨
-        ]
-        let controller = makeController()
-        await controller.captureNow()
-        guard case .connected(let first, let count) = controller.screenPresence else {
-            return XCTFail("\(controller.screenPresence)")
-        }
-        XCTAssertEqual(first.id, "ext-1") // 공급 순서와 무관하게 식별자 정렬상 첫 화면
-        XCTAssertEqual(count, 2)
-
-        // 공유 앱은 식별자 정렬상 첫 화면에서 복원된다.
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        await controller.restoreNow()
-        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .moved)
+        XCTAssertEqual(controller.sections.first?.apps.count, 1)
+        XCTAssertTrue(controller.hasRestorableProfile)
     }
 
     func testSectionsCoverEveryConnectedScreen() async {
-        // 화면 인식이 아니라 표시의 문제였다 — 카드가 첫 화면만 그려서 두 번째 화면의 앱이
-        // 사라진 것처럼 보였다. 섹션은 연결된 모든 화면을 식별자 정렬 순서로 담는다.
-        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
-                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
         screens.screensList = [builtin, external, external2]
         gateway.runningBundleIDs = ["com.orca", "com.slack"]
         gateway.windowsList = [
-            WindowInfo(id: 1, appBundleID: "com.orca", appName: "Orca",
-                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),   // ext-1
+            WindowInfo(id: 1, appBundleID: "com.orca", appName: "Orca", frame: saved, windowServerID: 101),
             WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
-                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),    // ext-2
+                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080), windowServerID: 102),
         ]
         let controller = makeController()
         await controller.captureNow()
 
         var sections = controller.sections
         XCTAssertEqual(sections.map(\.screenID), ["ext-1", "ext-2"])
-        XCTAssertEqual(sections[0].profile?.apps.map(\.bundleID), ["com.orca"])
-        XCTAssertEqual(sections[1].profile?.apps.map(\.bundleID), ["com.slack"])
-        // 새 앱이 두 번째 화면에 떴다 — 그 화면의 「저장하지 않는 앱」에만 나타난다
+        XCTAssertEqual(sections[0].apps.map(\.bundleID), ["com.orca"])
+        XCTAssertEqual(sections[1].apps.map(\.bundleID), ["com.slack"])
         gateway.runningBundleIDs.insert("com.figma")
         gateway.windowsList.append(WindowInfo(id: 3, appBundleID: "com.figma", appName: "Figma",
-                                              frame: CGRect(x: 4500, y: 100, width: 800, height: 600)))
+                                              frame: CGRect(x: 4500, y: 100, width: 800, height: 600), windowServerID: 103))
         await controller.cardOpened()
         sections = controller.sections
-        XCTAssertEqual(sections[0].untrackedApps.map(\.bundleID), [])
-        XCTAssertEqual(sections[1].untrackedApps.map(\.bundleID), ["com.figma"])
+        XCTAssertEqual(sections[0].presentApps.map(\.bundleID), ["com.orca"])
+        XCTAssertEqual(sections[1].presentApps.map { ($0.bundleID, $0.isSaved) }.map { "\($0.0):\($0.1)" }, ["com.slack:true", "com.figma:false"],
+                       "아직 저장하지 않은 앱도 지금 화면에 있으면 첫 묶음에 「저장 전」으로 보인다 (D4)")
+        XCTAssertTrue(sections[1].excludedApps.isEmpty)
 
-        // 두 번째 화면이 어질러졌다 — 복원 결과가 그 섹션과 lastResults에 온다
-        gateway.windowsList[1] = WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.windowsList[1] = WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack", frame: messy, windowServerID: 102)
         await controller.restoreNow()
         XCTAssertEqual(controller.lastResults.map(\.screenID), ["ext-1", "ext-2"])
         XCTAssertEqual(controller.sections[1].lastResult?.movedCount, 1)
-        XCTAssertNotNil(controller.lastRestoredAt) // 결과에는 시각이 따라온다 — 묵은 결과가 방금 것으로 읽히지 않게
+        XCTAssertNotNil(controller.lastRestoredAt)
     }
 
-    func testCheckAndRemoveActOnTheGivenScreenOnly() async {
-        // 같은 앱이 두 화면 프로필에 있어도 체크/삭제는 넘긴 화면의 프로필만 바꾼다 —
-        // 화면 식별자 없이 부르면 첫 화면이라, 두 번째 화면의 행은 조작할 수 없었다.
-        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
-                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
-        screens.screensList = [builtin, external, external2]
+    func testSharedAppOnTwoScreensRestoresBothWindows() async {
+        // 같은 앱이 두 화면에 저장돼 있으면 창마다 자기 자리로 간다 — 첫 화면 선점이 없다 (W03)
+        screens.screensList = [builtin, external2, external]
         gateway.runningBundleIDs = ["com.chrome"]
         gateway.windowsList = [
-            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),   // ext-1
-            WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),    // ext-2
+            chrome(1, at: saved),
+            chrome(2, at: CGRect(x: 4072, y: 0, width: 960, height: 1080)),
         ]
+        let controller = makeController()
+        await controller.captureNow()
+        guard case .connected(let first, let count) = controller.screenPresence else { return XCTFail() }
+        XCTAssertEqual(first.id, "ext-1")
+        XCTAssertEqual(count, 2)
+
+        gateway.windowsList[0] = chrome(1, at: messy)
+        gateway.windowsList[1] = chrome(2, at: CGRect(x: 4500, y: 300, width: 800, height: 600))
+        await controller.restoreNow()
+        XCTAssertEqual(controller.sections[0].lastResult?.entries.first?.outcome, .moved)
+        XCTAssertEqual(controller.sections[1].lastResult?.entries.first?.outcome, .moved)
+    }
+
+    func testUncheckingAnAppAppliesToTheWholeWorkspaceAndKeepsItsRecords() async {
+        // 앱 포함·제외는 작업 환경에 공유된다 (D4). 제외해도 기록은 남고, 다시 켜면 저장돼 있던 자리다 (US-006 AC-2)
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [chrome(1, at: saved), chrome(2, at: CGRect(x: 4072, y: 0, width: 960, height: 1080))]
         let controller = makeController()
         await controller.captureNow()
 
         await controller.setTracked("com.chrome", false, on: "ext-2")
-        XCTAssertEqual(controller.sections[0].profile?.apps.first?.isEnabled, true)
-        XCTAssertEqual(controller.sections[1].profile?.apps.first?.isEnabled, false)
-        XCTAssertEqual(controller.sections[1].untrackedApps.map(\.bundleID), ["com.chrome"])
+        XCTAssertTrue(controller.sections[0].apps.isEmpty)
+        XCTAssertTrue(controller.sections[1].apps.isEmpty)
+        XCTAssertEqual(controller.sections[1].excludedApps.map(\.bundleID), ["com.chrome"])
+        XCTAssertTrue(controller.sections[1].presentApps.isEmpty, "제외한 앱은 지금 화면에 있어도 첫 묶음에 없다")
 
-        gateway.windowsList[1] = WindowInfo(
-            id: 2, appBundleID: "com.chrome", appName: "Chrome",
-            frame: CGRect(x: 100, y: 100, width: 960, height: 700)
-        )
-        await controller.cardOpened()
-        await controller.remove("com.chrome", on: "ext-2")
-        XCTAssertEqual(controller.sections[1].profile?.apps ?? [], [])
-        XCTAssertEqual(controller.sections[0].profile?.apps.count, 1) // 첫 화면은 그대로
-        XCTAssertTrue(
-            controller.sections[1].untrackedApps.isEmpty,
-            "프로필에서도 외장 화면에서도 사라진 앱의 projection을 즉시 비운다"
-        )
+        gateway.windowsList[0] = chrome(1, at: messy)
+        await controller.setTracked("com.chrome", true, on: "ext-1")
+        XCTAssertEqual(controller.sections[0].apps.map(\.bundleID), ["com.chrome"])
+        await controller.restoreNow()
+        XCTAssertEqual(gateway.windowsList[0].frame, saved, "예전 자리 그대로")
     }
 
-    func testTrackingANewAppRegistersOnlyTheGivenScreen() async {
-        let external2 = ScreenInfo(
-            id: "ext-2", name: "DELL U2723QE",
-            frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false
-        )
-        screens.screensList = [builtin, external, external2]
+    func testCheckingAnUntrackedAppIncludesItInTheNextSave() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [
-            WindowInfo(
-                id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)
-            ),
-            WindowInfo(
-                id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)
-            ),
-        ]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
+        await controller.captureNow()
+        await controller.setTracked("com.chrome", false, on: external.id)
 
-        await controller.setTracked("com.chrome", true, on: external2.id)
+        gateway.runningBundleIDs.insert("com.linear")
+        gateway.windowsList.append(WindowInfo(id: 2, appBundleID: "com.linear", appName: "Linear",
+                                              frame: CGRect(x: 2792, y: 0, width: 1280, height: 1440), windowServerID: 102))
+        await controller.cardOpened()
+        XCTAssertEqual(controller.sections.first?.excludedApps.map(\.bundleID), ["com.chrome"])
+        XCTAssertEqual(controller.sections.first?.presentApps.map(\.bundleID), ["com.linear"])
+        XCTAssertEqual(controller.sections.first?.presentApps.first?.isSaved, false)
 
-        XCTAssertNil(controller.sections[0].profile)
-        XCTAssertEqual(
-            controller.sections[1].profile?.apps.map(\.bundleID), ["com.chrome"],
-            "두 화면에 창이 있어도 체크한 화면의 프로필만 등록한다"
-        )
+        await controller.captureNow()
+        XCTAssertEqual(controller.sections.first?.apps.map(\.bundleID), ["com.linear"], "제외한 앱만 빠지고 새 앱은 기본 포함이다 (D4)")
     }
 
-    func testRemovingAnUncheckedAppAllowsLaterExternalDetection() async {
+    func testRemovingAnAppForgetsItUntilItIsSeenAgain() async {
         gateway.runningBundleIDs = ["cc.ffitch.shottr"]
-        gateway.windowsList = [
-            WindowInfo(id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
-                       frame: CGRect(x: 1800, y: 100, width: 800, height: 600)),
-        ]
+        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
+                                          frame: CGRect(x: 1800, y: 100, width: 800, height: 600), windowServerID: 101)]
         let controller = makeController()
         await controller.captureNow()
         await controller.setTracked("cc.ffitch.shottr", false, on: external.id)
 
-        gateway.windowsList[0] = WindowInfo(
-            id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
-            frame: CGRect(x: 100, y: 100, width: 800, height: 600)
-        )
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
+                                            frame: CGRect(x: 100, y: 100, width: 800, height: 600), windowServerID: 101)
         await controller.cardOpened()
-        XCTAssertEqual(controller.sections.first?.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
+        XCTAssertEqual(controller.sections.first?.excludedApps.map(\.bundleID), ["cc.ffitch.shottr"],
+                       "제외한 앱은 창이 내장에 있어도 기록이 있는 화면에 보인다")
 
         await controller.remove("cc.ffitch.shottr", on: external.id)
-        XCTAssertFalse(controller.sections.first?.profile?.apps.contains { $0.bundleID == "cc.ffitch.shottr" } ?? true)
-        XCTAssertTrue(controller.sections.first?.untrackedApps.isEmpty ?? false)
+        XCTAssertTrue(controller.sections.first?.apps.isEmpty ?? false)
+        XCTAssertTrue(controller.sections.first?.excludedApps.isEmpty ?? false)
+        XCTAssertTrue(controller.sections.first?.presentApps.isEmpty ?? false)
 
-        gateway.windowsList[0] = WindowInfo(
-            id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
-            frame: CGRect(x: 1800, y: 100, width: 800, height: 600)
-        )
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "cc.ffitch.shottr", appName: "Shottr",
+                                            frame: CGRect(x: 1800, y: 100, width: 800, height: 600), windowServerID: 101)
         await controller.cardOpened()
-        XCTAssertEqual(controller.sections.first?.untrackedApps.map(\.bundleID), ["cc.ffitch.shottr"])
+        XCTAssertEqual(controller.sections.first?.presentApps.map(\.bundleID), ["cc.ffitch.shottr"], "잊은 앱이 다시 보이면 기본 포함이다")
+        XCTAssertEqual(controller.sections.first?.presentApps.first?.isSaved, false)
     }
 
-    func testRestorableWhenOnlyALaterScreenHasAProfile() async {
-        // 프로필이 정렬상 뒤 화면에만 있어도 복원할 수 있어야 한다 —
-        // 첫 화면의 프로필만 보던 판정은 이 상황에서 복원 버튼을 잠갔다.
-        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
-                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
-        screens.screensList = [builtin, external2] // ext-2만 연결된 동안 저장
+    func testSectionsGroupAppsByPresenceAndKeepAbsentSavedAppsRestorable() async {
+        // 첫 묶음은 지금 화면의 앱, 저장만 된 앱은 접힌 묶음, 제외한 앱은 별도 묶음 — 어디에도 없는 제외 앱은 첫 화면에 모인다
+        screens.screensList = [builtin, external, external2]
+        gateway.runningBundleIDs = ["com.chrome", "com.slack", "com.keka"]
+        gateway.windowsList = [
+            chrome(1, at: saved),
+            WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack", frame: CGRect(x: 4072, y: 0, width: 960, height: 1080), windowServerID: 102),
+            WindowInfo(id: 3, appBundleID: "com.keka", appName: "Keka", frame: CGRect(x: 4200, y: 100, width: 400, height: 300), windowServerID: 103),
+        ]
+        let controller = makeController()
+        await controller.captureNow()
+        await controller.setTracked("com.keka", false, on: "ext-2")
+
+        gateway.runningBundleIDs = ["com.chrome", "com.notes"]
+        gateway.windowsList = [
+            chrome(1, at: saved),
+            WindowInfo(id: 4, appBundleID: "com.notes", appName: "Notes", frame: CGRect(x: 4200, y: 100, width: 400, height: 300), windowServerID: 104),
+        ]
+        await controller.cardOpened()
+        let sections = controller.sections
+        XCTAssertEqual(sections[0].presentApps.map(\.bundleID), ["com.chrome"])
+        XCTAssertTrue(sections[0].absentSavedApps.isEmpty)
+        XCTAssertEqual(sections[1].presentApps.map { "\($0.bundleID):\($0.isSaved)" }, ["com.notes:false"])
+        XCTAssertEqual(sections[1].absentSavedApps.map(\.bundleID), ["com.slack"], "창이 없어도 저장 기록은 복원 대상으로 남는다")
+        XCTAssertEqual(sections[1].excludedApps.map(\.bundleID), ["com.keka"], "제외한 앱은 기록이 있는 화면에 보인다")
+        XCTAssertTrue(sections[0].excludedApps.isEmpty)
+
+        await controller.remove("com.keka", on: "ext-2")
+        await controller.setTracked("com.keka", false, on: "ext-2") // 기록·창이 어디에도 없는 제외 앱
+        XCTAssertEqual(controller.sections[0].excludedApps.map(\.bundleID), ["com.keka"], "어느 화면에도 없는 제외 앱은 첫 화면에 모인다")
+        XCTAssertTrue(controller.sections[1].excludedApps.isEmpty)
+    }
+
+    func testAWorkspaceWithoutASnapshotDoesNotBorrowAnotherWorkspace() async {
+        // B 단독 저장본은 A+B 환경의 저장본이 아니다 (D5·G21)
+        screens.screensList = [builtin, external2]
         gateway.runningBundleIDs = ["com.slack"]
         gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.slack", appName: "Slack",
-                                          frame: CGRect(x: 4072, y: 0, width: 960, height: 1080))]
+                                          frame: CGRect(x: 4072, y: 0, width: 960, height: 1080), windowServerID: 101)]
         let controller = makeController()
         await controller.captureNow()
 
-        screens.screensList = [builtin, external, external2] // ext-1이 새로 연결 — 프로필 없음
+        screens.screensList = [builtin, external, external2]
         await controller.cardOpened()
-        XCTAssertNil(controller.sections.first?.profile)    // 첫 화면 기준으로는 프로필이 없다
-        XCTAssertTrue(controller.hasRestorableProfile)      // 그래도 복원은 가능해야 한다
-
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.slack", appName: "Slack",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        guard case .restored(let results) = await controller.restoreNow() else { return XCTFail() }
-        XCTAssertEqual(results.map(\.screenID), ["ext-2"])
-        XCTAssertEqual(results.first?.movedCount, 1)
+        XCTAssertFalse(controller.hasRestorableProfile)
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.slack", appName: "Slack", frame: messy, windowServerID: 101)
+        let awaited3 = await controller.restoreNow()
+        XCTAssertEqual(awaited3, .restored([]))
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+        XCTAssertEqual(controller.allWorkspaces.map(\.key), [WorkspaceKey(screenIDs: ["ext-2"])], "B 단독 저장본은 그대로다")
     }
 
     func testSettingsFlowIntoRestoreOptions() async {
-        // 배선 스모크: 설정 토글이 엔진 옵션으로 흐른다. 정책 자체는 엔진 테스트가 검증한다.
-        // 반환 시점 = 완료 시점 — 대기·재시도가 없다.
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
 
-        gateway.windowsList = [] // 창만 닫힘 — 프로세스는 생존
-        gateway.windowOnReopen["com.chrome"] = WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                                                          frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        controller.reopenWindowless = true
+        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome", frame: messy,
+                                            isMinimized: true, windowServerID: 101)
         await controller.restoreNow()
-        XCTAssertEqual(gateway.openWindowCalls, ["com.chrome"])
-        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .moved) // 최종 결과 — 중간 상태 없음
-        XCTAssertEqual(gateway.windowsList.first?.frame, CGRect(x: 1512, y: 0, width: 1280, height: 1440))
+        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .skipped(.minimized))
+        controller.restoreMinimized = true
+        await controller.restoreNow()
+        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .moved)
     }
 
-    // MARK: 복원 진행 중의 상호배제 — await가 연 틈으로 아무도 못 들어온다
-
-    /// 복원을 openWindow 지연에 매달아 두고 반환한다 — 인터리빙 시나리오의 공통 준비.
-    /// 창만 닫힌 chrome + 새 창 열기 옵션으로 서스펜션 지점에 진입시킨다.
-    private func startHangingRestore(_ controller: PlugbackController) async -> Task<RestoreOutcome, Never> {
+    func testChildLabOptionsHaveNoEffectWhileTheParentIsOff() async {
+        // 부모 OFF는 실행·명시적 창 생성 전체를 막는다 (3.5절)
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [chrome(at: saved)]
+        let controller = makeController()
+        await controller.captureNow()
+        controller.reviveWindowlessApps = true
+        controller.openMissingWindows = true
         gateway.windowsList = []
-        gateway.windowOnReopen["com.chrome"] = WindowInfo(id: 2, appBundleID: "com.chrome", appName: "Chrome",
-                                                          frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        gateway.openWindowDelay = 0.05
-        controller.reopenWindowless = true
+        gateway.windowOnReopen["com.chrome"] = chrome(2, at: messy)
+        await controller.restoreNow()
+        XCTAssertTrue(gateway.openWindowCalls.isEmpty)
+        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .skipped(.noWindow))
+
+        await controller.collectCandidate() // 같은 환경에서 닫힌 것을 관찰했다
+        controller.reopenClosedApps = true
+        await controller.restoreNow()
+        XCTAssertTrue(gateway.openWindowCalls.isEmpty)
+        XCTAssertEqual(controller.sections.first?.lastResult?.entries.first?.outcome, .skipped(.closedInWorkspace),
+                       "같은 환경에서 닫은 창의 자리는 다시 열기 ON이어도 채우지 않는다 (D9)")
+    }
+
+    // MARK: 복원 진행 중의 상호배제
+
+    private func startHangingRestore(_ controller: PlugbackController) async -> Task<RestoreOutcome, Never> {
+        gateway.standardWindowsDelay = 0.05
+        let before = gateway.standardWindowsCalls
         let task = Task { await controller.restoreNow() }
-        while gateway.openWindowCalls.isEmpty { await Task.yield() } // 서스펜션 도달까지 양보
+        while gateway.standardWindowsCalls == before { await Task.yield() }
         return task
     }
 
     func testCaptureDuringRestoreIsRejected() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
-        await controller.cardOpened() // 확인 표시 만료 — 아래 거부가 새 표시를 안 만드는지 보기 위해
-        let before = controller.sections.first?.profile
+        await controller.cardOpened()
+        let before = controller.allWorkspaces
 
         let restore = await startHangingRestore(controller)
-        // 복원이 매달린 사이 창이 엉뚱한 자리에 — 저장이 허용되면 이 배치가 박제된다
-        gateway.windowsList = [WindowInfo(id: 9, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 2000, y: 300, width: 800, height: 600))]
-        let capture = await controller.captureNow()
-        XCTAssertEqual(capture, .restoringInProgress)
-        XCTAssertEqual(controller.sections.first?.profile, before) // 반쯤 복원된 배치가 프로필을 오염시키지 않았다
-        XCTAssertNil(controller.lastCaptureCount)  // 저장 확인 표시도 뜨지 않는다
+        gateway.windowsList = [chrome(9, at: CGRect(x: 2000, y: 300, width: 800, height: 600))]
+        let awaited4 = await controller.captureNow()
+        XCTAssertEqual(awaited4, .restoringInProgress)
+        XCTAssertEqual(controller.allWorkspaces, before)
+        XCTAssertNil(controller.lastCaptureCount)
         _ = await restore.value
     }
 
     func testRestoreDuringRestoreReportsBusy() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
-
         let restore = await startHangingRestore(controller)
-        let second = await controller.restoreNow()
-        XCTAssertEqual(second, .alreadyRestoring) // 조용한 무시가 아니라 명시적 거부
+        let awaited5 = await controller.restoreNow()
+        XCTAssertEqual(awaited5, .alreadyRestoring)
         _ = await restore.value
     }
 
-    func testRemoveProfileDuringRestoreDoesNotResurrectResult() async {
+    func testRemoveWorkspaceDuringRestoreDoesNotResurrectResult() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
-
         let restore = await startHangingRestore(controller)
-        controller.removeProfile("ext-1") // 복원이 매달린 사이 프로필 삭제
+        controller.removeWorkspace(WorkspaceKey(screenIDs: ["ext-1"]))
         _ = await restore.value
-        XCTAssertNil(controller.sections.first?.lastResult) // await 뒤의 결과 쓰기가 삭제를 되돌리지 않는다
+        XCTAssertNil(controller.sections.first?.lastResult)
     }
 
     func testCardOpenDuringRestoreDoesNotReenumerate() async {
-        // 복원 중 카드 열기 → projection 갱신의 재열거가 진행 중 복원의 창 ID를 죽인다 —
-        // refreshProjection은 복원 중엔 양보해야 한다 (ID 수명 계약)
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: messy)]
         let controller = makeController()
         await controller.captureNow()
-
+        gateway.windowsList[0] = chrome(at: saved)
         let restore = await startHangingRestore(controller)
         let callsBefore = gateway.standardWindowsCalls
-        await controller.cardOpened() // 복원이 매달린 사이 카드 열림
-        XCTAssertEqual(gateway.standardWindowsCalls, callsBefore) // 재열거하지 않았다
+        await controller.cardOpened()
+        XCTAssertEqual(gateway.standardWindowsCalls, callsBefore)
         let outcome = await restore.value
         guard case .restored(let results) = outcome else { return XCTFail("\(outcome)") }
-        XCTAssertEqual(results.first?.entries.first?.outcome, .moved) // 복원은 무사히 끝난다
+        XCTAssertEqual(results.first?.entries.first?.outcome, .moved)
     }
 
-    func testScreenConnectedDuringRestoreIsRestoredAfterward() async {
-        // 복원 중 연결된 화면은 조용히 소실되지 않는다 — 종료 직후 1회 재복원 (보류)
-        let external2 = ScreenInfo(id: "ext-2", name: "DELL U2723QE",
-                                   frame: CGRect(x: 4072, y: 0, width: 1920, height: 1080), isBuiltin: false)
-        screens.screensList = [builtin, external, external2]
+    func testScreenConnectedDuringRestoreSwitchesToTheNewWorkspaceAfterward() async {
+        // 복원 중 B가 추가되면 남은 A 작업을 중단하고 준비된 A+B 저장본으로 전환한다 (G05)
         gateway.runningBundleIDs = ["com.chrome", "com.slack"]
-        gateway.windowsList = [
-            WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                       frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440)),  // ext-1
-            WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
-                       frame: CGRect(x: 4072, y: 0, width: 960, height: 1080)),   // ext-2
-        ]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
-        await controller.captureNow() // 두 화면 모두 프로필 확보
+        await controller.captureNow() // A 단독
+        screens.screensList = [builtin, external, external2]
+        let slackSaved = CGRect(x: 4072, y: 0, width: 960, height: 1080)
+        gateway.windowsList.append(WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack", frame: slackSaved, windowServerID: 102))
+        await controller.cardOpened()
+        await controller.captureNow() // A+B
+        screens.screensList = [builtin, external]
+        await controller.workspaceChanged()
 
-        screens.screensList = [builtin, external] // ext-2 분리
+        gateway.windowsList[0] = chrome(at: messy)
         let restore = await startHangingRestore(controller)
-        screens.screensList = [builtin, external, external2] // 복원이 매달린 사이 ext-2 재연결
-        gateway.windowsList.append(WindowInfo(id: 3, appBundleID: "com.slack", appName: "Slack",
-                                              frame: CGRect(x: 4500, y: 300, width: 800, height: 600))) // 어질러짐
-        await controller.externalScreensAppeared() // isRestoring → 보류
-        let outcome = await restore.value
+        screens.screensList = [builtin, external, external2]
+        gateway.windowsList[1] = WindowInfo(id: 2, appBundleID: "com.slack", appName: "Slack",
+                                            frame: CGRect(x: 4500, y: 300, width: 800, height: 600), windowServerID: 102)
+        await controller.externalScreensAppeared()
+        _ = await restore.value
 
-        XCTAssertEqual(gateway.windowsList.first { $0.appBundleID == "com.slack" }?.frame,
-                       CGRect(x: 4072, y: 0, width: 960, height: 1080)) // 두 번째 바퀴에서 복원됨
-        guard case .restored(let results) = outcome else { return XCTFail("\(outcome)") }
-        XCTAssertTrue(results.contains { $0.screenID == "ext-2" })
+        XCTAssertEqual(gateway.windowsList.first { $0.appBundleID == "com.slack" }?.frame, slackSaved)
+        XCTAssertEqual(gateway.windowsList.first { $0.appBundleID == "com.chrome" }?.frame, saved)
+        XCTAssertTrue(controller.lastResults.contains { $0.screenID == "ext-2" })
     }
 
     func testFreshLaunchShowsStoredScreenName() async {
-        // 재시작 직후 화면이 없어도 저장된 프로필의 화면 이름이 보인다
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let first = makeController()
         await first.captureNow()
 
@@ -468,212 +501,200 @@ final class PlugbackControllerTests: XCTestCase {
         XCTAssertEqual(second.screenPresence, .remembered(screenID: "ext-1", name: "LG UltraFine 27"))
     }
 
-    // 다중 화면 중복 제거(F-01.6)는 이제 엔진 정책 — RestoreEngineTests가 검증한다.
-
     func testFingerprintMismatchBlocksRestore() async {
-        // UUID는 같은데 지문이 다르면 복원하지 않는다 — 오작동 대신 무작동 (F-01.4)
         let fpA = ScreenFingerprint(vendor: 1, model: 2, serial: 3)
         let fpB = ScreenFingerprint(vendor: 1, model: 2, serial: 999)
-        let screenA = ScreenInfo(id: "ext-1", name: "LG", frame: external.frame,
-                                 isBuiltin: false, fingerprint: fpA)
+        let screenA = ScreenInfo(id: "ext-1", name: "LG", frame: external.frame, isBuiltin: false, fingerprint: fpA)
         screens.screensList = [builtin, screenA]
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
-        XCTAssertEqual(controller.sections.first?.profile?.fingerprint, fpA) // 저장 시 지문 기록
 
-        // 같은 UUID, 다른 지문의 화면으로 교체 (OS가 배정을 바꾼 상황)
-        screens.screensList = [builtin, ScreenInfo(id: "ext-1", name: "LG", frame: external.frame,
-                                                   isBuiltin: false, fingerprint: fpB)]
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        screens.screensList = [builtin, ScreenInfo(id: "ext-1", name: "LG", frame: external.frame, isBuiltin: false, fingerprint: fpB)]
+        gateway.windowsList[0] = chrome(at: messy)
         await controller.restoreNow()
-
-        XCTAssertTrue(controller.identityMismatch) // 결과에서 파생된 배선 확인
+        XCTAssertTrue(controller.identityMismatch)
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
     func testAutoModeRestoresWhenScreenAppears() async {
-        // 외장 화면이 연결되면 자동으로 복원된다 (US-001, F-01.1)
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
-
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.windowsList[0] = chrome(at: messy)
         await controller.externalScreensAppeared()
         XCTAssertEqual(controller.sections.first?.lastResult?.movedCount, 1)
     }
 
-    func testManualModeDoesNotRestoreOnConnect() async {
-        // 수동 모드에서는 연결돼도 복원되지 않는다 (US-007 AC-4)
+    func testLaunchWithScreensAlreadyConnectedDoesNotRestore() async {
+        // 앱 실행 자체로 복원하지 않는다 — 연결된 화면은 기준선일 뿐이다 (D8·G19)
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
+        let first = makeController()
+        await first.captureNow()
+        gateway.windowsList[0] = chrome(at: messy)
+        let second = makeController()
+        second.startWatching()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+        await second.workspaceChanged() // 같은 환경의 반복 알림도 복원이 아니다
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+    }
+
+    func testManualModeDoesNotRestoreOnConnectAndCancelsAutomaticWaits() async {
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
         controller.restoreMode = .manual
-
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.windowsList[0] = chrome(at: messy)
         await controller.externalScreensAppeared()
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
     func testUnauthorizedBlocksAutoRestore() async {
-        // 권한이 없으면 복원을 시도하지 않는다 (US-010 AC-2)
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
         controller.authorizationCheck = { false }
-
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
+        gateway.windowsList[0] = chrome(at: messy)
         await controller.externalScreensAppeared()
         XCTAssertTrue(gateway.moveCalls.isEmpty)
     }
 
     func testUnauthorizedBlocksEveryCommand() async {
-        // 게이트는 자동 경로만이 아니라 모든 명령 내부에 있다 (US-010 AC-2) — published 상태도 갱신된다
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
-        let controller = makeController()
-        await controller.captureNow() // 권한 있는 동안 프로필 확보
-        controller.authorizationCheck = { false }
-
-        gateway.windowsList[0] = WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                            frame: CGRect(x: 2500, y: 500, width: 800, height: 600))
-        let outcome = await controller.restoreNow()
-        XCTAssertEqual(outcome, .notAuthorized)       // 반환값으로도 구별된다
-        XCTAssertTrue(gateway.moveCalls.isEmpty)      // 수동 복원 차단
-        XCTAssertFalse(controller.isAuthorized)       // UI 바인딩용 상태 갱신
-
-        let before = controller.sections.first?.profile
-        let capture = await controller.captureNow()         // 저장도 차단 — 어질러진 배치로 덮어쓰지 않는다
-        XCTAssertEqual(capture, .notAuthorized)
-        XCTAssertEqual(controller.sections.first?.profile, before)
-    }
-
-    func testRestoreModePersists() {
-        // 사용자 모드 설정은 재시작을 넘어 보존된다 (F-05.4, F-08.3)
-        let first = makeController()
-        XCTAssertEqual(first.autoSlotUpdateMode, .onDisconnect, "기존 사용자의 기본 동작")
-        first.restoreMode = .manual
-        first.autoSlotUpdateMode = .liveUntilDisconnect
-        let second = makeController()
-        XCTAssertEqual(second.restoreMode, .manual)
-        XCTAssertEqual(second.autoSlotUpdateMode, .liveUntilDisconnect)
-    }
-
-    func testRemoveProfileDeletesAndPersists() async {
-        // 프로필 통째 삭제 — 되살아나지 않고, 재연결 시 프로필 없는 화면 (US-012 AC-2·3)
-        gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
-        XCTAssertEqual(controller.allProfiles.count, 1)
+        controller.authorizationCheck = { false }
+        gateway.windowsList[0] = chrome(at: messy)
+        let awaited6 = await controller.restoreNow()
+        XCTAssertEqual(awaited6, .notAuthorized)
+        XCTAssertTrue(gateway.moveCalls.isEmpty)
+        XCTAssertFalse(controller.isAuthorized)
+        let before = controller.allWorkspaces
+        let awaited7 = await controller.captureNow()
+        XCTAssertEqual(awaited7, .notAuthorized)
+        XCTAssertEqual(controller.allWorkspaces, before)
+    }
 
-        controller.removeProfile("ext-1")
-        XCTAssertTrue(controller.allProfiles.isEmpty)
-        XCTAssertNil(controller.sections.first?.profile)
+    func testSettingsPersist() {
+        let first = makeController()
+        first.restoreMode = .manual
+        first.autoSave = false
+        first.reopenClosedApps = true
+        first.openMissingWindows = true
+        first.directWindowAssignment = true
+        let second = makeController()
+        XCTAssertEqual(second.restoreMode, .manual)
+        XCTAssertFalse(second.autoSave)
+        XCTAssertTrue(second.reopenClosedApps)
+        XCTAssertFalse(second.reviveWindowlessApps, "부모 ON이 하위 값을 켜지 않는다 (W23)")
+        XCTAssertTrue(second.openMissingWindows)
+        XCTAssertTrue(second.directWindowAssignment)
+    }
+
+    func testRemoveWorkspaceDeletesAndPersists() async {
+        gateway.runningBundleIDs = ["com.chrome"]
+        gateway.windowsList = [chrome(at: saved)]
+        let controller = makeController()
+        await controller.captureNow()
+        XCTAssertEqual(controller.allWorkspaces.count, 1)
+
+        controller.removeWorkspace(WorkspaceKey(screenIDs: ["ext-1"]))
+        XCTAssertTrue(controller.allWorkspaces.isEmpty)
+        XCTAssertFalse(controller.hasRestorableProfile)
 
         let relaunched = makeController()
         await relaunched.cardOpened()
-        XCTAssertNil(relaunched.sections.first?.profile)
+        XCTAssertFalse(relaunched.hasRestorableProfile)
     }
 
-    func testRemoveProfileAlsoDropsItsResult() async {
-        // 결과 수명 = 프로필 수명. 같은 화면에 프로필을 다시 만들어도 전생의 결과가 보이면 안 된다
+    func testRemoveWorkspaceAlsoDropsItsResult() async {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 2500, y: 500, width: 800, height: 600))]
+        gateway.windowsList = [chrome(at: messy)]
         let controller = makeController()
         await controller.captureNow()
+        gateway.windowsList[0] = chrome(at: saved)
         await controller.restoreNow()
         XCTAssertNotNil(controller.sections.first?.lastResult)
-
-        controller.removeProfile("ext-1")
+        controller.removeWorkspace(WorkspaceKey(screenIDs: ["ext-1"]))
         XCTAssertNil(controller.sections.first?.lastResult)
-        await controller.captureNow() // 새 삶 — 결과는 아직 없어야 한다
+        await controller.captureNow()
         XCTAssertNil(controller.sections.first?.lastResult)
     }
 
     func testUnreadableStoreNeverOverwritesTheFile() async throws {
-        // 읽기 실패가 첫 실행으로 위장하면 다음 저장이 원본을 덮어쓴다 — 그 경로를 막는다.
-        // chmod 000: 읽기는 실패하지만 atomic 쓰기(rename)는 성공하는, 정확히 위험한 조합.
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("profiles.json")
+        let file = dir.appendingPathComponent("workspaces.json")
         try Data("소중한 원본".utf8).write(to: file)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
 
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         XCTAssertEqual(controller.storeNotice, .unreadable)
-
-        // 저장은 통째로 거부된다 — 재시작에 증발할 메모리 저장으로 "저장됨"을 속이지 않는다
-        let outcome = await controller.captureNow()
-        XCTAssertEqual(outcome, .saveBlocked)
-        XCTAssertNil(controller.sections.first?.profile)
-        XCTAssertNil(controller.lastCaptureCount)  // 거짓 확인 표시가 뜨지 않는다
-        controller.dismissStoreNotice()            // 알림을 닫아도 차단은 유지
+        let awaited8 = await controller.captureNow()
+        XCTAssertEqual(awaited8, .saveBlocked)
+        XCTAssertFalse(controller.hasRestorableProfile)
+        XCTAssertNil(controller.lastCaptureCount)
+        controller.dismissStoreNotice()
         _ = await controller.captureNow()
-        controller.labAutoSlot = true
         await controller.collectCandidate()
-        controller.confirmAllCandidates()
-
+        XCTAssertEqual(controller.prepareForTermination(), .proceed)
         XCTAssertTrue(controller.isSaveBlocked)
         XCTAssertFalse(controller.hasPendingCollect)
-        XCTAssertTrue(controller.allProfiles.isEmpty)
-        XCTAssertNil(controller.sections.first?.restoreSource)
+        XCTAssertTrue(controller.allWorkspaces.isEmpty)
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
-        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본") // 원본 무사
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "소중한 원본")
     }
 
     func testRuntimeWriteFailureDoesNotClaimCaptureSucceededAndCanRetry() async throws {
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
-        let controller = makeController() // 없는 파일을 정상적인 첫 실행으로 읽는다
+        gateway.windowsList = [chrome(at: saved)]
+        let controller = makeController()
         try Data("not-a-directory".utf8).write(to: dir)
 
-        let failed = await controller.captureNow()
-
-        XCTAssertEqual(failed, .saveFailed)
+        let awaited9 = await controller.captureNow()
+        XCTAssertEqual(awaited9, .saveFailed)
         XCTAssertEqual(controller.storeNotice, .writeFailed)
-        XCTAssertFalse(controller.isSaveBlocked, "실행 중 쓰기 실패는 다음 저장에서 재시도할 수 있어야 한다")
-        XCTAssertNil(controller.sections.first?.profile)
+        XCTAssertFalse(controller.isSaveBlocked)
+        XCTAssertFalse(controller.hasRestorableProfile)
         XCTAssertNil(controller.lastCaptureCount)
 
         try FileManager.default.removeItem(at: dir)
-        let retried = await controller.captureNow()
-
-        XCTAssertEqual(retried, .captured(appCount: 1))
+        let awaited10 = await controller.captureNow()
+        XCTAssertEqual(awaited10, .captured(appCount: 1, windowCount: 1))
         XCTAssertNil(controller.storeNotice)
-        XCTAssertEqual(controller.sections.first?.profile?.apps.map(\.bundleID), ["com.chrome"])
         XCTAssertEqual(controller.lastCaptureCount, 1)
     }
 
     func testCaptureConfirmationExpiresOnCardOpen() async {
-        // 저장됐다는 것을 화면에서 확인할 수 있다 (US-002 AC-1)
         gateway.runningBundleIDs = ["com.chrome"]
-        gateway.windowsList = [WindowInfo(id: 1, appBundleID: "com.chrome", appName: "Chrome",
-                                          frame: CGRect(x: 1512, y: 0, width: 1280, height: 1440))]
+        gateway.windowsList = [chrome(at: saved)]
         let controller = makeController()
         await controller.captureNow()
         XCTAssertEqual(controller.lastCaptureCount, 1)
         await controller.cardOpened()
         XCTAssertNil(controller.lastCaptureCount)
+    }
+
+    func testScreenLabelsUsePortLocationThenLetters() {
+        let labels = PlugbackController.screenLabels(for: [
+            ("a", "LG Fine 24", .leftBack), ("b", "LG Fine 24", .right), ("c", "LG Fine 24", .right),
+            ("d", "DELL", nil), ("e", "BenQ", nil), ("f", "BenQ", nil),
+        ])
+        XCTAssertEqual(labels["a"], ScreenLabel(name: "LG Fine 24", portLocation: .leftBack))
+        XCTAssertEqual(labels["b"], ScreenLabel(name: "LG Fine 24", portLocation: .right, letter: "A"))
+        XCTAssertEqual(labels["c"], ScreenLabel(name: "LG Fine 24", portLocation: .right, letter: "B"))
+        XCTAssertEqual(labels["d"], ScreenLabel(name: "DELL"), "유일한 이름에는 아무것도 붙이지 않는다")
+        XCTAssertEqual(labels["e"], ScreenLabel(name: "BenQ", letter: "A"))
+        XCTAssertEqual(labels["f"], ScreenLabel(name: "BenQ", letter: "B"))
     }
 }

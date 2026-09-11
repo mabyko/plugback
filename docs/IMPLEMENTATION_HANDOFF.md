@@ -55,3 +55,57 @@
 - 라이브러리·도구의 새로운 API 세부사항은 사용자 Context7 정책을 따른다. 이미 확인한 로컬 SDK·공식 문서 근거를 재사용할 수 있다. 브라우저 자동화는 Aside를 사용한다.
 
 완료 시 변경한 동작·파일, 실제 실행한 검사와 결과, 남은 실기기 검증·제약을 구분해서 보고한다. 제품 구현 완료와 실기기 지원 검증 완료를 혼동하지 않는다. 이 요청은 로컬 구현 인계이며 배포·릴리스 요청은 아니다.
+
+---
+
+## 완료 보고 — 2026-09-11 · 구현 `runner` 브랜치
+
+### 구현한 동작
+
+| 범위 | 구현 | 코드 |
+|---|---|---|
+| 작업 환경별 독립 저장 (D5) | 외장 화면 식별자 집합이 키. `workspaces.json`(버전 2)에 작업 환경마다 앱 선택·저장본·닫힌 창 제외 목록을 보존. 조합이 바뀌면 떠나는 환경의 이력을 확정하고 새 환경을 선택하며 자동 모드면 그 환경의 저장본으로 새 요청 | `Workspace.swift`, `WorkspaceLibrary.swift`, `ProfileStore.swift`, `PlugbackController.workspaceChanged` |
+| Space 안의 개별 창 기록 (D1) | 창 하나가 `WindowPlacement` 하나. 저장·수집은 현재 Space의 창만 확인한 것으로 기록하고 미관찰 기록은 보존. 실행 중 창 연결(저장 자리 ↔ WindowServer 창 ID)로 같은 창의 이동과 새 창 추가를 구별. 저장된 Space 정보는 파일에 남고 재실행 뒤 대응하지 못하면 확인 필요 | `CaptureEngine.swift`, `WorkspaceLibrary.collect/capture` |
+| 공통 저장 기준 (D2·D4·D7) | 일반 설정 「자동 저장」 최초 ON. 저장 대기 이력은 메모리에만 두고 환경 이탈·정상 종료 전에 내용이 다를 때만 확정. 수동 저장·OFF 전의 늦은 관찰 무효화(순서 번호). 새 앱 기본 포함·제외 앱만 제외. 종료 전 저장 실패는 종료 취소 후 재시도·저장 없이 종료·취소 | `WorkspaceLibrary.confirm/setAutoSave`, `PlugbackApp.swift`(앱 델리게이트) |
+| 창 대응 (D3) | 확인된 연결 우선 → 직접 지정(실험실 ON·모호할 때) → 전체 이동 거리 최소 일대일 배정(동률은 크기 차이·일정 순서). 후보가 남으면 유지. 같은 창 중복 배정 없음. 확정한 연결 재사용, OFF 전환은 미확정 선택만 취소 | `WindowMatching.swift`, `RestoreEngine.swift`, `RestoreSession.chooseWindow` |
+| 요청 수명 (D8) | 요청은 소스 고정·저장 창별 결과(이동/제자리/건너뜀/실패/방문 대기/이동 안내/확인 필요/잠금 보류/취소). 방문·이동 대기는 이벤트로만 재판정(시간 제한·타이머 없음), 확인 필요는 「남은 창 복원」으로만. 취소 규칙(새 요청·새 저장·환경 변경·대상 제외·종료·자동 복원 OFF는 자동 요청만). 재실행은 이어가지 않음. 이동·실행·생성 직전 요청 유효성·잠금 게이트 | `RestoreSession.swift`, `PlugbackController.performRestore/performResume/cancelRemaining/resumeRemaining` |
+| 닫힌 창 (D9) | 같은 환경에서 관찰한 닫힘(창 부재·앱 종료 알림)은 다음 저장 성공까지 제외(파일 보존). 창 부재는 존재하는 창 전부의 WindowServer 목록(`CGWindowListCopyWindowInfo`)으로 판정 — AX 열거는 다른 Space의 창을 빼먹는다. 다른 환경·연결 해제 중 닫힘은 기록 유지. 연결 없음·미관찰은 닫힌 환경 불명으로 앱 실행·창 생성 보류 | `WorkspaceLibrary.trackLinks/noteAppTerminated/markClosed`, `RestoreEngine.assign` |
+| 실험실 및 이전 | 「종료된 앱 다시 열기」(부모)·「실행 중인 앱 창 되살리기」·「부족한 창 추가로 열기」·「복원할 창 직접 지정」 모두 최초 OFF, 실행·생성 직전 최신 설정 확인, 요청당 앱마다 한 번. 설정 이전 한 번: `labAutoSlot`→자동 저장, `reopenWindowless`→창 되살리기. 구버전 `profiles.json`은 화면 하나짜리 작업 환경으로 읽기만 하고 원본 보존 | `PlugbackController.migrateSettingsIfNeeded`, `ProfileStore.loadLegacy`, `SettingsView.swift`, `AXWindowGateway.launch/openWindow/openAdditionalWindow` |
+| 확인 화면 | 「복원 확인」 창 — 저장 창별 앱·화면·Space·위치·사유, 직접 지정 ON일 때 후보 선택과 「창 확인」(raise), 저장 자리 삭제, 「남은 창 복원」. 카드에 「창 확인 필요 N개」·대기 줄·「남은 창 복원」「남은 복원 취소」. 진단 기록은 로컬 100건·내보내기 버튼 | `RestoreConfirmationView.swift`, `MenuBarCard.swift`, `Diagnostics.swift` |
+| 포트 위치·A/B·Space 번호 | IORegistry의 DisplayPort 전송 노드 EDID ↔ USB-C 포트 노드 `port-location`으로 포트 위치를 읽어 표시(키 아님). 같은 이름·같은 위치·위치 불명은 A/B. Space 번호는 화면별 일반 Space의 현재 순서(전체화면 제외). 단독 항목에도 화면 이름 표시 | `ScreenProvider.swift`(`PortLocator`), `PlugbackController.screenLabels/liveSpaceNumbers`, `CardPresentation.screenName` |
+| 잠금·조작 보호·Spaces 지원 (D5·D6·D8) | 잠금 삼상태(`ScreenLock`), DisplayWatcher의 두 재현 실패 수정(잠금 중 연결 뒤 빠른 해제, 추가 화면만 분리). 자동 요청에서 요청 시작 뒤 이동 알림을 받은 창 보호(자기 이동 1초 대조). 「각각의 Spaces가 있는 디스플레이」 설정·관찰 교차 확인으로 OFF·판정 불가 시 저장·복원 보류. 단축어 `requiresLocalDeviceAuthentication` | `SpacesSupport.swift`, `DisplayWatcher.swift`, `WindowMoveObserver.swift`, `RestoreIntent.swift` |
+
+### 실행한 검사와 결과 (2026-09-11, 사용자 프로필과 격리된 임시 디렉터리·UserDefaults suite)
+
+| 검사 | 결과 |
+|---|---|
+| `swift test` (PlugbackKit) | 175개 통과, 0 실패. `CollectTriggerTests`는 실제 NSWorkspace 알림을 쓰므로 실행 중 앱 전환이 있으면 드물게 어긋난다 — 재실행에서 통과 |
+| `bash Scripts/check-product-restore.sh` (R1–R6 재현 + 잠금 재현 5개) | 15개 통과, 0 실패 — 수정 전 8+2 실패였던 검사가 새 인터페이스로 갱신되어 모두 통과 |
+| `xcodebuild test … -scheme Plugback` (App 표현·렌더 검사) | 23개 통과, 0 실패 |
+| `xcodebuild … -configuration Debug build` | BUILD SUCCEEDED |
+
+### 남은 실기기 검증과 제약
+
+- **창 생성 경로:** 종료된 앱 실행(`NSWorkspace.openApplication`)·기본 창 되살리기·메뉴 「새 창」 항목 누르기(`openAdditionalWindow`)는 페이크로만 검증했다. 앱마다 항목 이름·지원이 다르며 실제 앱에서의 창 등장 시간·대응은 미검증이다.
+- **사용자 조작 보호:** AX 이동 알림에는 누가 옮겼는지 정보가 없다. Plugback 자신의 이동 뒤 1초 안의 알림을 자기 이동으로 보는 추정이며, 다른 앱·입력 장치·OS 재배치와 겹칠 때의 오탐·누락은 실기기에서 확인해야 한다 (1.1절 검증표).
+- **잠금 판정:** 세션 사전에 키가 없는 상태를 안 잠김으로 읽는다. 실제 잠금 중의 키 값, 잠금 해제 알림 순서, 잠긴 채 연결·복원 중 재잠금은 실기기 검증 항목이다.
+- **개별 Spaces 설정:** `com.apple.spaces` `spans-displays`가 실제 설정 전환·재로그인 뒤 어떻게 바뀌는지 미검증. 관찰 교차 확인이 보완한다.
+- **포트 위치:** M2 Max 한 대·LG HDR 4K 한 대의 USB-C 직결에서만 구조를 확인했다. 독·DisplayLink·다른 맥·동일 모델 여러 대는 미검증이며 못 찾으면 A/B로만 구분한다.
+- **순차 연결 대기 시간:** 안정화 대기는 기존 1.5초를 유지했다. 짧은 재확인 값과 준비 판정은 연결·충돌 실험으로 조정한다. A 복원 중 B 추가 시 A 요청을 취소하고 A+B로 전환하는 흐름은 페이크로 검증했다.
+- **비활성 Space의 창 관찰 범위·화면 간 frame 이동 뒤 Space 소속·Space opaque name의 재부팅 후 안정성**은 여전히 실기기 항목이다. 대응하지 못하면 확인 필요로 남긴다.
+- **다른 Space의 창 이동(P05):** 같은 화면의 다른 Space에 있는 창은 frame 이동으로 옮길 수 없어 확인 필요(창을 옮긴 뒤 「남은 창 복원」)로 안내한다. Space 간 창 이동 자동화는 범위 밖이다.
+- 배포·릴리스·공증은 하지 않았다.
+
+### 실기기에서 발견한 회귀와 수정 (2026-09-11, 설치 뒤)
+
+첫 설치본에서 LG HDR 4K 환경의 창 위치 기록이 11개에서 1개로 줄었다. 원인 세 가지를 코드와 재현 검사로 확정하고 고쳤다.
+
+| 원인 | 증상 | 수정 | 검사 |
+|---|---|---|---|
+| 앱 제외가 저장 대기 이력에서 그 앱의 기록을 지움 | 제외한 앱 6개의 기록이 종료 저장 때 사라짐 (US-006 AC-2 위반) | `setAppEnabled(false)`는 포함 여부만 바꾼다. `CaptureEngine`은 제외 앱의 창을 관찰하지 않아 기록을 건드리지 않는다 | `testExcludingAnAppKeepsItsRecordThroughTheNextAutoSave` |
+| AX 표준 창 열거가 다른 Space의 창을 돌려주지 않아 Space 전환을 닫힘으로 판정 | 연결된 창이 다른 Space로 가면 닫힘 제외 → 다음 저장에서 삭제 | 닫힘 근거를 `CGWindowListCopyWindowInfo(.optionAll)`의 존재 목록으로 바꿈(`WindowGateway.existingWindowServerIDs`). 목록이 없으면 판정하지 않음 | `testWindowOnAnotherSpaceIsNotAClosure`, 실측 프로브(다른 Space 창 전부 AX 열거 누락) |
+| 화면 재연결 직후 내장에 모여 있는 연결 창을 「사용자가 내장으로 옮김」으로 판정 | 수동 복원 모드·복원 전 수집에서 외장 기록 전부 삭제 | 창 연결에 「이 환경에서 외장에서 확인함」(`seenIn`)을 두고 환경이 바뀌면 잊는다. 같은 환경에서 외장에 있는 것을 본 뒤 내장에서 발견한 창만 뺀다 | `testWindowsGatheredOnBuiltinByAScreenChangeAreNotDropped` |
+
+| 구버전 이전 기록(Space 없음)이 다시 저장 때 이어받지 못하고 새 자리와 나란히 남음 | 수동 저장 뒤 같은 앱이 「Space 1」과 「Space 미지정」에 둘 다 표시 | 이어받기를 두 단계로: 같은 Space 우선, 그다음 Space 없는 옛 자리는 같은 앱·화면의 어느 Space 창이든 이어받아 Space 지정. 남은 Space 없는 자리는 같은 앱·화면을 Space와 함께 확인했으면 흡수 | `testResavingASpacelessRecordAssignsItsSpaceInsteadOfDuplicating` |
+
+설치본의 기록은 옛 `profiles.json`(마지막 자동 슬롯, 17:20)에서 다시 가져와 복구했다. 제외 선택은 유지했다. 이미 중복된 저장본은 수정본에서 저장 한 번(수동 또는 자동 확정)으로 정리된다.

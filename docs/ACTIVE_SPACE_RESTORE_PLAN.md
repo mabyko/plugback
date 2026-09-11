@@ -4,6 +4,8 @@
 
 2026-09-01 기준 구현 완료, 실기기 확인 대기.
 
+**2026-09-11 갱신:** 아래 「하지 않는 것」 중 「목적 화면에 처음부터 있던 비활성 Space를 방문할 때마다 복원」은 D8 합의로 바뀌었다 — 처음부터 비활성인 저장 Space도 **복원 요청이 있는 동안** 방문 대기로 남고 한 번 열면 복원하며, 요청이 없는 평소 방문은 여전히 복원하지 않는다. 저장된 Space 정보는 이제 파일에 보존되며(메모리 전용 overlay 폐지), 현재 목록에서 대응하지 못하면 확인 필요로 남긴다. 현재 계약은 [FUNCTIONAL_SPEC F-02.2·F-02.6](./FUNCTIONAL_SPEC.md)이다.
+
 이 문서는 이전의 「일반 Space 자동 복원」과 「전체 화면 복원」 계획을 대체한다. 실패한 private write·Mission Control 합성 실험의 상세 근거는 다음 조사 문서와 git 이력에 남긴다.
 
 - [일반 Space 화면 간 이동 조사](./research/regular-space-relocation-between-displays.md)
