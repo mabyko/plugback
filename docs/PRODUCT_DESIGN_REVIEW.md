@@ -12,9 +12,11 @@
 
 후속 [Space별 창 위치·상태 검토](./SPACE_LAYOUT_STATE_REVIEW.md)는 Space 안의 개별 창 모델과 상태들을 다룬다. D1의 다중 창 지원, D2의 공통 저장·복원 기준, D3의 직접 지정 실험실 옵션·최초 OFF·OFF 자동 배정 순서와 남는 창 유지·확정한 연결의 재사용과 진행 중 ON/OFF 전환 기준, D4의 최초·이후 새 앱 기본 포함과 앱 제외, D5의 작업 환경 정의와 짧은 재확인 후 준비된 조합부터 복원·조작한 창 보호 방향, D6의 개별 Spaces ON 구성 우선 지원·공유 구성 기록 보존과 지원 조건 안내·화면별 Space 순차 번호 표시·포트 위치 우선과 A/B 보조 화면명, D7의 OFF 때 이력 폐기·ON 때 새 수집, D8의 확인 필요 수동 재개·이벤트 기반 방문 대기와 시간 제한 없음·작업 이력 수집·자동 복원 설정 전환·재실행 처리·잠금 중 연결 보류와 복원 중단·재개·단축어의 잠금 해제 요구·판정 불가 시 보류와 피드백 개선, D9의 닫힘 환경별 기록 보존·같은 환경의 다음 저장 성공까지 제외 유지·불확실 시 열기 보류·실험 탭의 앱 다시 열기·창 되살리기·추가 창 생성 구조·실험실 설정 모두 최초 OFF·복원 도중 OFF 적용은 확정했으며, 나머지 정책과 세부 범위는 구분해 검토한다.
 
-**구현 반영(2026-09-11):** 아래 R1–R6는 작업 환경·창별 기록 모델로 구현되어 [재현 검사](../Tests/DesignReviewTests/ProductRestoreReproductionTests.swift)가 모두 통과한다. 현재 계약은 [FUNCTIONAL_SPEC](./FUNCTIONAL_SPEC.md)이며, 구현한 동작·실행한 검사·남은 실기기 검증은 [구현 인계 문서의 완료 보고](./IMPLEMENTATION_HANDOFF.md)에 있다. 이 문서의 「현재」는 `09f9d67` 기준 진단이다.
+**구현 반영(2026-09-11):** 아래 R1–R6는 작업 환경·창별 기록 모델로 구현되어 [재현 검사](../Tests/DesignReviewTests/ProductRestoreReproductionTests.swift)가 모두 통과한다. 현재 계약은 [FUNCTIONAL_SPEC](./FUNCTIONAL_SPEC.md)이며, 남은 실기기 검증은 [실기기 체크리스트](./DEVICE_TEST_CHECKLIST.md) 10절에 있다. 이 문서의 「현재」는 `09f9d67` 기준 진단이다.
 
-**구현 인계(2026-09-11):** 사용자는 남은 세 묶음을 권장안으로 정리하고 구현으로 넘어가는 데 동의했다. 예외 처리·기존 설정 이전·확인 UI와 로컬 실패 기록은 [상태 검토 7.1절](./SPACE_LAYOUT_STATE_REVIEW.md)의 구현 기본안을 따른다. 실제 구현은 현재 워크트리의 Claude 세션에 맡기며, 범위·우선순위·검증 기준은 [구현 인계 문서](./IMPLEMENTATION_HANDOFF.md)에 정리했다.
+> `ProfileSlots.swift`·`ProfileSlotsTests.swift`는 `09f9d67`의 파일이다. 지금은 `WorkspaceLibrary.swift`·`WorkspaceLibraryTests.swift`가 그 자리를 맡으며, 본문의 해당 이름은 링크 없이 둔다.
+
+**구현 인계(2026-09-11):** 사용자는 남은 세 묶음을 권장안으로 정리하고 구현으로 넘어가는 데 동의했다. 예외 처리·기존 설정 이전·확인 UI와 로컬 실패 기록은 [상태 검토 7.1절](./SPACE_LAYOUT_STATE_REVIEW.md)의 구현 기본안을 따른다. 구현은 2026-09-11에 완료했다.
 
 ## 1. 제보와 재현 결과
 
@@ -42,7 +44,7 @@ R1은 버전 차이까지 확인했다. 안내형 복원 도입 직전인 `56bae
 - [RestoreSession.addRecoveries](../Sources/PlugbackKit/RestoreSession.swift): `.stranded`만 세션에 등록한다.
 - [RestoreEngine.selectSpaceWindow / claimedApps](../Sources/PlugbackKit/RestoreEngine.swift): 비활성·복수 창은 보류하지만 결과 항목을 만들지 않고, 앱 중복은 화면 식별자 순서로 제거한다.
 - [CaptureEngine.capture / collect](../Sources/PlugbackKit/CaptureEngine.swift): 수동 저장은 보이지 않는 기존 항목을 유지하고, 수집은 다른 화면에 보이는 앱을 현재 화면에서 제거한다.
-- [ProfileSlots.confirm](../Sources/PlugbackKit/ProfileSlots.swift): 전달된 화면들만 확정한다.
+- `ProfileSlots.confirm`: 전달된 화면들만 확정한다.
 - [PlugbackController.performRestore](../Sources/PlugbackKit/PlugbackController.swift): 복원 회차 뒤 수집을 호출한다.
 
 기존 명세 F-01.6·F-08.5와 `testInitiallyInactiveSpaceNeverBecomesAGeneralVisitRestore`는 R1·R3의 현재 동작을 의도적으로 허용한다. F-08.6은 R5의 위험을 수용한다. 따라서 기존 테스트 통과만으로 이번 제품 요구를 만족한다고 판단하면 안 된다.
@@ -97,7 +99,7 @@ B의 기록이 생기는 조건도 있다. 이번 재현에서는 B의 대상 �
 4. 화면 연결의 자동 복원과 버튼·단축어의 수동 복원은 같은 `restoreNow` 경로로 합류한다. 시작할 때 화면별로 소스를 선택한다.
 5. 복원 중·안내가 남은 동안 수집을 미루지만, 회차 종료 후에는 실패 여부와 무관하게 수집을 시도한다.
 
-근거: [ProfileSlots](../Sources/PlugbackKit/ProfileSlots.swift), [컨트롤러](../Sources/PlugbackKit/PlugbackController.swift), [수집 트리거](../Sources/PlugbackKit/CollectTrigger.swift), [반영 방식 테스트](../Tests/PlugbackKitTests/ProfileSlotsTests.swift).
+근거: `ProfileSlots`, [컨트롤러](../Sources/PlugbackKit/PlugbackController.swift), [수집 트리거](../Sources/PlugbackKit/CollectTrigger.swift), `반영 방식 테스트`.
 
 ## 3. 수정 설계: 저장과 복원의 단위를 작업 환경으로 올린다
 
@@ -323,7 +325,7 @@ Space 전체 이동은 계속 사용자가 Mission Control에서 수행한다. �
 
 `WindowGateway`의 “마지막 열거만 유효”한 ID를 장기적인 창 식별자로 저장해서는 안 된다. 창 대응과 참조 유효성은 실제 창 어댑터가 책임지고, 저장·카드 조회가 복원의 참조를 무효화하지 않도록 관찰과 실행 구간을 소유해야 한다.
 
-Space 지정도 재시작 뒤 조용히 사라지면 안 된다. 현재 [ProfileSlots](../Sources/PlugbackKit/ProfileSlots.swift)는 재실행 시 overlay를 `nil`로 로드한다. 수정 설계에서는 **저장 당시 Space가 지정되었다는 사실과 검증 필요 상태를 보존**한다. 재실행 자체로 복원용 식별 검사를 시작하지 않으며, 다음 복원 요청에서 대응을 검증하지 못하면 확인 필요로 남긴다. Space 제약이 없는 평면 복원으로 몰래 바꾸지 않는다.
+Space 지정도 재시작 뒤 조용히 사라지면 안 된다. 현재 `ProfileSlots`는 재실행 시 overlay를 `nil`로 로드한다. 수정 설계에서는 **저장 당시 Space가 지정되었다는 사실과 검증 필요 상태를 보존**한다. 재실행 자체로 복원용 식별 검사를 시작하지 않으며, 다음 복원 요청에서 대응을 검증하지 못하면 확인 필요로 남긴다. Space 제약이 없는 평면 복원으로 몰래 바꾸지 않는다.
 
 실행을 넘어 신뢰할 수 있는 Space 식별 기준은 아직 실기기 근거가 부족하다. raw Space ID를 영구 키로 쓰거나 opaque name의 재부팅 후 안정성을 보장한다고 가정하지 않는다. 검증이 안 되는 경우의 제품 경로는 재확인·재저장이다.
 

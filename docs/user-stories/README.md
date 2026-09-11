@@ -23,7 +23,7 @@ Plugback의 사용자 관점 시나리오 카드.
 | [US-010](./US-010-permission-onboarding.md) | 처음 켰을 때 무엇을 해야 하는지 안다 | P1 |
 | [US-011](./US-011-launch-at-login.md) | 켜두면 알아서 돌아간다 | P2 |
 | [US-012](./US-012-manage-saved-profiles.md) | 저장된 작업 환경을 한눈에 관리한다 | P2 |
-| [US-013](./US-013-lab-auto-slot.md) | 저장을 잊어도 어제 배치로 돌아온다 (자동 저장) | P1 |
+| [US-013](./US-013-auto-save.md) | 저장을 잊어도 어제 배치로 돌아온다 (자동 저장) | P1 |
 
 ## 카드 형식
 

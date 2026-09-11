@@ -1,6 +1,8 @@
 # Space별 창 위치 저장·복원 상태 검토
 
-2026-09-10 · 코드 기준 `09f9d67` · 설계 검토안 · **2026-09-11 구현 반영** — D1–D9와 7.1절의 기본안은 제품 코드에 구현됐다. 현재 계약은 [FUNCTIONAL_SPEC](./FUNCTIONAL_SPEC.md), 구현 범위·검사 결과·남은 실기기 검증은 [구현 인계 문서의 완료 보고](./IMPLEMENTATION_HANDOFF.md)를 본다. 본문의 「현재 구현」「미구현」 서술은 `09f9d67` 기준이다.
+2026-09-10 · 코드 기준 `09f9d67` · 설계 검토안 · **2026-09-11 구현 반영** — D1–D9와 7.1절의 기본안은 제품 코드에 구현됐다. 현재 계약은 [FUNCTIONAL_SPEC](./FUNCTIONAL_SPEC.md), 남은 실기기 검증은 [실기기 체크리스트](./DEVICE_TEST_CHECKLIST.md) 10절을 본다. 본문의 「현재 구현」「미구현」 서술은 `09f9d67` 기준이다.
+
+> `ProfileSlots.swift`·`ProfileSlotsTests.swift`는 `09f9d67`의 파일이다. 지금은 `WorkspaceLibrary.swift`·`WorkspaceLibraryTests.swift`가 그 자리를 맡으며, 본문의 해당 이름은 링크 없이 둔다.
 
 외장 화면 조합을 작업 환경으로 다루고, **Space 안의 개별 창 위치를 각각 저장·복원한다**(D1). 창이 닫힌 경우에는 **저장한 외장 환경에서 닫았는지, 다른 환경이나 연결 해제 중 닫았는지에 따라 복원 여부를 구분한다**(D9). **「종료된 앱 다시 열기」는 실험 탭의 ON/OFF로 두고, ON일 때 사용할 「실행 중인 앱 창 되살리기」·「부족한 창 추가로 열기」를 하위에 둔다. 실험실의 모든 설정은 기본값 OFF이며 이 세 설정도 최초 OFF다.** 사용자가 바꾼 값은 유지한다. **Chrome을 포함한 탭 내용 복구는 이번 범위에서 제외하고, 나중에 앱별 실험실 기능으로 검토한다.** 개별 창을 다시 열고 대응시키는 구체적인 방법은 계속 검토한다.
 
@@ -645,7 +647,7 @@ macOS는 정상 종료를 허용하기 전 [applicationShouldTerminate(_:)](http
 
 복원 재개·창 이동과 수집 관찰은 창 참조를 무효화하지 않도록 실행 순서를 지킨다. 복원 중간·실패 위치와 복원으로 생긴 후행 이벤트를 새 사용자 변경으로 기록하지 않으며, 수집 도중 복원이 재개되거나 환경·설정이 바뀌면 결과의 유효성을 다시 확인한다. 단일 이동 이벤트만으로 사용자 조작임을 확정하지 않는다.
 
-현재 [PlugbackController.collectCandidate](../Sources/PlugbackKit/PlugbackController.swift)는 `hasPendingRecovery`가 있으면 수집 전체를 막는다. [CaptureEngine](../Sources/PlugbackKit/CaptureEngine.swift)의 기존 기록 병합과 [ProfileSlots](../Sources/PlugbackKit/ProfileSlots.swift)의 이력·저장본 분리는 재사용할 수 있으나, 현재 앱 단위 기록을 합의한 창별 모델로 바꾸고 수집할 범위를 구별해야 한다. [RestoreSession](../Sources/PlugbackKit/RestoreSession.swift)의 재판정에는 슬롯에서 다시 조회한 소스가 전달되므로, 대기 중 이력이 바뀌어도 요청의 목적지가 유지되는지 함께 검증한다. 수집을 막는 조건만 제거해서 충족되는 기능은 아니다.
+현재 [PlugbackController.collectCandidate](../Sources/PlugbackKit/PlugbackController.swift)는 `hasPendingRecovery`가 있으면 수집 전체를 막는다. [CaptureEngine](../Sources/PlugbackKit/CaptureEngine.swift)의 기존 기록 병합과 `ProfileSlots`의 이력·저장본 분리는 재사용할 수 있으나, 현재 앱 단위 기록을 합의한 창별 모델로 바꾸고 수집할 범위를 구별해야 한다. [RestoreSession](../Sources/PlugbackKit/RestoreSession.swift)의 재판정에는 슬롯에서 다시 조회한 소스가 전달되므로, 대기 중 이력이 바뀌어도 요청의 목적지가 유지되는지 함께 검증한다. 수집을 막는 조건만 제거해서 충족되는 기능은 아니다.
 
 ## 5. 상태별 검토표
 
@@ -948,7 +950,7 @@ D1, D2의 환경 이탈·정상 종료 전 자동 저장과 공통 복원 규칙
 
 ### 7.1 남은 세 묶음의 구현 기본안 — 2026-09-11
 
-사용자는 남은 예외 처리·기존 설정 이전·화면과 피드백 세부사항을 권장안으로 함께 정리하고 구현으로 넘어가는 데 동의했다. 아래는 그 위임에 따라 정한 구현 기본안이다. D1–D9의 기존 합의를 바꾸지 않으며, 앞 절의 같은 주제에 대한 「별도 검토」는 아래 기준으로 구체화한다. 실제 구현은 현재 워크트리의 Claude 세션에 인계한다([구현 인계](./IMPLEMENTATION_HANDOFF.md)).
+사용자는 남은 예외 처리·기존 설정 이전·화면과 피드백 세부사항을 권장안으로 함께 정리하고 구현으로 넘어가는 데 동의했다. 아래는 그 위임에 따라 정한 구현 기본안이다. D1–D9의 기존 합의를 바꾸지 않으며, 앞 절의 같은 주제에 대한 「별도 검토」는 아래 기준으로 구체화한다. 구현은 2026-09-11에 완료했다.
 
 | 묶음 | 구현 기본안 |
 |---|---|
@@ -960,9 +962,9 @@ D1, D2의 환경 이탈·정상 종료 전 자동 저장과 공통 복원 규칙
 
 ## 8. 현재 근거와 다음 검증
 
-현재 [ProfileSlots](../Sources/PlugbackKit/ProfileSlots.swift)는 수동 저장 성공 후 이전 후보를 제거한다. 기존 [ProfileSlotsTests](../Tests/PlugbackKitTests/ProfileSlotsTests.swift)의 `testManualSaveIsNotOvertakenByAStaleCandidate`를 선택 실행해 1개 통과했다. 이 검사는 순차 실행의 후보 정리를 확인하며, 늦은 관찰 결과까지 무효화하는 A22는 별도 검증 대상이다.
+현재 `ProfileSlots`는 수동 저장 성공 후 이전 후보를 제거한다. 기존 `ProfileSlotsTests`의 `testManualSaveIsNotOvertakenByAStaleCandidate`를 선택 실행해 1개 통과했다. 이 검사는 순차 실행의 후보 정리를 확인하며, 늦은 관찰 결과까지 무효화하는 A22는 별도 검증 대상이다.
 
-방문 대기 중 수집에 활용할 기존 동작도 확인했다. `testCollectStaysInMemoryUntilConfirm`과 `testCaptureBindsOneRegularSpaceAndRejectsAmbiguity`를 선택 실행해 2개 통과했다. 각각 확정 전에는 수집이 파일을 바꾸지 않는 것과 모호한 Space 대응에서 기존 좌표를 유지하는 것을 확인한다. 이는 기존 [슬롯 검사](../Tests/PlugbackKitTests/ProfileSlotsTests.swift)·[Space 캡처 검사](../Tests/PlugbackKitTests/SpaceAwareRestoreTests.swift)이며, A29의 방문 대기 중 부분 수집이나 동일 앱 다중 창을 실기기에서 검증한 것은 아니다.
+방문 대기 중 수집에 활용할 기존 동작도 확인했다. `testCollectStaysInMemoryUntilConfirm`과 `testCaptureBindsOneRegularSpaceAndRejectsAmbiguity`를 선택 실행해 2개 통과했다. 각각 확정 전에는 수집이 파일을 바꾸지 않는 것과 모호한 Space 대응에서 기존 좌표를 유지하는 것을 확인한다. 이는 기존 `슬롯 검사`·[Space 캡처 검사](../Tests/PlugbackKitTests/SpaceAwareRestoreTests.swift)이며, A29의 방문 대기 중 부분 수집이나 동일 앱 다중 창을 실기기에서 검증한 것은 아니다.
 
 내용 비교도 이미 일부 존재한다. `hasPendingCollect`는 앱 기록과 Space overlay를 비교하지만 기준이 자동 슬롯이며, `confirm`에는 동일 내용의 저장을 생략하는 검사가 없다. 새 설계는 이를 현재 마지막 저장본과 비교해야 한다. [DesktopObservation](../Sources/PlugbackKit/DesktopObservation.swift)의 순서 번호는 현재 표시 갱신의 역전을 막는 데 쓰이며, 저장 후보의 유효성 판단에 연결하는 작업은 아직 구현되지 않았다. 탭 비교는 현재 범위에 포함하지 않는다.
 
@@ -970,7 +972,7 @@ D1, D2의 환경 이탈·정상 종료 전 자동 저장과 공통 복원 규칙
 
 동시에 **B에 기존 대상 앱이 있으면 새 앱이 수동 저장에서 누락되는 R6**을 재현했다. 자동 저장 OFF와 ON 모두 실패하며, ON에서 이미 새 앱을 후보로 수집했어도 수동 저장의 기존 대상 필터에서 빠지고 후보가 제거된다. 신규 앱 발견을 수동·자동 저장의 공통 포함 규칙으로 처리해야 한다.
 
-외장 진입 이벤트에는 별도 검증이 남는다. [관찰 대상 목록](../Sources/PlugbackKit/ProfileSlots.swift)은 기존 후보·저장본의 앱에서 나오며, 내장에만 있는 미등록 앱은 목록에 들어가지 않는다. [CollectTrigger](../Sources/PlugbackKit/CollectTrigger.swift)는 그 목록의 창 이동과 앱 전환을 수집 신호로 쓴다. 앱 전환 없이 같은 창을 내장에서 B로 옮기는 흐름은 다음 수집까지 놓칠 수 있으므로, 실제 알림 순서와 신규 앱·창의 관찰 시작을 검증해야 한다.
+외장 진입 이벤트에는 별도 검증이 남는다. `관찰 대상 목록`은 기존 후보·저장본의 앱에서 나오며, 내장에만 있는 미등록 앱은 목록에 들어가지 않는다. [CollectTrigger](../Sources/PlugbackKit/CollectTrigger.swift)는 그 목록의 창 이동과 앱 전환을 수집 신호로 쓴다. 앱 전환 없이 같은 창을 내장에서 B로 옮기는 흐름은 다음 수집까지 놓칠 수 있으므로, 실제 알림 순서와 신규 앱·창의 관찰 시작을 검증해야 한다.
 
 종료·저장 경로도 확인했다. 현재 [ActivityWatcher](../Sources/PlugbackKit/ActivityWatcher.swift)는 종료 직전 알림에서 저장을 요청하고, [PlugbackController.confirmAllCandidates](../Sources/PlugbackKit/PlugbackController.swift)는 `ProfileSlots.confirmAll()`의 성공 여부를 호출자에게 돌려주지 않는다. [PlugbackApp](../App/Plugback/PlugbackApp.swift)에도 저장 실패에 따라 정상 종료를 취소하는 처리는 없다. `testConfirmPreservesCandidateWhenDiskWriteFails`를 선택 실행해 1개 통과했으며, 저장 실패 후 후보를 유지하고 다시 저장할 수 있음을 확인했다. 이는 저장 코어의 검사이며 종료 취소 UI나 강제 종료 후 복구를 검증한 것은 아니다.
 
@@ -978,7 +980,7 @@ D1, D2의 환경 이탈·정상 종료 전 자동 저장과 공통 복원 규칙
 
 | 근거 | 현재 확인한 내용 | 관련 상태 |
 |---|---|---|
-| [Model](../Sources/PlugbackKit/Model.swift), [ProfileSlots](../Sources/PlugbackKit/ProfileSlots.swift) | 화면별 앱당 좌표·Space binding 하나. overlay는 실행 중 메모리에만 있음. 기존 대상이 있으면 수동 저장에서 새 앱 누락(R6) | W02–W03, S13, DSK02–DSK05 |
+| [Model](../Sources/PlugbackKit/Model.swift), `ProfileSlots` | 화면별 앱당 좌표·Space binding 하나. overlay는 실행 중 메모리에만 있음. 기존 대상이 있으면 수동 저장에서 새 앱 누락(R6) | W02–W03, S13, DSK02–DSK05 |
 | [CaptureEngine](../Sources/PlugbackKit/CaptureEngine.swift) | 수동 병합은 기존 항목 유지. Space 판정은 같은 앱의 창들을 함께 사용. 방문 대기 중 수집은 창별 갱신·미관찰 기록 보존으로 확장 필요 | W04–W08, S01–S07, A29 |
 | [RestoreEngine](../Sources/PlugbackKit/RestoreEngine.swift) | 앱 전역 선점, Space 경로 후보 하나 제한, 비활성·불확실 결과 생략, frame 중심 이동 검증 | W03, W08, RQ09 |
 | [RestoreSession](../Sources/PlugbackKit/RestoreSession.swift) | 초기 비활성 Space는 대기에 넣지 않음. 잔류 Space 이동·방문만 추적. 대기는 메모리에만 있음. 새 확인 필요 항목의 수동 재개와 종료된 앱 실행 직전 설정 확인은 구현 필요 | P02–P05, RQ18–RQ19, RQ25, DSK02 |
@@ -1009,7 +1011,7 @@ D9는 새 제품 요구다. 현재 코드와 기존 재현 검사에는 환경�
 10. **자동 저장과 공통 복원 기준:** 수동·자동 첫 저장, 수동 저장 후 옛 이력·늦게 도착한 관찰, 이후 동일·변경된 내용, 최초 ON·선택한 OFF 유지를 비교. OFF 때 저장 전 이력을 지우고 다시 ON일 때 현재 배치부터 새로 수집하며, OFF 전의 늦은 관찰이 후보를 되살리지 않아야 함. 복원은 마지막 확정본을 쓰며, OFF로 바꿔도 기존 마지막 자동 저장본을 버리지 않아야 함. 과거 자동 기록과 같더라도 현재 마지막 수동 저장본과 다르면 새 자동 저장으로 확정되는지 확인.
 11. **정상 종료 전 저장:** 자동 저장 ON의 새 유효 이력을 저장하고 종료하며, OFF·변경 없음·쓰기 실패를 구별. 합의한 실패 대응에 따라 종료 취소·재시도·저장 없이 종료를 검증. 비정상 종료 후에는 실제 저장 완료본만 복원하고, 저장본이 없는 경우와 구별.
 
-정책과 저장소 처리는 페이크로 재현할 수 있다. 비활성 Space의 창 관찰 범위, 실행 중 창 대응의 지속성, 화면 간 frame 이동 뒤 Space 소속, 실제 연결·복원 이벤트 순서는 실기기 검증이 필요하다. 기존 [실기기 체크리스트](./ACTIVE_SPACE_RESTORE_DEVICE_TEST_CHECKLIST.md)는 현재 구현의 판정 기준이므로 이 제안의 합격 기준과 혼용하지 않는다.
+정책과 저장소 처리는 페이크로 재현할 수 있다. 비활성 Space의 창 관찰 범위, 실행 중 창 대응의 지속성, 화면 간 frame 이동 뒤 Space 소속, 실제 연결·복원 이벤트 순서는 실기기 검증이 필요하다. 기존 [실기기 체크리스트](./DEVICE_TEST_CHECKLIST.md)는 현재 구현의 판정 기준이므로 이 제안의 합격 기준과 혼용하지 않는다.
 
 ### 8.1 후속 실험실 참고 — 현재 구현·검증 범위 아님
 
