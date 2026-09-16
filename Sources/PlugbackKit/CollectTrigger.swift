@@ -17,14 +17,17 @@ public final class CollectTrigger {
 
     /// 최소 간격은 앱 전환 쪽에만 걸린다. 창 이동은 이동이 끝날 때 1회만 오므로
     /// 스로틀이 필요 없고, 걸면 사용자가 옮긴 마지막 배치를 놓친다.
+    /// `workspaceCenter`는 앱 전환·종료 알림의 출처다 — 테스트가 실제 앱 전환에서 격리된 센터를 넣는다.
     public init(moveSource: WindowMoveSource?,
                 minimumInterval: TimeInterval = 10,
+                workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
                 onTerminating: @escaping () -> Void = {},
                 onAppTerminated: @escaping (String) -> Void = { _ in },
                 onCollect: @escaping () -> Void) {
         self.moveSource = moveSource
         self.onCollect = onCollect
         self.activity = ActivityWatcher(minimumInterval: minimumInterval,
+                                        workspaceCenter: workspaceCenter,
                                         onTerminating: onTerminating,
                                         onAppTerminated: onAppTerminated,
                                         onCollect: onCollect)

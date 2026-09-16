@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import XCTest
 @testable import PlugbackKit
@@ -305,6 +306,16 @@ final class SpaceAwareRestoreTests: XCTestCase {
         gateway.windowsList = [window(1, bundleID: "com.app", frame: CGRect(x: 100, y: 100, width: 300, height: 300), windowServerID: 11)]
         await controller.activeSpaceChanged()
         XCTAssertEqual(gateway.moveCalls.count, 1)
+    }
+
+    func testSpacesPreferenceRequiresInitializedAppKit() throws {
+        // AppKit 초기화 전의 false를 공유 구성으로 오인하지 않는다.
+        try XCTSkipIf(NSApp != nil, "다른 테스트가 이미 AppKit을 초기화했습니다")
+        XCTAssertEqual(SpacesSupport.fromPreferences(), .undetermined)
+
+        _ = NSApplication.shared
+        XCTAssertEqual(SpacesSupport.fromPreferences(),
+                       NSScreen.screensHaveSeparateSpaces ? .separateSpaces : .sharedSpaces)
     }
 
     func testSharedSpacesConfigurationHoldsSavesAndRestores() async {

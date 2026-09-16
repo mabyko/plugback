@@ -121,19 +121,15 @@ grep -n "kCGSession" "$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreGra
 
 ---
 
-## 7. `com.apple.spaces` `spans-displays` — 개별 Spaces 설정 (D6)
+## 7. 개별 Spaces 설정 (D6) — 공개 API로 교체
 
-| | |
-|---|---|
-| **쓰는 곳** | `SpacesSupport.fromPreferences()` |
-| **무엇을 판정** | 「각각의 Spaces가 있는 디스플레이」가 켜져 있나 (F-01.5) |
-| **공개 여부** | 시스템 설정이 쓰는 환경설정 도메인·키이며 공개 API 계약이 아니다. `CFPreferencesCopyAppValue`로 읽기만 한다 |
+2026-09-16부터 `SpacesSupport.fromPreferences()`는 공개 API인
+[`NSScreen.screensHaveSeparateSpaces`](https://developer.apple.com/documentation/appkit/nsscreen/screenshaveseparatespaces)를
+메인 액터에서 읽는다. 비공식 `com.apple.spaces`의 `spans-displays` 키는 더 이상 읽지 않는다.
 
-값이 없으면 macOS 기본값(개별 Spaces ON)으로 본다. `1`/`true`면 공유 구성, 그 밖의 형식은 판정 불가다. 연결된 화면이 둘 이상인데 Space 관찰의 managed display가 그보다 적으면 설정 값과 무관하게 공유 구성으로 본다.
-
-**깨졌을 때의 동작** — 키가 사라지면 개별 Spaces로 읽고 관찰 교차 확인이 남는다. 형식이 바뀌면 판정 불가가 되어 새 Space 기록의 저장·복원을 보류하고 기존 기록·안내를 유지한다. 위치 전용 복원으로 전환하지 않는다.
-
-**공개 대체재** — 없다. 설정 전환·재로그인 뒤의 값은 실기기 검증 항목이다.
+macOS 27.0(26A428)에서 `NSApplication` 초기화 전에는 `false`, 초기화 뒤에는 실제 설정인 `true`가
+관찰됐다. 초기화 전에는 판정 불가로 두어 저장·복원을 보류한다. 연결 화면 수와 Space 관찰의
+managed display 수를 교차 확인하는 기존 보호는 유지한다. 설정 전환·재로그인 뒤의 값은 실기기 검증 항목이다.
 
 ---
 
@@ -202,7 +198,7 @@ validator가 항상 write 전에 거절한다.
 
 ## 점검
 
-macOS 메이저 버전을 올릴 때 Release 경로의 1~8절과, Space 작업 중이면 DEBUG 경로 9절도 확인한다. 잠금 경로는 3분이면 된다.
+macOS 메이저 버전을 올릴 때 Release 경로의 1~8절(7절은 공개 API)과, Space 작업 중이면 DEBUG 경로 9절도 확인한다. 잠금 경로는 3분이면 된다.
 
 1. 외장 화면을 뽑은 상태로 맥북을 잠근다 (또는 덮개를 닫아 재운다).
 2. 잠긴 상태에서 외장 화면을 연결한다.

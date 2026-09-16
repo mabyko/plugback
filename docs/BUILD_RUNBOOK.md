@@ -44,7 +44,7 @@ swift test   # PlugbackKit — 정책 전부, 앱 빌드 없이
 ```
 
 판정: `Executed N tests, with 0 failures`. 5초 안에 끝난다. 실패하면 3번으로 넘어가지 않는다.
-`CollectTriggerTests`는 실제 NSWorkspace 알림 센터를 쓰므로, 실행 중에 사용자가 앱을 전환하면 드물게 횟수가 어긋난다 — 다시 실행한다.
+`CollectTriggerTests`는 독립 알림 센터를 주입해 실행 중 앱 전환과 분리해서 검사한다.
 
 제품 계약 검사(R1–R6·잠금 순서)는 별도 임시 패키지에서 돈다:
 
@@ -55,6 +55,8 @@ bash Scripts/check-product-restore.sh
 판정: `Executed 15 tests, with 0 failures`. 사용자 프로필 폴더에는 닿지 않는다.
 
 앱 쪽 표현 매핑(문구·점·헤더·단축어 다이얼로그)은 별도 테스트 타깃이 지킨다:
+
+`PlugbackTests` 실행에는 macOS 14 이상이 필요하다. 앱과 `PlugbackKit`의 최소 지원 버전은 macOS 13으로 유지한다.
 
 ```bash
 xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback \

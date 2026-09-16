@@ -117,7 +117,7 @@ enum CardPresentation {
     }
 
     static func screenName(_ label: ScreenLabel) -> String {
-        let parts = [label.portLocation.flatMap(portLocationName), label.letter].compactMap { $0 }
+        let parts = [label.portLocation.flatMap { portLocationName($0) }, label.letter].compactMap { $0 }
         guard !parts.isEmpty else { return label.name }
         return "\(label.name) (\(parts.joined(separator: " · ")))"
     }

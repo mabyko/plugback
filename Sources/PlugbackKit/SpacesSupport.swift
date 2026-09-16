@@ -1,4 +1,4 @@
-import CoreFoundation
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -9,15 +9,12 @@ public enum SpacesSupport: Equatable, Sendable {
     case sharedSpaces
     case undetermined
 
-    /// 설정 값은 `com.apple.spaces`의 `spans-displays`다 — 없으면 macOS 기본값(개별 Spaces ON)이다.
-    /// 값이 예상한 형식이 아니면 판정 불가로 둔다. 실제 설정 전환·재로그인 뒤의 값은 실기기 검증 항목이다.
+    /// 공개 AppKit API로 설정을 읽는다. NSApplication 초기화 전에는 false가 나올 수 있으므로
+    /// 공유 구성으로 오인하지 않고 판정 불가로 둔다.
+    @MainActor
     public static func fromPreferences() -> SpacesSupport {
-        guard let value = CFPreferencesCopyAppValue("spans-displays" as CFString,
-                                                    "com.apple.spaces" as CFString) else {
-            return .separateSpaces
-        }
-        if let number = value as? NSNumber { return number.boolValue ? .sharedSpaces : .separateSpaces }
-        return .undetermined
+        guard NSApp != nil else { return .undetermined }
+        return NSScreen.screensHaveSeparateSpaces ? .separateSpaces : .sharedSpaces
     }
 
     /// 설정과 관찰을 교차 확인한다 — 개별 Spaces가 켜져 있으면 연결된 화면마다 managed display가 하나씩 있다.

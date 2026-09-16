@@ -23,17 +23,32 @@ private final class FakeMoveSource: WindowMoveSource, @unchecked Sendable {
 
 /// 수집 트리거를 자기 인터페이스에서 검증한다.
 /// 여러 신호원이 있다는 사실을 이 모듈이 덮는다 — 쓰는 쪽은 「수집할 때가 됐다」 하나만 안다.
+///
+/// 앱 전환 알림은 테스트 전용 센터로 주고받는다 — 실제 NSWorkspace 센터를 쓰면 테스트 중
+/// 사용자의 앱 전환이 끼어들어 수집 횟수가 흔들린다 (2026-09-16 전체 실행에서 재현).
 @MainActor
 final class CollectTriggerTests: XCTestCase {
+    private let workspaceCenter = NotificationCenter()
+
     private func wait(_ seconds: TimeInterval = 0.1) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    private func makeTrigger(_ source: FakeMoveSource, minimumInterval: TimeInterval = 0,
+                             onCollect: @escaping () -> Void = {}) -> CollectTrigger {
+        CollectTrigger(moveSource: source, minimumInterval: minimumInterval,
+                       workspaceCenter: workspaceCenter, onCollect: onCollect)
+    }
+
+    private func postAppSwitch(_ name: NSNotification.Name = NSWorkspace.didDeactivateApplicationNotification) {
+        workspaceCenter.post(name: name, object: nil)
     }
 
     func testWindowMoveReachesTheCollectCallback() async {
         // 창을 옮기는 것만으로 수집이 돌아야 한다 — 앱 전환을 기다리면 늦는다.
         let source = FakeMoveSource()
         var collects = 0
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { collects += 1 }
+        let trigger = makeTrigger(source) { collects += 1 }
         trigger.start()
         await trigger.retarget(["com.chrome"])
 
@@ -51,18 +66,37 @@ final class CollectTriggerTests: XCTestCase {
         // (2026-08-18 실기기). 앱에서 빠져나오는 순간이 그 앱 창의 최종 상태다.
         let source = FakeMoveSource()
         var collects = 0
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { collects += 1 }
+        let trigger = makeTrigger(source) { collects += 1 }
+        trigger.start()
+
+        postAppSwitch(NSWorkspace.didDeactivateApplicationNotification)
+        await wait()
+        XCTAssertEqual(collects, 1, "비활성화를 놓치면 옮긴 뒤의 배치를 영영 못 잡는다")
+
+        postAppSwitch(NSWorkspace.didActivateApplicationNotification)
+        await wait()
+        XCTAssertEqual(collects, 2, "활성화도 받는다 — 빠져나온 적 없는 첫 회차를 잡는다")
+        await trigger.stop()
+    }
+
+    func testGlobalWorkspaceNotificationsDoNotReachAnIsolatedTrigger() async {
+        // 주입한 센터만 듣는다 — 실제 NSWorkspace 센터의 앱 전환은 이 트리거에 닿지 않는다.
+        // 이 격리가 없으면 테스트 중 사용자의 앱 전환이 수집 횟수를 흔든다.
+        let source = FakeMoveSource()
+        var collects = 0
+        let trigger = makeTrigger(source) { collects += 1 }
         trigger.start()
 
         NSWorkspace.shared.notificationCenter.post(
             name: NSWorkspace.didDeactivateApplicationNotification, object: nil)
-        await wait()
-        XCTAssertEqual(collects, 1, "비활성화를 놓치면 옮긴 뒤의 배치를 영영 못 잡는다")
-
         NSWorkspace.shared.notificationCenter.post(
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
         await wait()
-        XCTAssertEqual(collects, 2, "활성화도 받는다 — 빠져나온 적 없는 첫 회차를 잡는다")
+        XCTAssertEqual(collects, 0, "실제 워크스페이스 알림은 격리된 트리거에 닿지 않는다")
+
+        postAppSwitch()
+        await wait()
+        XCTAssertEqual(collects, 1, "같은 이름이라도 주입한 센터로 오는 알림만 받는다")
         await trigger.stop()
     }
 
@@ -71,13 +105,10 @@ final class CollectTriggerTests: XCTestCase {
         // 창 이동에는 걸리지 않는다 — 이동은 끝날 때 1회만 오고, 스로틀을 걸면 마지막 배치를 놓친다.
         let source = FakeMoveSource()
         var collects = 0
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 60) { collects += 1 }
+        let trigger = makeTrigger(source, minimumInterval: 60) { collects += 1 }
         trigger.start()
 
-        for _ in 0..<5 {
-            NSWorkspace.shared.notificationCenter.post(
-                name: NSWorkspace.didDeactivateApplicationNotification, object: nil)
-        }
+        for _ in 0..<5 { postAppSwitch() }
         await wait()
         XCTAssertEqual(collects, 1)
 
@@ -91,7 +122,7 @@ final class CollectTriggerTests: XCTestCase {
 
     func testRetargetBeforeStartIsIgnored() async {
         let source = FakeMoveSource()
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { }
+        let trigger = makeTrigger(source)
         await trigger.retarget(["com.chrome"])
 
         XCTAssertEqual(source.registrations, 0, "시작하지 않은 트리거가 관찰을 걸면 안 된다")
@@ -100,7 +131,7 @@ final class CollectTriggerTests: XCTestCase {
     func testStopReleasesAllSources() async {
         let source = FakeMoveSource()
         var collects = 0
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { collects += 1 }
+        let trigger = makeTrigger(source) { collects += 1 }
         trigger.start()
         await trigger.retarget(["com.chrome"])
 
@@ -108,15 +139,14 @@ final class CollectTriggerTests: XCTestCase {
 
         XCTAssertTrue(source.registered.isEmpty, "빈 목록이 해제다")
         source.settle()
-        NSWorkspace.shared.notificationCenter.post(
-            name: NSWorkspace.didDeactivateApplicationNotification, object: nil)
+        postAppSwitch()
         await wait()
         XCTAssertEqual(collects, 0, "꺼진 기능이 신호를 받고 있으면 꺼짐이 아니다")
     }
 
     func testRetargetIsIdempotentInShape() async {
         let source = FakeMoveSource()
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { }
+        let trigger = makeTrigger(source)
         trigger.start()
         await trigger.retarget(["com.chrome", "com.slack"])
         await trigger.retarget(["com.chrome", "com.slack"])
@@ -129,12 +159,11 @@ final class CollectTriggerTests: XCTestCase {
         // 대상 앱이 없어도 전환 신호는 살아 있어야 한다 — 프로필이 생기는 순간을 놓치지 않게.
         let source = FakeMoveSource()
         var collects = 0
-        let trigger = CollectTrigger(moveSource: source, minimumInterval: 0) { collects += 1 }
+        let trigger = makeTrigger(source) { collects += 1 }
         trigger.start()
         await trigger.retarget([])
 
-        NSWorkspace.shared.notificationCenter.post(
-            name: NSWorkspace.didDeactivateApplicationNotification, object: nil)
+        postAppSwitch()
         await wait()
         XCTAssertEqual(collects, 1)
         await trigger.stop()

@@ -51,7 +51,7 @@ final class CardAppearanceTests: XCTestCase {
             window.makeKeyAndOrderFront(nil)
             defer { window.orderOut(nil) }
             host.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            try await Task.sleep(nanoseconds: 100_000_000)
             host.setFrameSize(host.fittingSize)
             host.layoutSubtreeIfNeeded()
             XCTAssertLessThan(host.frame.height, 600, "앱이 많아도 카드 높이는 제한한다")
@@ -73,14 +73,14 @@ final class CardAppearanceTests: XCTestCase {
             }
             scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
             scroll.reflectScrolledClipView(scroll.contentView)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            try await Task.sleep(nanoseconds: 100_000_000)
             let collapsedHeight = document.bounds.height
             try clickDisclosure()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            try await Task.sleep(nanoseconds: 200_000_000)
             XCTAssertGreaterThan(document.bounds.height, collapsedHeight, "접힌 묶음을 펼치면 목록이 늘어난다")
             scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentSize.height))
             scroll.reflectScrolledClipView(scroll.contentView)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            try await Task.sleep(nanoseconds: 100_000_000)
             scroll.flashScrollers()
             let scroller = try XCTUnwrap(scroll.verticalScroller)
             XCTAssertFalse(scroller.isHidden)
@@ -92,7 +92,7 @@ final class CardAppearanceTests: XCTestCase {
             try png.write(to: FileManager.default.temporaryDirectory
                 .appendingPathComponent("plugback-long-list-\(style.rawValue).png"))
             try clickDisclosure()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            try await Task.sleep(nanoseconds: 200_000_000)
             XCTAssertEqual(document.bounds.height, collapsedHeight, accuracy: 1, "다시 누르면 목록이 접힌다")
             XCTAssertEqual(controller.allWorkspaces.first?.windowCount, 21, "접기는 저장 기록을 바꾸지 않는다")
         }

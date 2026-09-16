@@ -72,7 +72,7 @@ struct SettingsView: View {
         .preferredColorScheme(appearance.brightness.colorScheme)
         .onAppear { launchAtLogin = LoginItem.isEnabled }
         .confirmationDialog(
-            "\(workspaceToDelete.map(Self.workspaceTitle) ?? "") 기록을 삭제할까요?",
+            "\(workspaceToDelete.map { Self.workspaceTitle($0) } ?? "") 기록을 삭제할까요?",
             isPresented: Binding(get: { workspaceToDelete != nil },
                                  set: { if !$0 { workspaceToDelete = nil } }),
             titleVisibility: .visible,
@@ -85,7 +85,7 @@ struct SettingsView: View {
     }
 
     static func workspaceTitle(_ workspace: PlugbackController.WorkspaceSummary) -> String {
-        workspace.screens.map(CardPresentation.screenName).joined(separator: " + ")
+        workspace.screens.map { CardPresentation.screenName($0) }.joined(separator: " + ")
     }
 
     private var generalSettings: some View {

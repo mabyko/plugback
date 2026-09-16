@@ -14,6 +14,8 @@ import AppKit
 @MainActor
 final class ActivityWatcher {
     private let minimumInterval: TimeInterval
+    /// 앱 전환·종료 알림의 출처. 테스트는 실제 NSWorkspace에서 격리된 센터를 넣는다.
+    private let workspaceCenter: NotificationCenter
     private let onCollect: () -> Void
     private let onTerminating: () -> Void
     private let onAppTerminated: (String) -> Void
@@ -23,10 +25,12 @@ final class ActivityWatcher {
 
     /// 최소 간격은 실기기 측정 후 조정하는 보정 노브다 — 짧을수록 정확하고 길수록 조용하다.
     init(minimumInterval: TimeInterval = 10,
+         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
          onTerminating: @escaping () -> Void = {},
          onAppTerminated: @escaping (String) -> Void = { _ in },
          onCollect: @escaping () -> Void) {
         self.minimumInterval = minimumInterval
+        self.workspaceCenter = workspaceCenter
         self.onTerminating = onTerminating
         self.onAppTerminated = onAppTerminated
         self.onCollect = onCollect
@@ -34,7 +38,7 @@ final class ActivityWatcher {
 
     func start() {
         guard observers.isEmpty else { return }
-        let workspace = NSWorkspace.shared.notificationCenter
+        let workspace = workspaceCenter
         for name in [NSWorkspace.didDeactivateApplicationNotification,
                      NSWorkspace.didActivateApplicationNotification] {
             observers.append((workspace, workspace.addObserver(

@@ -9,54 +9,57 @@ import XCTest
 /// 테스트 프로세스에는 접근성 권한이 없어 등록은 조용히 실패하고, 그 경로도 코드가 의도한 것이다.
 @MainActor
 final class WindowMoveObserverTests: XCTestCase {
+    /// `onSettled`는 @Sendable이라 지역 var를 못 고친다 — 콜백은 늘 메인에서 오므로 메인 격리 카운터로 센다.
+    @MainActor private final class Counter { var value = 0 }
+
     private func wait(_ seconds: TimeInterval) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
     /// 등록 대상이 있는 상태를 만든다. 테스트 프로세스에서는 AX 등록이 실패하지만
     /// 콜백은 설정되므로, 압축 정책은 그대로 검증된다.
-    private func observing(_ observer: WindowMoveObserver, _ onSettled: @escaping @Sendable () -> Void) {
-        observer.observe(pids: [-1], onSettled: onSettled)
+    private func observing(_ observer: WindowMoveObserver, counting settled: Counter) {
+        observer.observe(pids: [-1]) { MainActor.assumeIsolated { settled.value += 1 } }
     }
 
     func testABurstCollapsesIntoOneCallback() async {
         // 창 여러 개를 연달아 옮기면 알림이 여러 번 온다 — 소비자가 받는 것은 "정착했다" 1회다.
         let observer = WindowMoveObserver(settleInterval: 0.05)
-        var settled = 0
-        observing(observer) { settled += 1 }
+        let settled = Counter()
+        observing(observer, counting: settled)
 
         for _ in 0..<5 { observer.windowMoved() }
         await wait(0.15)
 
-        XCTAssertEqual(settled, 1)
+        XCTAssertEqual(settled.value, 1)
     }
 
     func testNothingFiresBeforeTheIntervalElapses() async {
         // 대기가 끝나기 전에는 조용하다 — 드래그 중간 좌표를 수집하지 않는다.
         let observer = WindowMoveObserver(settleInterval: 0.2)
-        var settled = 0
-        observing(observer) { settled += 1 }
+        let settled = Counter()
+        observing(observer, counting: settled)
 
         observer.windowMoved()
         await wait(0.05)
-        XCTAssertEqual(settled, 0)
+        XCTAssertEqual(settled.value, 0)
 
         await wait(0.25)
-        XCTAssertEqual(settled, 1)
+        XCTAssertEqual(settled.value, 1)
     }
 
     func testSeparateBurstsFireSeparately() async {
         // 압축은 한 번의 정착에만 적용된다 — 다음 이동을 삼키면 마지막 배치를 놓친다.
         let observer = WindowMoveObserver(settleInterval: 0.05)
-        var settled = 0
-        observing(observer) { settled += 1 }
+        let settled = Counter()
+        observing(observer, counting: settled)
 
         observer.windowMoved()
         await wait(0.15)
         observer.windowMoved()
         await wait(0.15)
 
-        XCTAssertEqual(settled, 2)
+        XCTAssertEqual(settled.value, 2)
     }
 
     func testReleasingStopsTheOldConsumerFromBeingCalled() async {
@@ -65,28 +68,28 @@ final class WindowMoveObserverTests: XCTestCase {
         // 예약돼 있던 발화의 취소는 이 인터페이스로 관측되지 않는다(콜백이 어차피 교체되므로).
         // 관측 가능한 계약은 "해제 뒤에는 이전 소비자가 더 이상 불리지 않는다"쪽이고, 그걸 고정한다.
         let observer = WindowMoveObserver(settleInterval: 0.05)
-        var settled = 0
-        observing(observer) { settled += 1 }
+        let settled = Counter()
+        observing(observer, counting: settled)
 
         observer.observe(pids: [], onSettled: {}) // 해제
         observer.windowMoved()
         await wait(0.15)
 
-        XCTAssertEqual(settled, 0)
+        XCTAssertEqual(settled.value, 0)
     }
 
     func testRetargetingKeepsCompressingWithTheNewCallback() async {
         // 대상이 바뀌어도 압축은 이어진다 — 등록 갱신이 대기 중 발화를 잃어버리면 안 된다.
         let observer = WindowMoveObserver(settleInterval: 0.05)
-        var first = 0
-        var second = 0
-        observing(observer) { first += 1 }
-        observing(observer) { second += 1 }
+        let first = Counter()
+        let second = Counter()
+        observing(observer, counting: first)
+        observing(observer, counting: second)
 
         for _ in 0..<3 { observer.windowMoved() }
         await wait(0.15)
 
-        XCTAssertEqual(first, 0, "마지막으로 등록한 콜백만 받는다")
-        XCTAssertEqual(second, 1)
+        XCTAssertEqual(first.value, 0, "마지막으로 등록한 콜백만 받는다")
+        XCTAssertEqual(second.value, 1)
     }
 }
