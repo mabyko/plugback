@@ -174,6 +174,47 @@ final class WorkspaceLibraryTests: XCTestCase {
         XCTAssertTrue(library.record(for: key)!.closedPlacementIDs.isEmpty)
     }
 
+    func testRoamingWindowKeepsClosureContextInEachWorkspace() {
+        let library = makeLibrary()
+        let homeKey = WorkspaceKey(screenIDs: [other.id])
+        XCTAssertTrue(library.capture(key: key, screens: [screen],
+                                      sample: sample([window("com.slack", left)], sequence: 1), snapshot: nil))
+        let officePlacement = library.saved(for: key)!.placements[0].id
+        library.noteWorkspaceChanged()
+        library.collect(key: homeKey, screens: [other],
+                        sample: sample([window("com.slack", onOther)], sequence: 2), snapshot: nil,
+                        runningBundleIDs: ["com.slack"])
+        let homePlacement = library.pending[homeKey]!.snapshot.placements[0].id
+        library.noteAppTerminated("com.slack", currentKey: homeKey)
+
+        XCTAssertEqual(library.link(for: officePlacement)?.status, .lost(in: homeKey))
+        XCTAssertEqual(library.link(for: homePlacement)?.status, .lost(in: homeKey))
+        XCTAssertTrue(library.record(for: key)!.closedPlacementIDs.isEmpty)
+        XCTAssertTrue(library.record(for: homeKey)!.closedPlacementIDs.contains(homePlacement))
+        let plan = RestoreEngine.plan(.init(
+            source: library.saved(for: key)!, enabled: { _ in true },
+            closedPlacementIDs: [], screens: [screen], windows: [], unavailableBundleIDs: [],
+            snapshot: nil, spaceObservationEnabled: false, links: library.links,
+            userChoices: [:], runningBundleIDs: [],
+            options: RestoreOptions(reopenClosedApps: true), creationAttempted: []
+        ))
+        XCTAssertEqual(plan.creations["com.slack"], .launch)
+    }
+
+    func testConfirmedLinkPreservesTheSameWindowInAnotherWorkspace() {
+        let library = makeLibrary()
+        let homeKey = WorkspaceKey(screenIDs: [other.id])
+        library.capture(key: key, screens: [screen],
+                        sample: sample([window("com.chrome", left)], sequence: 1), snapshot: nil)
+        let officePlacement = library.saved(for: key)!.placements[0].id
+        library.capture(key: homeKey, screens: [other],
+                        sample: sample([window("com.chrome", onOther)], sequence: 2), snapshot: nil)
+        let homePlacement = library.saved(for: homeKey)!.placements[0].id
+        library.confirmLink(placementID: officePlacement, bundleID: "com.chrome", windowServerID: 11)
+        XCTAssertEqual(library.link(for: officePlacement)?.windowServerID, 11)
+        XCTAssertEqual(library.link(for: homePlacement)?.windowServerID, 11)
+    }
+
     func testAppTerminationInTheSameWorkspaceIsAClosure() {
         let library = makeLibrary()
         library.capture(key: key, screens: [screen], sample: sample([window("com.chrome", left)], sequence: 1), snapshot: nil)
@@ -453,6 +494,51 @@ final class WorkspaceLibraryTests: XCTestCase {
         XCTAssertEqual(library.saved(for: key)?.placements.count, 1)
         XCTAssertFalse(library.remove(key: key))
         XCTAssertNotNil(library.saved(for: key))
+    }
+
+
+    func testFingerprintMismatchIsPreservedUntilManualSave() {
+        let library = makeLibrary()
+        let original = ScreenInfo(id: screen.id, name: screen.name, frame: screen.frame, isBuiltin: false,
+                                  fingerprint: ScreenFingerprint(vendor: 1, model: 2, serial: 3))
+        let changed = ScreenInfo(id: screen.id, name: "Different screen", frame: screen.frame, isBuiltin: false,
+                                 fingerprint: ScreenFingerprint(vendor: 1, model: 2, serial: 4))
+        library.capture(key: key, screens: [original],
+                        sample: sample([window("com.chrome", left)], sequence: 1), snapshot: nil)
+        library.collect(key: key, screens: [changed],
+                        sample: sample([window("com.chrome", right)], sequence: 2), snapshot: nil,
+                        runningBundleIDs: ["com.chrome"])
+        XCTAssertEqual(library.pending[key]?.snapshot.screen(screen.id)?.fingerprint, original.fingerprint)
+        XCTAssertEqual(library.pending[key]?.snapshot.placements.first?.unitRect.x, 0)
+        XCTAssertEqual(library.confirm(key: key), .nothingToSave)
+        XCTAssertEqual(library.saved(for: key)?.screen(screen.id)?.fingerprint, original.fingerprint)
+
+        XCTAssertTrue(library.capture(key: key, screens: [changed],
+                                      sample: sample([window("com.chrome", right)], sequence: 3), snapshot: nil))
+        XCTAssertEqual(library.saved(for: key)?.screen(screen.id)?.fingerprint, changed.fingerprint)
+        XCTAssertEqual(library.saved(for: key)?.placements.first?.unitRect.x, 0.5)
+    }
+
+
+    func testFingerprintProtectionKeepsOtherScreenChangesAndDoesNotDropBuiltinWindows() {
+        let library = makeLibrary()
+        let original = ScreenInfo(id: screen.id, name: screen.name, frame: screen.frame, isBuiltin: false,
+                                  fingerprint: ScreenFingerprint(vendor: 1, model: 2, serial: 3))
+        let changed = ScreenInfo(id: screen.id, name: screen.name, frame: screen.frame, isBuiltin: false,
+                                 fingerprint: ScreenFingerprint(vendor: 1, model: 2, serial: 4))
+        library.capture(key: pairKey, screens: [original, other], sample: sample([
+            window("com.chrome", left), window("com.code", onOther, id: 2, serverID: 12)
+        ], sequence: 1), snapshot: nil)
+        let builtinFrame = CGRect(x: -500, y: 0, width: 500, height: 1000)
+        let movedOnOther = CGRect(x: 1500, y: 0, width: 500, height: 1000)
+        library.collect(key: pairKey, screens: [changed, other], sample: sample([
+            window("com.chrome", builtinFrame), window("com.code", movedOnOther, id: 2, serverID: 12)
+        ], sequence: 2), snapshot: nil, runningBundleIDs: ["com.chrome", "com.code"])
+        XCTAssertEqual(library.confirm(key: pairKey), .saved)
+        let saved = library.saved(for: pairKey)!
+        XCTAssertEqual(saved.screen(screen.id)?.fingerprint, original.fingerprint)
+        XCTAssertEqual(saved.placements.first { $0.bundleID == "com.chrome" }?.unitRect.x, 0)
+        XCTAssertEqual(saved.placements.first { $0.bundleID == "com.code" }?.unitRect.x, 0.5)
     }
 
     func testRemoveWorkspaceClearsEverything() throws {

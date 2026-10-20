@@ -12,8 +12,15 @@ positions when you reconnect an external screen — and touches nothing else.
 
 Take your MacBook to the office, work on a different monitor, come home and
 plug back in — your home layout is scrambled. macOS only remembers the
-latest arrangement. Plugback keeps a profile per display, so every screen
-you return to comes back exactly the way you left it.
+latest arrangement. Plugback keeps a saved workspace for each combination of
+external screens, so returning home and returning to a two-screen office setup
+use their own saved window positions. A screen on its own and that same screen
+with another attached are separate workspaces.
+
+Auto Save is on by default. Plugback collects changes while you work and saves
+the latest valid arrangement when you leave that workspace or quit normally.
+Restore always uses the last completed save; changes still waiting to be saved
+do not change its source. Auto Save and automatic restore are separate settings.
 
 Status: pre-release. Implementation complete (M1-M5), pending on-device
 verification; no signed release yet. Design documents live in
@@ -96,8 +103,9 @@ xcodebuild test -project App/Plugback.xcodeproj -scheme Plugback -destination 'p
 Issues and pull requests are welcome. A few things worth knowing before you
 open one:
 
-- Read [CONTEXT.md](CONTEXT.md) first. It fixes the vocabulary — profile,
-  target app, restore — and the code and docs use those words exactly.
+- Read [CONTEXT.md](CONTEXT.md) first. It fixes the vocabulary — workspace,
+  saved window placement, target app, restore — and the code and docs use those
+  words exactly.
 - The design documents in [docs/](docs/) are written in Korean and lead the
   implementation. If a change alters intended behavior, update the relevant
   document in the same pull request.

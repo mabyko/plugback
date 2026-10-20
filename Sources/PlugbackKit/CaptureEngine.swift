@@ -24,6 +24,7 @@ public enum CaptureEngine {
     /// - links: 기존 저장 자리 ↔ 실행 중 창의 유효한 연결.
     /// - droppable: 이 환경에서 외장 화면에 있는 것을 확인한 적 있는 연결 자리 — 내장에서 발견되면 사용자가 옮긴 것이다.
     ///   화면 구성 변경으로 macOS가 내장에 모은 창은 여기 없으므로 기록을 보존한다 (W17·S17).
+    /// - allowFingerprintChanges: 수동 저장만 지문 불일치를 갱신한다. 자동 수집은 해당 화면의 기존 자리를 보존한다.
     static func observe(
         windows: [WindowInfo],
         screens: [ScreenInfo],
@@ -32,10 +33,18 @@ public enum CaptureEngine {
         links: [UUID: CGWindowID],
         excludedBundleIDs: Set<String>,
         closedPlacementIDs: Set<UUID>,
-        droppable: Set<UUID>? = nil
+        droppable: Set<UUID>? = nil,
+        allowFingerprintChanges: Bool = true
     ) -> Observation {
         let droppable = droppable ?? Set(links.keys)
         let externals = screens.filter { !$0.isBuiltin && $0.frame.width > 0 && $0.frame.height > 0 }
+        // 지문이 달라진 화면은 사용자의 수동 저장에서만 새 정보로 확정한다.
+        let protectedScreens = Set(externals.compactMap { screen -> String? in
+            guard !allowFingerprintChanges,
+                  let saved = base?.screen(screen.id)?.fingerprint, let current = screen.fingerprint,
+                  saved != current else { return nil }
+            return screen.id
+        })
         let placementByWindow: [CGWindowID: UUID] = Dictionary(
             links.compactMap { id, wsid in base?.placements.contains { $0.id == id } == true ? (wsid, id) : nil },
             uniquingKeysWith: { first, _ in first }
@@ -52,11 +61,14 @@ public enum CaptureEngine {
             // 제외한 앱의 기록은 건드리지 않는다 — 다시 켜면 저장돼 있던 자리로 돌아온다 (US-006 AC-2).
             guard !excludedBundleIDs.contains(window.appBundleID) else { continue }
             let linked = window.windowServerID.flatMap { placementByWindow[$0] }
+            if let linked, let existing = base?.placements.first(where: { $0.id == linked }),
+               protectedScreens.contains(existing.screenID) { continue }
             guard let screen = externals.first(where: { $0.contains(window) }) else {
                 // 연결을 유지한 채 외장 창을 내장·작업 환경 밖으로 옮겼다 — 저장 완료 뒤부터 외장 복원 대상에서 뺀다 (D4).
                 if let linked, droppable.contains(linked) { dropped.insert(linked) }
                 continue
             }
+            guard !protectedScreens.contains(screen.id) else { continue }
 
             var hint: SpaceHint?
             if let snapshot {
@@ -106,6 +118,7 @@ public enum CaptureEngine {
         let screenRecords = externals.map { screen -> ScreenRecord in
             var record = base?.screen(screen.id)
                 ?? ScreenRecord(id: screen.id, name: screen.name)
+            if protectedScreens.contains(screen.id) { return record }
             record.name = screen.name
             record.fingerprint = screen.fingerprint
             record.portLocation = screen.portLocation

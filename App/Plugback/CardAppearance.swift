@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 표시 설정은 앱에만 속한다. 프로필·복원 소스와 별개로 각각 보존한다.
+/// 표시 설정은 앱에만 속한다. 작업 환경 저장본·복원 소스와 별개로 각각 보존한다.
 struct CardAppearance: DynamicProperty {
     @AppStorage var layout: CardLayout
     @AppStorage var colors: CardColors
@@ -35,7 +35,7 @@ enum CardLayout: String, CaseIterable {
 
     var detail: String {
         switch self {
-        case .status: "작은 카드에서 복원하고, 대상 앱은 관리 화면에서 고릅니다."
+        case .status: "상태와 다음 행동을 먼저 보여 주고, 대상 앱은 관리 화면에서 고릅니다."
         case .list: "검색 가능한 촘촘한 목록에서 대상 앱을 바로 고릅니다."
         case .spaces: "저장된 Space별로 앱을 살펴봅니다. 복원은 전체 대상에 적용됩니다."
         case .board: "앱 아이콘을 한눈에 보고 복원 대상을 고릅니다."

@@ -48,7 +48,7 @@ struct PlugbackApp: App {
 }
 
 /// 정상 종료 전 저장 (4.4절). 저장에 실패하면 종료를 취소하고 재시도·저장 없이 종료를 묻는다.
-/// `applicationWillTerminate`는 반환 뒤 종료되므로 판정은 여기서 끝낸다.
+/// `applicationWillTerminate`는 반환 뒤 종료되므로 판정은 여기서 끝낸다 — 그 뒤 종료 알림은 다시 저장하지 않는다.
 @MainActor
 final class PlugbackAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {

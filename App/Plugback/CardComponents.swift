@@ -117,6 +117,7 @@ struct CardAppRow: View {
     let layout: CardLayout
     let palette: CardPalette
     let setTracked: (Bool) -> Void
+    /// 저장 기록 삭제 요청 — 바로 지우지 않는다. 목록이 한 번 확인한 뒤 지운다.
     let remove: (() -> Void)?
     @State private var hovered = false
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 30
@@ -137,21 +138,22 @@ struct CardAppRow: View {
             .toggleStyle(CardToggleStyle(palette: palette))
             .accessibilityLabel(name)
             .help(isEnabled ? "복원 대상에서 제외" : "복원 대상에 포함")
+            // 제외한 앱은 기록만 남아 있다 — 지우는 길을 행에 드러낸다. 체크(제외)와는 다른 기호·확인을 거친다.
             if !isEnabled, let remove {
                 Button(action: remove) {
-                    Image(systemName: "xmark.circle").frame(width: 24, height: 24)
+                    Image(systemName: "trash").frame(width: 24, height: 24)
                 }
                     .buttonStyle(.plain)
                     .foregroundStyle(palette.secondary)
-                    .help("프로필에서 삭제")
-                    .accessibilityLabel("\(name) 프로필에서 삭제")
+                    .help("\(CardPresentation.removeRecordsAction)…")
+                    .accessibilityLabel("\(name) \(CardPresentation.removeRecordsAction)")
             }
         }
         .background(hovered ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 5))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .contextMenu {
-            if let remove { Button("프로필에서 삭제", role: .destructive, action: remove) }
+            if let remove { Button("\(CardPresentation.removeRecordsAction)…", role: .destructive, action: remove) }
         }
     }
 
@@ -183,6 +185,8 @@ struct CardAppRow: View {
 struct CardResultStrip: View {
     let results: [RestoreResult]
     let restoredAt: Date?
+    /// 화면 ID → 화면 표시 이름. 화면이 둘 이상이면 저장 창별 사유를 화면별로 묶는다.
+    var screenNames: [String: String] = [:]
     let palette: CardPalette
     @State private var expanded = false
     @ScaledMetric(relativeTo: .callout) private var detailCap: CGFloat = 144
@@ -203,6 +207,10 @@ struct CardResultStrip: View {
                     CardScrollView(maxHeight: detailCap) {
                         VStack(alignment: .leading, spacing: 5) {
                             ForEach(results, id: \.screenID) { result in
+                                if results.count > 1, let name = screenNames[result.screenID] {
+                                    Text(name).font(.caption.weight(.semibold)).foregroundStyle(palette.text)
+                                        .padding(.top, 2)
+                                }
                                 // 저장 창마다 한 항목이다 (D1) — 같은 앱의 창을 하나로 합치지 않는다
                                 ForEach(result.entries, id: \.placementID) { entry in
                                     Label("\(entry.displayName) — \(CardPresentation.describe(entry.outcome))",
@@ -266,7 +274,8 @@ struct CardAppTile: View {
     let isRunning: Bool
     let palette: CardPalette
     let setTracked: (Bool) -> Void
-    let remove: () -> Void
+    /// 저장 기록 삭제 요청 — 저장 전 앱에는 없다. 확인은 목록이 받는다.
+    let remove: (() -> Void)?
     @ScaledMetric(relativeTo: .caption2) private var tileHeight: CGFloat = 62
     @State private var hovered = false
     @FocusState private var focused: Bool
@@ -302,6 +311,8 @@ struct CardAppTile: View {
             Toggle(app.displayName, isOn: Binding(get: { app.isEnabled }, set: setTracked))
                 .accessibilityHint(isRunning ? "" : "실행하지 않은 앱")
         }
-        .contextMenu { Button("프로필에서 삭제", role: .destructive, action: remove) }
+        .contextMenu {
+            if let remove { Button("\(CardPresentation.removeRecordsAction)…", role: .destructive, action: remove) }
+        }
     }
 }

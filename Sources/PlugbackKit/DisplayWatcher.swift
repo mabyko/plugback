@@ -10,8 +10,19 @@ import AppKit
 /// - 잠금 미루기: 잠긴 상태에서 온 등장은 **어느 화면인지 기억한 채** 들고 있다가 잠금 해제 때 한 번 소비한다.
 ///   미뤄둔 화면이 그사이 빠지면 미룰 것도 사라진다. 변경 신호를 받은 시점의 잠금도 기억해,
 ///   안정화 전에 풀린 잠금 때문에 잠자기 억제에 삼켜지지 않는다 (2026-09-11 재현 검사).
+/// - 안정화 통지: 위 판정과 무관하게 안정화마다 `onSettled`를 한 번 보낸다 — 원시 변경으로 시작한 대기를 끝낼 수 있게.
 @MainActor
 public final class DisplayWatcher {
+    /// 안정화 한 회차의 결론. 집합이 그대로여도, 등장 콜백을 억제·보류했어도 온다.
+    public enum Settle: Equatable, Sendable {
+        /// 외장 화면 집합이 그대로다 — 해상도·배치 변경, 덮개 여닫기.
+        case unchanged
+        /// 집합이 바뀌었다. automaticRestore가 false면 잠자기 해제 직후 억제한 등장이다 (US-009 AC-5).
+        case changed(automaticRestore: Bool)
+        /// 잠긴 채 추가된 화면을 해제 뒤로 미뤘다 — 해제 후 다시 안정화되어 changed로 온다.
+        case deferredUntilUnlock
+    }
+
     private let provider: ScreenProvider
     private let debounceInterval: TimeInterval
     private let wakeSuppressionInterval: TimeInterval
@@ -21,6 +32,7 @@ public final class DisplayWatcher {
     private let onRawChange: () -> Void
     /// 잠금 해제 확인 — 보류한 복원 작업의 재개 신호 (D8).
     private let onScreenUnlocked: () -> Void
+    private let onSettled: (Settle) -> Void
     private let isLocked: () -> Bool
 
     private var knownExternalIDs: Set<String>
@@ -43,6 +55,7 @@ public final class DisplayWatcher {
                 onExternalScreensRemoved: @escaping (Set<String>) -> Void = { _ in },
                 onRawChange: @escaping () -> Void = {},
                 onScreenUnlocked: @escaping () -> Void = {},
+                onSettled: @escaping (Settle) -> Void = { _ in },
                 onExternalScreensAppeared: @escaping () -> Void) {
         self.provider = provider
         self.debounceInterval = debounceInterval
@@ -51,6 +64,7 @@ public final class DisplayWatcher {
         self.onExternalScreensRemoved = onExternalScreensRemoved
         self.onRawChange = onRawChange
         self.onScreenUnlocked = onScreenUnlocked
+        self.onSettled = onSettled
         self.onExternalScreensAppeared = onExternalScreensAppeared
         knownExternalIDs = Set(provider.screens().filter { !$0.isBuiltin }.map(\.id))
     }
@@ -118,13 +132,24 @@ public final class DisplayWatcher {
         deferredIDs = deferredIDs.intersection(current) // 잠금 중에 도로 뽑은 화면은 미룰 것이 없다
 
         let pendingIDs = added.union(deferredIDs)
-        guard !pendingIDs.isEmpty else { return }
+        guard !pendingIDs.isEmpty else {
+            onSettled(removed.isEmpty ? .unchanged : .changed(automaticRestore: true))
+            return
+        }
         // 잠금 판정이 억제 판정보다 위다. 덮개를 열며 꽂는 흐름은 연결이 곧 잠자기 해제라
         // 아래 억제에 걸리는데, 그 회차를 버리면 added가 비어 다시 발화할 길이 없다.
-        guard !isLocked() else { deferredIDs = pendingIDs; return }
+        guard !isLocked() else {
+            deferredIDs = pendingIDs
+            onSettled(.deferredUntilUnlock)
+            return
+        }
         // 미뤄둔 회차와 잠긴 채 도착한 변경은 억제를 타지 않는다 — Touch ID로 억제 창 안에 풀면 두 번 삼켜진다.
-        guard !deferredIDs.isEmpty || arrivedLocked || Date() >= suppressUntil else { return }
+        guard !deferredIDs.isEmpty || arrivedLocked || Date() >= suppressUntil else {
+            onSettled(.changed(automaticRestore: false)) // 자동 복원만 억제한다 — 환경 선택·이탈 저장은 받는 쪽이 한다
+            return
+        }
         deferredIDs = []
         onExternalScreensAppeared()
+        onSettled(.changed(automaticRestore: true))
     }
 }

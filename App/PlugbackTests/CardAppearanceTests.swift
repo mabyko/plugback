@@ -198,13 +198,56 @@ final class CardAppearanceTests: XCTestCase {
                 for (foreground, background) in [(p.text, p.background), (p.text, p.surface),
                     (p.secondary, p.background), (p.secondary, p.surface), (p.onAccent, p.accent),
                     (p.text, p.soft), (p.secondary, p.soft), (p.text, p.accentSoft),
-                    (p.secondary, p.accentSoft)] {
+                    (p.secondary, p.accentSoft),
+                    // 강조색은 저장 확인·「창 확인 필요」 진입점의 글자색으로도 쓴다
+                    (p.accent, p.background), (p.accent, p.surface), (p.accent, p.soft)] {
                     let a = try luminance(foreground), b = try luminance(background)
                     XCTAssertGreaterThanOrEqual((max(a, b) + 0.05) / (min(a, b) + 0.05), 4.5,
                                                 "\(colors) / \(scheme)")
                 }
             }
         }
+    }
+
+
+    @MainActor
+    func testFirstSaveAndFailedSaveKeepTheCardWithinItsWidth() async throws {
+        let suite = "plugback-save-feedback-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let fixture = CardDesktopFixture()
+        let controller = PlugbackController(gateway: fixture, screenProvider: fixture,
+            store: ProfileStore(directory: directory), defaults: defaults, spaceReader: fixture)
+        await controller.cardOpened()
+        let palette = CardColors.sage.palette(for: .light)
+        func render(_ name: String) throws {
+            let host = NSHostingView(rootView: Card(controller: controller, layout: .status, palette: palette)
+                .modifier(CardSurface(layout: .status, palette: palette)).environment(\.colorScheme, .light))
+            host.layoutSubtreeIfNeeded()
+            host.setFrameSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(host.frame.width, CardLayout.status.width, accuracy: 1)
+            XCTAssertLessThan(host.frame.height, 700)
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(
+                to: FileManager.default.temporaryDirectory.appendingPathComponent("plugback-\(name).png"))
+        }
+        XCTAssertFalse(controller.hasRestorableProfile)
+        try render("first-save")
+        await controller.captureNow()
+        XCTAssertTrue(controller.hasRestorableProfile)
+        try FileManager.default.removeItem(at: directory)
+        try Data("not-a-directory".utf8).write(to: directory)
+        let outcome = await controller.captureNow()
+        XCTAssertEqual(outcome, .saveFailed)
+        XCTAssertTrue(controller.hasRestorableProfile)
+        XCTAssertEqual(controller.storeNotice, .writeFailed)
+        try render("failed-save")
     }
 
     @MainActor
@@ -252,6 +295,14 @@ final class CardAppearanceTests: XCTestCase {
         XCTAssertEqual(CardPresentation.resolvedSpaceSelection(stale, in: controller.sections), destinations.first)
         XCTAssertNil(CardPresentation.resolvedSpaceSelection(destinations.first, in: []))
         await controller.restoreNow()
+        // 현재 Space 밖의 저장 창은 방문 대기다 — 카드 상태가 남은 일을 먼저 말하고, 같은 Space는 한 줄로 묶는다
+        let facts = CardFacts(controller)
+        XCTAssertFalse(facts.openItems.isEmpty)
+        XCTAssertEqual(CardPresentation.status(facts), .awaitingVisit(count: facts.openItems.count))
+        let lines = CardPresentation.requestLines(facts.openItems)
+        XCTAssertEqual(lines.count, 2, "Space 2·3 — 저장 창 수만큼 줄이 늘지 않는다")
+        XCTAssertTrue(lines.allSatisfy { $0.text.contains("방문 대기") })
+        XCTAssertEqual(CardPresentation.buttons(for: CardPresentation.status(facts), facts: facts).first?.action, .resumeRemaining)
         try renderCombinations(controller)
         try renderSettings(controller, store: defaults)
     }

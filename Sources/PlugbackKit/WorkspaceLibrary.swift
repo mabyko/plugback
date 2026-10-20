@@ -163,7 +163,8 @@ final class WorkspaceLibrary: ObservableObject {
         var observation = CaptureEngine.observe(
             windows: sample.windows, screens: screens, snapshot: snapshot, base: base,
             links: liveLinks(for: base), excludedBundleIDs: record.excludedBundleIDs,
-            closedPlacementIDs: record.closedPlacementIDs, droppable: droppable(in: key)
+            closedPlacementIDs: record.closedPlacementIDs, droppable: droppable(in: key),
+            allowFingerprintChanges: false
         )
         // 위치 기반 재대응 — 연결이 없는 창(재실행 뒤 등)이 같은 앱·화면·Space의 연결 없는 저장 자리에 놓여 있으면
         // 그 자리를 갱신한다. 그러지 않으면 재실행마다 같은 자리에 기록이 겹겹이 쌓인다.
@@ -301,8 +302,10 @@ final class WorkspaceLibrary: ObservableObject {
 
     /// 사용자가 확정한 연결 (D3). 같은 실제 창·저장 자리를 확인할 수 있는 동안 다음 복원에도 재사용한다.
     func confirmLink(placementID: UUID, bundleID: String, windowServerID: CGWindowID) {
-        for (id, link) in links where link.windowServerID == windowServerID && id != placementID {
-            links.removeValue(forKey: id) // 같은 실제 창을 두 자리에 두지 않는다
+        guard let key = owners[placementID] else { return }
+        for (id, link) in links where link.windowServerID == windowServerID
+            && id != placementID && owners[id] == key {
+            links.removeValue(forKey: id) // 실제 창의 일대일 대응은 작업 환경 안에서 유지한다.
         }
         links[placementID] = WindowLink(bundleID: bundleID, windowServerID: windowServerID, status: .live)
     }
@@ -320,7 +323,8 @@ final class WorkspaceLibrary: ObservableObject {
         let bundleByPlacement = Dictionary(uniqueKeysWithValues: placements.map { ($0.id, $0.bundleID) })
         for (placementID, wsid) in observed {
             guard let bundleID = bundleByPlacement[placementID] else { continue }
-            for (other, link) in links where link.windowServerID == wsid && other != placementID {
+            for (other, link) in links where link.windowServerID == wsid
+                && other != placementID && owners[other] == key {
                 links.removeValue(forKey: other)
             }
             links[placementID] = WindowLink(bundleID: bundleID, windowServerID: wsid, status: .live, seenIn: key)

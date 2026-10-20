@@ -42,9 +42,9 @@ CaptureEngine과 RestoreEngine은 게이트웨이를 모른다 — 이미 열거
 
 ### DisplayWatcher
 
-- **인터페이스**: 콜백 넷 — `onExternalScreensAppeared()` / `onExternalScreensRemoved(식별자들)` / `onRawChange()` (원시 변경 신호 — 수집을 멈추기 위해) / `onScreenUnlocked()` (잠금 보류 재개용). 제거를 등장보다 먼저 보고한다.
+- **인터페이스**: 앱의 화면 전환 입구는 `onSettled(Settle)`이다. `.unchanged`, `.changed(automaticRestore:)`, `.deferredUntilUnlock`으로 안정화 결과를 빠짐없이 알린다. 기존 `onExternalScreensAppeared()` / `onExternalScreensRemoved` 콜백은 호환을 위해 남기며 제거를 등장보다 먼저 보고한다. `onRawChange()`는 즉시 수집·미전송 조작을 멈추고 `onScreenUnlocked()`는 잠금 보류를 재개한다.
 - **숨기는 것**: 이벤트 안정화 대기(F-01.2), 위상 게이트·잠자기 억제·잠금 미루기(F-01.3). 미뤄둔 등장은 화면 식별자 집합으로 보관해 그사이 빠진 화면은 소비하지 않고, 변경 신호가 잠긴 상태에서 왔으면 안정화 전 해제도 억제에 삼키지 않는다 (2026-09-11 재현 검사 2건).
-- `isSettling`을 노출한다 — 컨트롤러는 안정화 중 수집을 멈춘다.
+- `isSettling`을 노출한다. 컨트롤러는 안정화 결과 적용까지 자기 `isSettlingScreens`를 유지해 수집과 수동 저장을 막는다. 무변화 안정화도 이 상태를 끝내며, 잠금 미루기는 해제 뒤 안정화에서 끝난다.
 
 ### CollectTrigger
 
@@ -64,7 +64,7 @@ CaptureEngine과 RestoreEngine은 게이트웨이를 모른다 — 이미 열거
 ### CaptureEngine
 
 - **인터페이스**: `observe(창들, 작업 환경 화면들, Space snapshot?, 보존할 기록, 유효 연결, 제외 앱, 닫힌 자리) -> (창 위치 기록들, 화면 기록들, 새 연결, 관찰한 앱, 내장으로 옮긴 자리, 확인한 Space)`.
-- **숨기는 것**: 중심점 판정(F-03.2), 창별 병합(F-03.3), 현재 Space만 확인한 것으로 기록하는 규칙, 비율 좌표 변환, 드리프트 방지. 전체화면·Split View·최소화·숨김은 기록하지 않는다.
+- **숨기는 것**: 중심점 판정(F-03.2), 창별 병합(F-03.3), 현재 Space만 확인한 것으로 기록하는 규칙, 비율 좌표 변환, 드리프트 방지. 자동 수집은 지문이 다른 화면의 기존 기록을 보존하고, 수동 저장만 새 지문을 확정한다. 전체화면·Split View·최소화·숨김은 기록하지 않는다.
 
 ### WindowMatching
 
@@ -82,6 +82,7 @@ CaptureEngine과 RestoreEngine은 게이트웨이를 모른다 — 이미 열거
 - **인터페이스**: `start(origin, key, screens, environment)` / `resume(scope, …)` / `cancel(reason, onlyAutomatic:)` / `cancelItems(bundleID:)` / `cancelItem` / `chooseWindow` / `discardUnconfirmedChoices` / `drop` + 읽기 전용 `request`, `results`, `candidates(for:)`, `landings`.
 - **숨기는 것**: 소스 고정, 저장 창별 결과 추적, 실행·생성을 요청당 한 번씩 보내고 다시 읽어 다시 판정하는 최대 3회 순서, 이동·실행 직전의 요청 유효성·잠금·사용자 조작 게이트, 재판정 범위(이벤트·잠금 해제·사용자)의 구별, 취소 이유. 환경(`Environment`)으로 옵션·잠금 판정·사용자 조작 판정·진단 기록을 주입받는다.
 - ProfileStore·카드 상태를 소유하지 않는 MainActor 내부 타입이다. 요청은 메모리에만 있다.
+- 열린 항목·일시정지·취소는 화면 건너뜀·앱 제외·완료 여부를 같은 기준으로 판정한다. 앱 실행·추가 창 생성마다 최신 설정과 남은 대상을 확인하고, 생성 뒤 재판정이 이미 취소된 결과를 덮지 않는다.
 
 ### DesktopObservation
 
@@ -119,12 +120,15 @@ CaptureEngine과 RestoreEngine은 게이트웨이를 모른다 — 이미 열거
 ### PlugbackController
 
 - **인터페이스**: 관찰 가능한 상태(화면 상태, 섹션·Space 그룹·화면 표시 이름, 대기·확인 항목, 마지막 결과, 복원 진행 중·화면 안정화 중, 권한, 복원 모드, 자동 저장, 최소화 옵션, 실험실 4종, 개별 Spaces 판정, 저장소 문제, 진단 기록) + 저장·복원·남은 창 복원·남은 복원 취소·직접 지정·창 확인·앱 포함/제외·기록 삭제·작업 환경 삭제·종료 전 저장 명령.
-- **숨기는 것**: 배선 전부 — 작업 환경 전환의 확정·선택·요청 시작, 이벤트별 재판정 범위, 수집 조건(권한·안정화·복원 중·개별 Spaces), 복원 착지 위치의 이력 승격 방지, 사용자 조작·자기 이동의 대조, 설정 이전, 결과 수명(= 저장본 수명).
+- **숨기는 것**: 배선 전부 — 작업 환경 전환의 확정·선택·요청 시작, 이벤트별 재판정 범위, 수집 조건(권한·안정화·복원 중·개별 Spaces), 복원 착지 위치의 이력 승격 방지, 사용자 조작·자기 이동의 대조, 설정 이전. 결과·시각은 현재 작업 환경의 요청에서만 읽는다. `execute`가 최초 복원·재개 실행의 종료 처리를 공유하고 `processDeferred`가 환경 전환→잠금 해제→화면 변경 미전송 항목→Space 재판정→수집 순으로 후속 작업을 처리한다. 안전 신호를 이 후속 처리까지 지연하지 않는다. `saveFailedWorkspaces`와 `retrySave`는 환경별 이탈 저장 실패를 관리한다.
+- 환경 전환 자동 복원이 예약된 동안에도 수집을 미룬다. 표시용 관찰을 기다리는 틈의 복원 전 배치가 다음 자동 저장으로 확정되지 않도록, 관찰 전후에 예약 여부를 확인한다. 지문 경고는 현재 저장본과 비교하며, 중도 취소 결과에는 요청 시작 시각을 보존한다.
 
 ### MenuBarUI
 
 - 카드는 `MenuBarExtra(.window)`, 「복원 확인」은 `Window` 씬, 설정은 `Settings` 씬. 표현 매핑은 `CardPresentation`이 맡고 App 테스트 타깃이 전 분기를 검증한다. 화면 표시 이름·Space 번호·대기 줄·사유 문구는 여기서만 만든다. 앱 목록은 화면마다 「지금 화면에 있는 앱 / 화면에 없는 저장 앱 / 제외한 앱」 세 묶음이며(F-05.3), 컨트롤러의 `ScreenSection`이 저장본과 마지막 관찰의 표준 창 목록에서 파생한다.
+- `MenuBarCard`는 화면 조립·내부 탐색을 맡는다. `CardStatusView`는 상태·다음 행동·소스·결과, `CardRequestView`는 남은 항목 안내, `CardAppBrowser`는 앱 선택·탐색을 맡는다. `CardFacts`를 입력으로 한 순수 표시 계산이 문구·우선순위·버튼을 정하며, 별도 ViewModel이나 상태 저장소를 만들지 않는다. 기존 네 가지 모양 선택은 유지한다.
 - 앱 델리게이트가 정상 종료 전 저장을 판정한다 — 실패하면 종료를 취소하고 재시도·저장 없이 종료를 묻는다.
+  * `prepareForTermination`이 판정한 뒤 `willTerminate`는 다시 저장하지 않는다. 델리게이트 판정이 없었던 종료만 호환 경로에서 저장한다.
 
 ## 3. 심 (Seam)
 

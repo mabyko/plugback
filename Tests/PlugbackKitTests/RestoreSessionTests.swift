@@ -289,6 +289,26 @@ final class RestoreSessionTests: XCTestCase {
         XCTAssertEqual(update?.first?.entries.first?.outcome, .moved)
     }
 
+
+    func testExcludedPlacementsDoNotKeepTheRequestOpen() async {
+        let h = makeHarness()
+        h.library.setAppEnabled("com.app", false, displayName: "App", in: key)
+        _ = await h.session.start(origin: .user, key: key, screens: [external], environment: environment(h))
+        XCTAssertFalse(h.session.hasOpenItems)
+        XCTAssertTrue(h.session.results.flatMap(\.entries).isEmpty)
+    }
+
+    func testFingerprintSkippedScreensDoNotKeepTheRequestOpen() async {
+        var record = snapshotRecord()
+        record.saved?.screens[0].fingerprint = ScreenFingerprint(vendor: 1, model: 2, serial: 3)
+        let h = makeHarness(record: record)
+        let changed = ScreenInfo(id: external.id, name: external.name, frame: external.frame, isBuiltin: false,
+                                 fingerprint: ScreenFingerprint(vendor: 1, model: 2, serial: 4))
+        _ = await h.session.start(origin: .user, key: key, screens: [changed], environment: environment(h))
+        XCTAssertFalse(h.session.hasOpenItems)
+        XCTAssertEqual(h.session.results.first?.screenSkipReason, .fingerprintMismatch)
+    }
+
     func testDisablingTheAppCancelsItsOpenItemsOnly() async {
         let h = makeHarness()
         h.reader.availability = .available(movedSnapshot(isCurrent: false))
