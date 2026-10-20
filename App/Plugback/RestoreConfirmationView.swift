@@ -9,13 +9,15 @@ struct RestoreConfirmationView: View {
 
     @ObservedObject var controller: PlugbackController
     @State private var raising: UUID?
+    /// 삭제 확인을 기다리는 저장 자리 — 되돌릴 수 없으므로 한 번 묻는다
+    @State private var placementToDelete: PlugbackController.ConfirmationItem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if controller.confirmationItems.isEmpty {
-                Text(controller.hasOpenRestoreItems ? "확인이 필요한 창은 없습니다. 방문·이동 대기 항목은 카드에서 볼 수 있습니다."
-                                                     : "확인이 필요한 창이 없습니다.")
+                Text(!controller.waitingItems.isEmpty ? "확인이 필요한 창은 없습니다. 방문·이동 대기 항목은 카드에서 볼 수 있습니다."
+                                                      : "확인이 필요한 창이 없습니다.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
@@ -33,6 +35,23 @@ struct RestoreConfirmationView: View {
         .padding(20)
         .frame(minWidth: 520, minHeight: 360)
         .onAppear { Task { await controller.cardOpened() } }
+        .confirmationDialog(
+            CardPresentation.placementRemovalTitle,
+            isPresented: Binding(get: { placementToDelete != nil },
+                                 set: { if !$0 { placementToDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: placementToDelete
+        ) { item in
+            Button("이 자리 삭제", role: .destructive) { controller.removePlacement(item.placementID) }
+        } message: { item in
+            Text(CardPresentation.placementRemovalMessage(name: item.displayName, place: place(item)))
+        }
+    }
+
+    private func place(_ item: PlugbackController.ConfirmationItem) -> String {
+        "\(CardPresentation.screenName(item.screen))"
+            + (item.spaceNumber.map { " · Space \($0)" } ?? " · Space 미지정")
+            + " · \(CardPresentation.placementDescription(item.unitRect))"
     }
 
     private var header: some View {
@@ -52,9 +71,7 @@ struct RestoreConfirmationView: View {
                 CardAppIcon(bundleID: item.bundleID, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.displayName).font(.body.weight(.semibold))
-                    Text("\(CardPresentation.screenName(item.screen))"
-                         + (item.spaceNumber.map { " · Space \($0)" } ?? " · Space 미지정")
-                         + " · \(CardPresentation.placementDescription(item.unitRect))")
+                    Text(place(item))
                         .font(.caption).foregroundStyle(.secondary)
                     if case .needsConfirmation(let reason) = item.outcome {
                         Text(CardPresentation.describe(reason)).font(.caption)
@@ -62,7 +79,7 @@ struct RestoreConfirmationView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Button("이 자리 삭제", role: .destructive) { controller.removePlacement(item.placementID) }
+                Button("이 자리 삭제…", role: .destructive) { placementToDelete = item }
                     .font(.caption)
                     .help("이 저장 자리를 작업 환경 기록에서 지웁니다. 되돌릴 수 없습니다.")
             }
@@ -109,9 +126,11 @@ struct RestoreConfirmationView: View {
                 Text("복원 중…").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            Button("남은 복원 취소") { controller.cancelRemaining() }
+                .disabled(controller.waitingItems.isEmpty || controller.isRestoring)
             Button("남은 창 복원") { Task { await controller.resumeRemaining() } }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!controller.hasOpenRestoreItems || controller.isRestoring || !controller.isConnected)
+                .disabled(controller.waitingItems.isEmpty || controller.isRestoring || !controller.isConnected)
         }
     }
 }

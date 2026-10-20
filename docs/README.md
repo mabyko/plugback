@@ -17,5 +17,6 @@
 | [PRODUCT_DESIGN_REVIEW.md](./PRODUCT_DESIGN_REVIEW.md) | 작업 환경·저장 시점·복원 회귀 진단(R1–R6)과 수정 설계 검토. 2026-09-11 구현 반영 |
 | [SPACE_LAYOUT_STATE_REVIEW.md](./SPACE_LAYOUT_STATE_REVIEW.md) | Space별 개별 창 위치 모델과 상태 검토표(D1–D9). 구현의 합의 근거 |
 | [research/](./research/) | Space·Mission Control·전체화면 실측 조사. private write를 쓰지 않기로 한 근거 |
+| [proposals/2026-10-20-product-redesign.md](./proposals/2026-10-20-product-redesign.md) | 제품 범위·상태 중심 디자인·구조 개선 통합안. 독립 검토와 재현 근거를 연결하며, 실제 동작 기준은 기능명세를 따른다 |
 
 문서 변경 이력은 git이 담당한다. 결정의 근거는 이력이 아니라 해당 문서 안에 남긴다.

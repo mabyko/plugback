@@ -10,7 +10,8 @@ import AppKit
 /// (2026-08-18 실기기: 활성화만 구독했더니 확정된 후보가 씨앗과 좌표가 같았다.)
 ///
 /// 앱 종료 알림은 번들 식별자와 함께 전한다 — 그 앱의 살아 있던 창 연결이 지금 환경에서 끝났다는 뜻이다 (D9).
-/// Plugback 자신의 종료 알림도 받는다. 후보는 메모리에만 살기 때문에 종료는 확정할 마지막 기회다.
+/// Plugback 자신의 종료 알림도 받는다. 후보는 메모리에만 살기 때문에 종료는 확정할 마지막 기회다 —
+/// 단 applicationShouldTerminate에서 이미 정한 종료면 받는 쪽이 다시 쓰지 않는다 (「저장하지 않고 종료」 존중).
 @MainActor
 final class ActivityWatcher {
     private let minimumInterval: TimeInterval

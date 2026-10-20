@@ -12,7 +12,7 @@ struct SettingsView: View {
     @State private var workspaceToDelete: PlugbackController.WorkspaceSummary?
     @State private var exportError: String?
 
-    init(controller: PlugbackController, initialPane: SettingsPane = .appearance,
+    init(controller: PlugbackController, initialPane: SettingsPane = .general,
          store: UserDefaults? = nil) {
         self.controller = controller
         appearance = CardAppearance(store: store)
@@ -72,7 +72,7 @@ struct SettingsView: View {
         .preferredColorScheme(appearance.brightness.colorScheme)
         .onAppear { launchAtLogin = LoginItem.isEnabled }
         .confirmationDialog(
-            "\(workspaceToDelete.map { Self.workspaceTitle($0) } ?? "") 기록을 삭제할까요?",
+            "\(workspaceToDelete.map { CardPresentation.workspaceName($0.screens) } ?? "") 기록을 삭제할까요?",
             isPresented: Binding(get: { workspaceToDelete != nil },
                                  set: { if !$0 { workspaceToDelete = nil } }),
             titleVisibility: .visible,
@@ -82,10 +82,6 @@ struct SettingsView: View {
         } message: { workspace in
             Text("앱 \(workspace.appCount)개 · 창 위치 기록 \(workspace.windowCount)개가 지워집니다. 되돌릴 수 없습니다.")
         }
-    }
-
-    static func workspaceTitle(_ workspace: PlugbackController.WorkspaceSummary) -> String {
-        workspace.screens.map { CardPresentation.screenName($0) }.joined(separator: " + ")
     }
 
     private var generalSettings: some View {
@@ -133,13 +129,30 @@ struct SettingsView: View {
                     ForEach(controller.allWorkspaces) { workspace in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(Self.workspaceTitle(workspace))
+                                HStack(spacing: 6) {
+                                    Text(CardPresentation.workspaceName(workspace.screens))
+                                    if workspace.key == controller.currentWorkspace {
+                                        Text("지금 연결됨").font(.caption).foregroundStyle(.secondary)
+                                            .padding(.horizontal, 6).padding(.vertical, 1)
+                                            .background(.quaternary, in: Capsule())
+                                    }
+                                }
                                 Text("앱 \(workspace.appCount)개 · 복원 대상 \(workspace.enabledAppCount)개 · 창 위치 \(workspace.windowCount)개"
                                      + (workspace.savedBy.map { " · " + CardPresentation.sourceLabel(savedBy: $0, savedAt: workspace.savedAt) } ?? ""))
                                     .font(.caption).foregroundStyle(.secondary)
+                                if controller.saveFailedWorkspaces.contains(workspace.key) {
+                                    Label {
+                                        Text(CardPresentation.saveFailureNotice(workspace))
+                                    } icon: {
+                                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                                    }
+                                    .font(.caption)
+                                    Button("저장 다시 시도") { controller.retrySave(workspace.key) }
+                                        .disabled(controller.isRestoring)
+                                }
                             }
                             Spacer()
-                            Button("삭제", role: .destructive) { workspaceToDelete = workspace }
+                            Button("삭제…", role: .destructive) { workspaceToDelete = workspace }
                         }
                     }
                 }
@@ -208,8 +221,9 @@ private extension SettingsView {
     }
 }
 
+/// 일반이 먼저다 — 동작 설정이 표시 설정보다 앞선다. 모양(레이아웃·색) 선택값은 그대로 보존한다.
 enum SettingsPane: String, CaseIterable {
-    case appearance, general, workspaces, lab
+    case general, workspaces, appearance, lab
 
     var title: String {
         switch self {

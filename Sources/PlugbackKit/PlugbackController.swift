@@ -33,7 +33,7 @@ public enum CaptureNotice: Equatable, Sendable {
 
 /// restoreNow의 반환 — 실행되지 않은 경로도 성공과 구별된다.
 public enum RestoreOutcome: Equatable, Sendable {
-    /// 복원 요청이 한 바퀴 돌았다. 비어 있으면 이 작업 환경의 저장본이 없었다는 뜻.
+    /// 복원 요청의 결과. 저장본이 없거나 화면 변경으로 첫 판정 전에 멈췄으면 비어 있을 수 있다.
     case restored([RestoreResult])
     case notAuthorized
     case notConnected
@@ -119,7 +119,7 @@ public final class PlugbackController: ObservableObject {
             guard autoSave != oldValue else { return }
             defaults.set(autoSave, forKey: Keys.autoSave)
             library.setAutoSave(autoSave, currentSequence: observation.latestSequence)
-            if autoSave { Task { await collectCandidate() } }
+            if autoSave { Task { await collectCandidate() } } else { saveFailedWorkspaces.removeAll() } // 버린 이력은 다시 시도할 것도 없다
         }
     }
 
@@ -145,7 +145,13 @@ public final class PlugbackController: ObservableObject {
     }
 
     public var identityMismatch: Bool {
-        externalScreens.contains { resultsByScreen[$0.id]?.screenSkipReason == .fingerprintMismatch }
+        guard let key = currentWorkspace else { return false }
+        let saved = library.saved(for: key)
+        return requestResults(for: key).contains { result in
+            result.screenSkipReason == .fingerprintMismatch && externalScreens.contains {
+                $0.id == result.screenID && !RestoreEngine.isEligible(saved?.screen($0.id), on: $0)
+            }
+        }
     }
 
     /// 권한 판정 어댑터 — 앱이 주입한다 (US-010 AC-2). 기본 true — 페이크 없는 테스트 편의.
@@ -166,8 +172,19 @@ public final class PlugbackController: ObservableObject {
 
     private let library: WorkspaceLibrary
     private var libraryChanges: AnyCancellable?
-    @Published private var resultsByScreen: [String: RestoreResult] = [:]
+    /// 결과를 낸 마지막 실행 — 그 요청의 결과와 함께만 보인다.
+    private var lastRun: (requestID: Int, at: Date)?
+    /// 지금 작업 환경의 요청이 마지막으로 결과를 낸 시각. 다른 환경·이전 요청의 시각은 보이지 않는다.
     @Published public private(set) var lastRestoredAt: Date?
+
+    private var currentResultTime: Date? {
+        guard let request = currentRequest else { return nil }
+        if let lastRun, lastRun.requestID == request.id { return lastRun.at }
+        return restoreSession.results.isEmpty ? nil : request.startedAt
+    }
+    /// 떠날 때 저장하지 못한 작업 환경 (P5). 마지막 저장본과 저장 대기 이력은 그대로다 — 다음 연결은 이전 저장본으로 복원된다.
+    /// 「다시 시도」(`retrySave`)·그 환경의 다음 저장 성공이 지운다.
+    @Published public private(set) var saveFailedWorkspaces: Set<WorkspaceKey> = []
     public let diagnostics: DiagnosticsLog
 
     // MARK: - 카드 모델
@@ -285,7 +302,12 @@ public final class PlugbackController: ObservableObject {
             let labels = Self.screenLabels(for: externalScreens.map { ($0.id, $0.name, $0.portLocation) })
             targets = externalScreens.map { ($0.id, labels[$0.id] ?? ScreenLabel(name: $0.name)) }
         } else if case .remembered(let screenID, let name) = screenPresence {
-            targets = [(screenID, ScreenLabel(name: name))]
+            if let key = displayedKey, let snapshot = library.saved(for: key) ?? library.pending[key]?.snapshot {
+                let labels = Self.screenLabels(for: snapshot.screens.map { ($0.id, $0.name, $0.portLocation) })
+                targets = snapshot.screens.map { ($0.id, labels[$0.id] ?? ScreenLabel(name: $0.name)) }
+            } else {
+                targets = [(screenID, ScreenLabel(name: name))]
+            }
         } else {
             return []
         }
@@ -301,7 +323,10 @@ public final class PlugbackController: ObservableObject {
 
     private var displayedKey: WorkspaceKey? {
         if let currentWorkspace { return currentWorkspace }
-        if case .remembered(let screenID, _) = screenPresence { return rememberedKey ?? WorkspaceKey(screenIDs: [screenID]) }
+        if case .remembered(let screenID, _) = screenPresence {
+            return rememberedKey ?? library.allRecords.first { $0.key.contains(screenID) }?.key
+                ?? WorkspaceKey(screenIDs: [screenID])
+        }
         return nil
     }
 
@@ -342,7 +367,7 @@ public final class PlugbackController: ObservableObject {
                              presentApps: present, absentSavedApps: absent, excludedApps: excluded,
                              spaceGroups: projection?.spaceGroups ?? [],
                              spaceConfigurationDiffers: projection?.spaceConfigurationDiffers ?? false,
-                             lastResult: resultsByScreen[screenID])
+                             lastResult: requestResults(for: key).first { $0.screenID == screenID })
     }
 
     /// 화면 표시 이름 규칙 (P20): 같은 이름이 여럿이면 포트 위치로 구분하고, 위치까지 같거나 알 수 없으면 A/B를 붙인다.
@@ -460,7 +485,19 @@ public final class PlugbackController: ObservableObject {
     }
 
     public var lastResults: [RestoreResult] {
-        externalScreens.compactMap { resultsByScreen[$0.id] }.filter { $0.screenSkipReason == nil }
+        requestResults(for: currentWorkspace).filter { $0.screenSkipReason == nil }
+    }
+
+    /// 그 작업 환경 요청의 결과 — 화면 ID만으로 다른 환경·이전 요청의 결과를 섞지 않는다 (T4).
+    private func requestResults(for key: WorkspaceKey?) -> [RestoreResult] {
+        guard let key, restoreSession.request?.key == key else { return [] }
+        return restoreSession.results
+    }
+
+    /// 지금 작업 환경의 요청 — 다른 환경 요청의 남은 항목·확인 필요는 보이지 않고 재개되지도 않는다.
+    private var currentRequest: RestoreSession.Request? {
+        guard let request = restoreSession.request, request.key == currentWorkspace else { return nil }
+        return request
     }
 
     public var hasRestorableProfile: Bool {
@@ -482,7 +519,7 @@ public final class PlugbackController: ObservableObject {
 
     /// 현재 요청의 남은 항목 — 방문·이동·잠금 대기와 확인 필요.
     public var waitingItems: [WaitingItem] {
-        guard let request = restoreSession.request else { return [] }
+        guard let request = currentRequest else { return [] }
         let labels = Self.screenLabels(for: externalScreens.map { ($0.id, $0.name, $0.portLocation) })
         return request.source.placements.compactMap { placement in
             guard let outcome = request.outcomes[placement.id], !RestoreSession.isTerminal(outcome) else { return nil }
@@ -493,13 +530,13 @@ public final class PlugbackController: ObservableObject {
                                outcome: outcome)
         }
     }
-    public var hasOpenRestoreItems: Bool { restoreSession.hasOpenItems }
+    public var hasOpenRestoreItems: Bool { currentRequest != nil && restoreSession.hasOpenItems }
     public var confirmationCount: Int {
         waitingItems.filter { if case .needsConfirmation = $0.outcome { return true } else { return false } }.count
     }
 
     public var confirmationItems: [ConfirmationItem] {
-        guard let request = restoreSession.request else { return [] }
+        guard let request = currentRequest else { return [] }
         let labels = Self.screenLabels(for: externalScreens.map { ($0.id, $0.name, $0.portLocation) })
         return request.source.placements.compactMap { placement in
             guard let outcome = request.outcomes[placement.id],
@@ -521,7 +558,8 @@ public final class PlugbackController: ObservableObject {
 
     public var allWorkspaces: [WorkspaceSummary] {
         library.allRecords.map { record in
-            let screens = record.saved?.screens ?? record.key.screenIDs.map { ScreenRecord(id: $0, name: $0) }
+            let screens = record.saved?.screens ?? library.pending[record.key]?.snapshot.screens
+                ?? record.key.screenIDs.map { ScreenRecord(id: $0, name: $0) }
             let labels = Self.screenLabels(for: screens.map { ($0.id, $0.name, $0.portLocation) })
             return WorkspaceSummary(
                 key: record.key,
@@ -552,8 +590,18 @@ public final class PlugbackController: ObservableObject {
         guard let self else { return }
         Task { await self.missionControlClosed() }
     }
-    private var pendingSpaceRefresh = false
-    private var pendingWorkspaceRestart = false
+    /// 실행 중 도착해 실행 뒤로 미룬 일 — 실행이 끝나는 모든 경로에서 `processDeferred`가 처리한다.
+    /// 취소·제외·잠금·원시 화면 변경은 여기 오지 않는다 — 요청 세대와 실행 직전 게이트가 즉시 본다.
+    private struct Deferred {
+        /// 실행 중 작업 환경이 바뀌었다 — 새 환경을 자동 복원할지 (잠자기 억제 회차는 false).
+        var workspaceRestore: Bool?
+        var unlock = false
+        var desktop = false
+        var collect = false
+    }
+    private var deferred = Deferred()
+    /// 종료 저장을 applicationShouldTerminate에서 이미 정했다 — willTerminate는 다시 쓰지 않는다.
+    private var terminationPrepared = false
     /// 마지막으로 선택한 작업 환경 — 환경 이탈 때 이 환경의 이력을 확정한다.
     private var selectedKey: WorkspaceKey?
     private var rememberedKey: WorkspaceKey?
@@ -618,23 +666,21 @@ public final class PlugbackController: ObservableObject {
         let w = DisplayWatcher(
             provider: screenProvider,
             isLocked: { [weak self] in (self?.lockStateCheck() ?? .unlocked) == .locked },
-            onExternalScreensRemoved: { [weak self] _ in
-                guard let self else { return }
-                Task { await self.workspaceChanged() }
-            },
             onRawChange: { [weak self] in
                 guard let self else { return }
                 rawChangeCount += 1
-                isSettlingScreens = true
+                isSettlingScreens = true // 진행 중 복원의 실행 직전 게이트가 바로 본다
             },
             onScreenUnlocked: { [weak self] in
                 guard let self else { return }
                 Task { await self.screenUnlocked() }
-            }
-        ) { [weak self] in
-            guard let self else { return }
-            Task { await self.externalScreensAppeared() }
-        }
+            },
+            onSettled: { [weak self] settle in
+                guard let self else { return }
+                Task { await self.screensSettled(settle) }
+            },
+            onExternalScreensAppeared: {} // 등장·제거·무변화는 onSettled 하나로 받는다
+        )
         w.start()
         watcher = w
         syncScreens()
@@ -654,7 +700,7 @@ public final class PlugbackController: ObservableObject {
             let trigger = CollectTrigger(
                 moveSource: moveSource,
                 minimumInterval: collectInterval,
-                onTerminating: { [weak self] in _ = self?.library.confirmAll() },
+                onTerminating: { [weak self] in self?.willTerminate() },
                 onAppTerminated: { [weak self] bundleID in
                     guard let self else { return }
                     library.noteAppTerminated(bundleID, currentKey: currentWorkspace)
@@ -702,7 +748,8 @@ public final class PlugbackController: ObservableObject {
     }
 
     private func sessionEnvironment() -> RestoreSession.Environment {
-        RestoreSession.Environment(
+        let rawChanges = rawChangeCount
+        return RestoreSession.Environment(
             options: { [weak self] in self?.restoreOptions ?? RestoreOptions() },
             lockState: { [weak self] in self?.lockStateCheck() ?? .unlocked },
             spaceObservationEnabled: spaceObservationEnabled,
@@ -715,7 +762,12 @@ public final class PlugbackController: ObservableObject {
                 selfMoves[wsid] = Date()
                 touchedWindows.removeValue(forKey: wsid)
             },
-            diagnostics: { [weak self] event, key in self?.diagnostics.record(event, dedupKey: key) }
+            diagnostics: { [weak self] event, key in self?.diagnostics.record(event, dedupKey: key) },
+            // 화면이 바뀌는 중이거나 이 실행 뒤 바뀌었으면 옛 좌표로 보내지 않는다 — 안정화 뒤 이어간다 (처리안 1·5)
+            screensChanged: { [weak self] in
+                guard let self else { return true }
+                return isSettlingScreens || rawChangeCount != rawChanges
+            }
         )
     }
 
@@ -727,19 +779,37 @@ public final class PlugbackController: ObservableObject {
 
     // MARK: - 화면 이벤트
 
-    // internal — DisplayWatcher 콜백. 테스트가 직접 호출한다.
+    // internal — 테스트가 직접 호출한다.
     func externalScreensAppeared() async {
         await workspaceChanged()
     }
 
-    /// 안정된 화면 조합이 바뀌었다 — 떠나는 환경의 이력을 확정하고, 새 환경을 선택하며, 자동 모드면 그 환경의 저장본으로 새 요청을 시작한다 (D5).
-    func workspaceChanged() async {
+    /// 안정화 한 회차 — DisplayWatcher가 집합 변화와 무관하게 매번 알린다 (T1). internal — 테스트가 직접 호출한다.
+    func screensSettled(_ settle: DisplayWatcher.Settle) async {
+        switch settle {
+        case .unchanged: await workspaceChanged(automaticRestore: false) // 해상도·덮개 변화로는 복원하지 않는다 (US-009 AC-4)
+        case .changed(let automaticRestore): await workspaceChanged(automaticRestore: automaticRestore)
+        case .deferredUntilUnlock: break // 해제 뒤 다시 안정화되어 온다 — 그때까지 수집·조작은 멈춰 있다
+        }
+    }
+
+    /// 안정된 화면 조합을 반영한다 (D5). 바뀌었으면 떠나는 환경의 이력 확정·옛 요청 취소·새 환경 선택을 바로 한다.
+    /// 새 환경의 자동 복원만 잠자기 억제 회차에서 빼고, 진행 중 실행이 있으면 그 뒤로 미룬다 (US-009 AC-5, G05).
+    func workspaceChanged(automaticRestore: Bool = true) async {
         syncScreens()
-        isSettlingScreens = false
+        // 이전 회차의 통지가 늦게 도착해도, 새 원시 변경의 안정화 게이트는 열지 않는다.
+        isSettlingScreens = watcher?.isSettling ?? false
         let previous = selectedKey
         let next = currentWorkspace
         if previous != next {
-            if let previous, autoSave { _ = library.confirm(key: previous) }
+            if let previous, autoSave, !isSaveBlocked {
+                // 실패는 그 환경 키로 남긴다 — 이전 저장본·이력은 그대로고 「다시 시도」가 이력을 저장한다 (P5)
+                if library.confirm(key: previous) == .failed {
+                    saveFailedWorkspaces.insert(previous)
+                } else {
+                    saveFailedWorkspaces.remove(previous)
+                }
+            }
             library.noteWorkspaceChanged() // 화면 구성 변경으로 macOS가 옮긴 창을 사용자의 내장 이동으로 보지 않는다
             if let request = restoreSession.request, request.key != next {
                 restoreSession.cancel(reason: .workspaceChanged)
@@ -749,22 +819,16 @@ public final class PlugbackController: ObservableObject {
             if let next { rememberedKey = next }
             touchedWindows.removeAll()
             restoreLandings.removeAll()
+            deferred.workspaceRestore = automaticRestore
         }
         await refreshCollectTargets()
         await refreshProjection()
-        guard next != nil, restoreMode == .automatic, checkAuthorization() else { return }
-        if isRestoring {
-            pendingWorkspaceRestart = true // 진행 중 복원이 끝난 직후 새 환경으로 다시 시작한다
-            return
-        }
-        guard previous != next || pendingWorkspaceRestart else { return }
-        pendingWorkspaceRestart = false
-        guard let key = next, library.saved(for: key) != nil else { return }
-        _ = await performRestore(origin: .automatic, key: key)
+        await processDeferred()
     }
 
     func screenUnlocked() async {
-        guard !isRestoring, restoreSession.hasOpenItems else { return }
+        guard restoreSession.hasOpenItems else { return }
+        if isRestoring || isSettlingScreens { deferred.unlock = true; return } // 실행·안정화 뒤 재개한다
         syncScreens()
         guard isConnected, checkAuthorization(), let key = currentWorkspace,
               restoreSession.request?.key == key else { return }
@@ -787,6 +851,7 @@ public final class PlugbackController: ObservableObject {
         } else if case .connected(let last, _) = screenPresence {
             screenPresence = .remembered(screenID: last.id, name: last.name)
         }
+        publishResults()
     }
 
     private func determineSpacesSupport(_ snapshot: SpaceSnapshot?) -> SpacesSupport {
@@ -806,6 +871,7 @@ public final class PlugbackController: ObservableObject {
         captureNotice = nil
         guard checkAuthorization() else { return .notAuthorized }
         guard !isRestoring else { return .restoringInProgress }
+        guard !isSettlingScreens else { return .notConnected }
         guard !library.isSaveBlocked else { return .saveBlocked }
         syncScreens()
         guard let key = currentWorkspace else { return .notConnected }
@@ -832,6 +898,7 @@ public final class PlugbackController: ObservableObject {
         guard library.capture(key: key, screens: externalScreens, sample: sample, snapshot: snapshot) else {
             return .saveFailed
         }
+        saveFailedWorkspaces.remove(key) // 이력 대신 지금 배치가 저장됐다
         // 사람이 지금 배치를 다시 선언했으므로 이전 복원 요청의 남은 작업은 더 이상 유효하지 않다.
         restoreSession.cancel(reason: .newSave)
         publishResults()
@@ -848,13 +915,16 @@ public final class PlugbackController: ObservableObject {
     /// 수집 — 지금 배치를 저장 대기 이력에 담고 창 연결·닫힘을 갱신한다. 파일에는 닿지 않는다 (제외 목록 제외).
     /// internal — 테스트가 알림 없이 직접 호출한다.
     func collectCandidate() async {
-        guard !isSaveBlocked, !isRestoring, checkAuthorization(), watcher?.isSettling != true else { return }
+        guard !isSaveBlocked else { return }
+        if isRestoring || deferred.workspaceRestore != nil { deferred.collect = true; return } // 예약된 복원까지 마친 뒤 다시 모은다
+        // 화면 안정화 중에는 이전 환경의 마지막 유효 이력을 지킨다 (F-01.2) — 컨트롤러가 안정화를 반영할 때까지
+        guard checkAuthorization(), !isSettlingScreens else { return }
         syncScreens()
         let key = currentWorkspace
         let changeCountBefore = rawChangeCount
         let sample = await observation.sample(includeSpaces: spaceObservationEnabled)
-        guard !isRestoring, rawChangeCount == changeCountBefore, currentWorkspace == key,
-              watcher?.isSettling != true else { return }
+        if isRestoring || deferred.workspaceRestore != nil { deferred.collect = true; return }
+        guard rawChangeCount == changeCountBefore, currentWorkspace == key, !isSettlingScreens else { return }
         guard let key else {
             library.trackLinks(sample: sample, currentKey: nil)
             return
@@ -905,13 +975,36 @@ public final class PlugbackController: ObservableObject {
     }
 
     /// 정상 종료 전 — 자동 저장 ON이고 저장할 변경이 있으면 마지막 유효 이력을 저장한다 (4.4절).
+    /// 종료 저장은 applicationShouldTerminate에서 이 호출과 실패 안내의 선택으로만 정한다 — willTerminate는 다시 쓰지 않는다.
     public func prepareForTermination() -> TerminationOutcome {
+        terminationPrepared = true
         restoreSession.end(reason: .newRequest)
         guard autoSave, !isSaveBlocked else { return .proceed }
         switch library.confirmAll() {
         case .failed: return .saveFailed
         case .saved, .nothingToSave, .disabled: return .proceed
         }
+    }
+
+    /// willTerminate — applicationShouldTerminate를 거치지 않은 종료에서만 마지막으로 확정한다.
+    /// 거쳤다면 저장 여부는 이미 정했다 — 「저장하지 않고 종료」 뒤에 다시 쓰지 않는다 (P5). internal — 테스트가 직접 호출한다.
+    func willTerminate() {
+        guard !terminationPrepared else { return }
+        _ = library.confirmAll()
+    }
+
+    /// 떠날 때 저장하지 못한 작업 환경의 저장 대기 이력을 다시 저장한다 — 연결 여부와 무관하다 (P5). 성공하면 true.
+    @discardableResult
+    public func retrySave(_ key: WorkspaceKey) -> Bool {
+        guard !isRestoring else { return false }
+        let outcome = library.confirm(key: key)
+        guard outcome != .failed else { return false }
+        if outcome == .saved, restoreSession.request?.key == key {
+            restoreSession.cancel(reason: .newSave)
+            publishResults()
+        }
+        saveFailedWorkspaces.remove(key)
+        return true
     }
 
     /// 저장할 변경이 남아 있는가 — 종료 확인 문구용.
@@ -971,8 +1064,8 @@ public final class PlugbackController: ObservableObject {
 
     private func desktopStateChanged() async {
         guard spaceObservationEnabled else { return }
-        if isRestoring {
-            pendingSpaceRefresh = true
+        if isRestoring || isSettlingScreens {
+            deferred.desktop = true // 실행·안정화 뒤 같은 재판정을 한다 (T2)
             return
         }
         syncScreens()
@@ -983,7 +1076,7 @@ public final class PlugbackController: ObservableObject {
                     // Space 알림 뒤 첫 snapshot이 직전 Space로 안정돼 보일 수 있다.
                     // 같은 정착 간격 뒤 딱 한 번만 다시 읽고, 주기 폴링은 만들지 않는다.
                     try? await Task.sleep(nanoseconds: UInt64(activeSpaceDebounceInterval * 1_000_000_000))
-                    if isRestoring { pendingSpaceRefresh = true; return }
+                    if isRestoring || isSettlingScreens { deferred.desktop = true; return }
                     syncScreens()
                     guard isConnected, checkAuthorization() else { return }
                 }
@@ -1007,54 +1100,64 @@ public final class PlugbackController: ObservableObject {
     }
 
     private func performRestore(origin: RestoreSession.Origin, key: WorkspaceKey) async -> [RestoreResult] {
-        isRestoring = true
-        pendingSpaceRefresh = false
-        var latest: [RestoreResult] = []
-        var runKey = key
-        var runOrigin = origin
-        repeat {
-            pendingWorkspaceRestart = false
-            let results = await restoreSession.start(origin: runOrigin, key: runKey, screens: externalScreens,
-                                                     environment: sessionEnvironment())
-            latest = results ?? []
-            publishResults()
-            if pendingWorkspaceRestart, restoreMode == .automatic {
-                syncScreens()
-                guard let next = currentWorkspace, library.saved(for: next) != nil else { break }
-                runKey = next
-                runOrigin = .automatic
-            }
-        } while pendingWorkspaceRestart && isConnected
-        pendingWorkspaceRestart = false
-        finishRestore()
-        await refreshProjection()
-        return latest
+        deferred.workspaceRestore = nil // 지금 환경의 새 요청이 미뤄 둔 자동 복원을 대신한다
+        return await execute {
+            await restoreSession.start(origin: origin, key: key, screens: externalScreens, environment: sessionEnvironment())
+        }
     }
 
     private func performResume(scope: RestoreSession.Scope) async -> [RestoreResult] {
-        isRestoring = true
-        pendingSpaceRefresh = false
-        let results = await restoreSession.resume(scope: scope, screens: externalScreens, environment: sessionEnvironment())
-        publishResults()
-        finishRestore()
-        await refreshProjection()
-        return results ?? lastResults
+        await execute {
+            await restoreSession.resume(scope: scope, screens: externalScreens, environment: sessionEnvironment())
+        }
     }
 
-    private func finishRestore() {
+    /// 복원·재개 실행의 유일한 경로 — 끝나는 모든 경로에서 실행 중 미룬 일을 처리한다 (T2·T5).
+    private func execute(_ run: () async -> [RestoreResult]?) async -> [RestoreResult] {
+        isRestoring = true
+        let results = await run()
+        // 후속 환경의 새 요청이 시작되기 전에, 이번 명령의 취소 결과까지 고정한다.
+        let reply = results ?? restoreSession.results
         isRestoring = false
         // 복원이 옮긴(또는 옮기려다 실패한) 창의 착지 위치를 기억한다 — 다음 수집이 이를 새 이력으로 승격하지 않는다.
         for (wsid, frame) in restoreSession.landings { restoreLandings[wsid] = frame }
+        if results != nil, let id = restoreSession.request?.id { lastRun = (id, Date()) }
+        publishResults()
+        await refreshProjection()
+        await processDeferred()
+        return reply
     }
 
-    private func publishResults() {
-        // 결과 수명 = 저장본 수명 — 삭제된 작업 환경의 결과를 되살리지 않는다.
-        guard let key = restoreSession.request?.key, library.record(for: key) != nil else { return }
-        let results = restoreSession.results
-        for result in results {
-            resultsByScreen[result.screenID] = result
+    /// 실행·안정화가 끝난 뒤 미룬 일을 이 순서로 처리한다 — 작업 환경(D5) → 잠금 해제(I10) → 화면 변경으로 멈춘 항목
+    /// → Space 재판정(I8) → 수집(I6). 한 단계가 새 실행을 시작하면 그 실행의 끝에서 다시 온다.
+    private func processDeferred() async {
+        while !isRestoring, !isSettlingScreens {
+            if let automatic = deferred.workspaceRestore {
+                deferred.workspaceRestore = nil
+                guard automatic, restoreMode == .automatic, let key = currentWorkspace,
+                      library.saved(for: key) != nil, checkAuthorization() else { continue }
+                _ = await performRestore(origin: .automatic, key: key)
+            } else if deferred.unlock {
+                deferred.unlock = false
+                await screenUnlocked()
+            } else if restoreSession.hasPausedItems, currentRequest != nil, checkAuthorization() {
+                _ = await performResume(scope: .paused)
+            } else if deferred.desktop {
+                deferred.desktop = false
+                await desktopStateChanged()
+            } else if deferred.collect {
+                deferred.collect = false
+                await collectCandidate()
+            } else {
+                return
+            }
         }
-        if !results.isEmpty { lastRestoredAt = Date() }
+    }
+
+    /// 결과는 요청에서 바로 읽는다 — 삭제한 작업 환경의 요청은 버리므로 결과도 되살아나지 않는다.
+    private func publishResults() {
+        let nextTime = currentResultTime
+        if lastRestoredAt != nextTime { lastRestoredAt = nextTime }
         objectWillChange.send()
     }
 
@@ -1066,9 +1169,9 @@ public final class PlugbackController: ObservableObject {
             restoreSession.drop() // 결과 수명 = 저장본 수명 — 전생의 결과를 남기지 않는다
         }
         for screenID in key.screenIDs {
-            resultsByScreen.removeValue(forKey: screenID)
             projectionsByScreen.removeValue(forKey: screenID)
         }
+        saveFailedWorkspaces.remove(key)
         if rememberedKey == key { rememberedKey = nil }
         Task { await refreshProjection() }
     }
@@ -1097,7 +1200,11 @@ public final class PlugbackController: ObservableObject {
         let targets: [(screenID: String, screen: ScreenInfo?)] = if isConnected {
             externalScreens.map { ($0.id, $0) }
         } else if case .remembered(let screenID, _) = screenPresence {
-            [(screenID, nil)]
+            if let key = displayedKey, let saved = library.saved(for: key) ?? library.pending[key]?.snapshot {
+                saved.screens.map { ($0.id, nil) }
+            } else {
+                [(screenID, nil)]
+            }
         } else {
             []
         }

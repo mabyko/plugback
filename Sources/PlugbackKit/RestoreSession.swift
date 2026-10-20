@@ -9,7 +9,8 @@ final class RestoreSession {
     enum Origin: Equatable, Sendable { case automatic, user }
 
     /// 어떤 항목을 다시 판정할지. 완료한 창은 어느 범위에서도 다시 옮기지 않는다.
-    enum Scope { case all, waiting, user, unlock }
+    /// paused는 화면 변경으로 보내지 못한 항목만이다 — 확인 필요를 사용자 재개 없이 다시 판정하지 않는다.
+    enum Scope { case all, waiting, user, unlock, paused }
 
     struct Environment {
         var options: () -> RestoreOptions
@@ -20,14 +21,18 @@ final class RestoreSession {
         /// Plugback이 직접 옮기기 직전 알림 — 자기 이동을 사용자 조작으로 오인하지 않기 위해서다.
         var willMove: (CGWindowID?) -> Void
         var diagnostics: (DiagnosticEvent, String?) -> Void
+        /// 화면 구성이 바뀌는 중이거나 이 실행이 시작된 뒤 바뀌었다 — 옛 좌표로 조작을 보내지 않는다.
+        var screensChanged: () -> Bool
 
         init(options: @escaping () -> RestoreOptions, lockState: @escaping () -> LockState = { .unlocked },
              spaceObservationEnabled: Bool, isTouched: @escaping (CGWindowID, Date) -> Bool = { _, _ in false },
              willMove: @escaping (CGWindowID?) -> Void = { _ in },
-             diagnostics: @escaping (DiagnosticEvent, String?) -> Void = { _, _ in }) {
+             diagnostics: @escaping (DiagnosticEvent, String?) -> Void = { _, _ in },
+             screensChanged: @escaping () -> Bool = { false }) {
             self.options = options; self.lockState = lockState
             self.spaceObservationEnabled = spaceObservationEnabled
             self.isTouched = isTouched; self.willMove = willMove; self.diagnostics = diagnostics
+            self.screensChanged = screensChanged
         }
     }
 
@@ -45,10 +50,6 @@ final class RestoreSession {
         /// 실행 중 판정된 후보 창 — 확인 화면이 보여준다. 제목은 표시용이며 저장하지 않는다.
         var candidatesByPlacement: [UUID: [WindowInfo]] = [:]
 
-        var openPlacementIDs: [UUID] {
-            source.placements.map(\.id).filter { !RestoreSession.isTerminal(outcomes[$0]) }
-        }
-        // Request는 세션 안에서만 만들어지고 읽힌다 — nonisolated 판정 하나만 밖에서 부른다.
     }
 
     private let observation: DesktopObservation
@@ -60,6 +61,8 @@ final class RestoreSession {
     private var generation = 0
     /// 이번 실행이 옮겼거나 옮기려다 실패한 창의 실제 착지 위치 — 컨트롤러가 다음 수집에서 새 이력으로 승격하지 않는다 (R5).
     private(set) var landings: [CGWindowID: CGRect] = [:]
+    /// 화면 변경으로 보내지 못한 항목 — 결과는 그대로 두고, 화면이 안정되면 같은 요청에서 이어간다.
+    private var pausedIDs: Set<UUID> = []
 
     init(observation: DesktopObservation, gateway: WindowGateway, library: WorkspaceLibrary) {
         self.observation = observation
@@ -76,7 +79,22 @@ final class RestoreSession {
         }
     }
 
-    var hasOpenItems: Bool { !(request?.openPlacementIDs.isEmpty ?? true) }
+    private func openPlacementIDs(in current: Request) -> Set<UUID> {
+        Set(current.source.placements.filter {
+            current.screenSkips[$0.screenID] == nil && library.isEnabled($0.bundleID, in: current.key)
+                && !Self.isTerminal(current.outcomes[$0.id])
+        }.map(\.id))
+    }
+
+    var hasOpenItems: Bool {
+        guard let current = request else { return false }
+        return !openPlacementIDs(in: current).isEmpty
+    }
+
+    var hasPausedItems: Bool {
+        guard let request else { return false }
+        return !pausedIDs.isDisjoint(with: openPlacementIDs(in: request))
+    }
 
     var isActive: Bool { request != nil }
 
@@ -109,6 +127,7 @@ final class RestoreSession {
         guard let source = library.saved(for: key) else { return nil }
         cancel(reason: .newRequest)
         nextID += 1
+        pausedIDs = []
         request = Request(id: nextID, origin: origin, key: key, source: source, startedAt: Date(), screens: screens)
         return await run(scope: .all, screens: screens, environment: environment)
     }
@@ -124,7 +143,7 @@ final class RestoreSession {
         guard var current = request else { return }
         if onlyAutomatic, current.origin != .automatic { return }
         generation &+= 1
-        for id in current.openPlacementIDs { current.outcomes[id] = .cancelled(reason) }
+        for id in openPlacementIDs(in: current) { current.outcomes[id] = .cancelled(reason) }
         request = current
     }
 
@@ -176,10 +195,11 @@ final class RestoreSession {
 
     // MARK: - 실행
 
-    private enum Gate { case proceed, hold(HoldReason), invalid }
+    private enum Gate { case proceed, hold(HoldReason), pause, invalid }
 
     private func gate(_ id: Int, _ environment: Environment) -> Gate {
         guard request?.id == id, generation == activeGeneration else { return .invalid }
+        if environment.screensChanged() { return .pause }
         switch environment.lockState() {
         case .unlocked: return .proceed
         case .locked: return .hold(.screenLocked)
@@ -201,6 +221,8 @@ final class RestoreSession {
             case .unlock:
                 if case .held = outcome { return true }
                 return false
+            case .paused:
+                return pausedIDs.contains(id)
             }
         }
     }
@@ -215,6 +237,7 @@ final class RestoreSession {
         current.screens = screens
         request = current
         let targetIDs = targets(in: scope, of: current)
+        if scope == .paused { pausedIDs = [] }
         guard !targetIDs.isEmpty else { return nil }
         let targetSet = Set(targetIDs)
         landings.removeAll()
@@ -254,15 +277,22 @@ final class RestoreSession {
             if !creations.isEmpty, pass < 2 {
                 var performed = false
                 for (bundleID, creation) in creations.sorted(by: { $0.key < $1.key }) {
+                    let unsent = targetIDs.filter { current.outcomes[$0].map(Self.isTerminal) != true }
                     switch gate(id, environment) {
                     case .invalid: return nil
                     case .hold(let reason):
-                        hold(reason, ids: targetIDs.filter { current.outcomes[$0].map(Self.isTerminal) != true }, environment: environment)
+                        hold(reason, ids: unsent, environment: environment)
+                        return results
+                    case .pause:
+                        pausedIDs.formUnion(unsent)
                         return results
                     case .proceed: break
                     }
                     let latest = environment.options()
-                    guard latest.reopenClosedApps else { continue }
+                    guard latest.reopenClosedApps, library.isEnabled(bundleID, in: current.key),
+                          current.source.placements.contains(where: {
+                              $0.bundleID == bundleID && unsent.contains($0.id)
+                          }) else { continue }
                     let kind: String
                     let ok: Bool
                     switch creation {
@@ -282,6 +312,12 @@ final class RestoreSession {
                         var opened = true
                         for _ in 0..<missing where opened {
                             guard case .proceed = gate(id, environment) else { opened = false; break }
+                            let latest = environment.options()
+                            guard latest.reopenClosedApps, latest.openMissingWindows,
+                                  let live = request, library.isEnabled(bundleID, in: live.key),
+                                  live.source.placements.contains(where: {
+                                      $0.bundleID == bundleID && !Self.isTerminal(live.outcomes[$0.id])
+                                  }) else { break }
                             opened = await gateway.openAdditionalWindow(bundleID: bundleID)
                         }
                         ok = opened
@@ -308,6 +344,7 @@ final class RestoreSession {
             for key in current.creationAttempted { creationFailedApps.insert(String(key.split(separator: "|")[0])) }
             var moves: [(UUID, Int, CGWindowID?, CGRect, Bool)] = []
             for placement in current.source.placements where targetSet.contains(placement.id) {
+                guard !Self.isTerminal(current.outcomes[placement.id]) else { continue }
                 guard plan.screenSkips[placement.screenID] == nil else { continue }
                 guard library.isEnabled(placement.bundleID, in: current.key) else {
                     // 제외한 앱의 자리는 결과에 넣지 않는다. 진행 중 제외됐다면 그 항목만 끝낸다 (RQ12).
@@ -351,9 +388,14 @@ final class RestoreSession {
                 case .hold(let reason):
                     hold(reason, ids: moves[index...].map(\.0), environment: environment)
                     return results
+                case .pause:
+                    pausedIDs.formUnion(moves[index...].map(\.0))
+                    return results
                 case .proceed: break
                 }
                 guard var live = request else { return nil }
+                // 실행 중 제외·저장 기록 삭제로 끝난 항목은 보내지 않는다 (RQ12). 이미 보낸 조작은 되돌린 척하지 않는다.
+                if Self.isTerminal(live.outcomes[placementID]) { continue }
                 if live.origin == .automatic, let wsid, environment.isTouched(wsid, live.startedAt) {
                     live.outcomes[placementID] = .skipped(.userInteraction)
                     request = live
