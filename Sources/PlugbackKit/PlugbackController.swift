@@ -797,7 +797,8 @@ public final class PlugbackController: ObservableObject {
     /// 새 환경의 자동 복원만 잠자기 억제 회차에서 빼고, 진행 중 실행이 있으면 그 뒤로 미룬다 (US-009 AC-5, G05).
     func workspaceChanged(automaticRestore: Bool = true) async {
         syncScreens()
-        isSettlingScreens = false
+        // 이전 회차의 통지가 늦게 도착해도, 새 원시 변경의 안정화 게이트는 열지 않는다.
+        isSettlingScreens = watcher?.isSettling ?? false
         let previous = selectedKey
         let next = currentWorkspace
         if previous != next {
@@ -1199,7 +1200,11 @@ public final class PlugbackController: ObservableObject {
         let targets: [(screenID: String, screen: ScreenInfo?)] = if isConnected {
             externalScreens.map { ($0.id, $0) }
         } else if case .remembered(let screenID, _) = screenPresence {
-            [(screenID, nil)]
+            if let key = displayedKey, let saved = library.saved(for: key) ?? library.pending[key]?.snapshot {
+                saved.screens.map { ($0.id, nil) }
+            } else {
+                [(screenID, nil)]
+            }
         } else {
             []
         }

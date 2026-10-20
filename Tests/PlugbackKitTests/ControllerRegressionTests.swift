@@ -117,6 +117,55 @@ final class ControllerRegressionTests: XCTestCase {
         XCTAssertTrue(gateway.moveCalls.isEmpty, "해상도 변경만으로 복원하지 않는다")
     }
 
+    // MARK: - PR 검토 · 늦은 안정화와 연결 해제된 다중 화면
+
+    func testOlderSettleDoesNotOpenTheGateDuringANewerRawChange() async {
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, extA]
+        let controller = PlugbackController(gateway: gateway, screenProvider: screens,
+                                            store: ProfileStore(directory: dir), defaults: defaults())
+        controller.startWatching()
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        let raised = await waitUntil(timeout: 1) { controller.isSettlingScreens }
+        XCTAssertTrue(raised)
+
+        // 새 원시 변경이 디바운스 중인 동안, 이전 회차의 MainActor 작업이 늦게 도착한다.
+        await controller.screensSettled(.unchanged)
+        XCTAssertTrue(controller.isSettlingScreens, "다음 회차의 안정화 게이트를 이전 통지가 열면 안 된다")
+        let capture = await controller.captureNow()
+        XCTAssertEqual(capture, .notConnected)
+        let cleared = await waitUntil(timeout: 4) { !controller.isSettlingScreens }
+        XCTAssertTrue(cleared, "새 회차가 끝나면 게이트가 정상적으로 열린다")
+    }
+
+    func testDisconnectedWorkspaceKeepsSpaceGroupsForEveryScreen() async throws {
+        let gateway = FakeWindowGateway()
+        let screens = FakeScreenProvider()
+        screens.screensList = [builtin, extA, extB]
+        let reader = RegressionSpaceReader()
+        let key = WorkspaceKey(screenIDs: [extA.id, extB.id])
+        let snapshot = WorkspaceSnapshot(key: key, screens: [extA, extB].map {
+            ScreenRecord(id: $0.id, name: $0.name,
+                         regularSpaces: [SpaceHint(opaqueName: "saved-\($0.id)", localOrderHint: 1)])
+        }, placements: [], savedAt: Date())
+        let store = ProfileStore(directory: dir)
+        try store.save([key: WorkspaceRecord(key: key, apps: [], saved: snapshot)])
+        let controller = PlugbackController(gateway: gateway, screenProvider: screens,
+                                            store: store, defaults: defaults(), spaceReader: reader)
+        await controller.cardOpened()
+        screens.screensList = [builtin]
+        await controller.workspaceChanged()
+        XCTAssertEqual(controller.sections.count, 2)
+        XCTAssertTrue(controller.sections.allSatisfy { $0.spaceGroups.count == 1 })
+
+        let restarted = PlugbackController(gateway: gateway, screenProvider: screens,
+                                           store: store, defaults: defaults(), spaceReader: reader)
+        await restarted.cardOpened()
+        XCTAssertEqual(restarted.sections.count, 2)
+        XCTAssertTrue(restarted.sections.allSatisfy { $0.spaceGroups.count == 1 })
+    }
+
     // MARK: - T2 · 복원 실행 중 Space 방문
 
     func testSpaceVisitDuringARunningRestoreIsHandledRightAfterTheRun() async {

@@ -141,8 +141,12 @@ struct SettingsView: View {
                                      + (workspace.savedBy.map { " · " + CardPresentation.sourceLabel(savedBy: $0, savedAt: workspace.savedAt) } ?? ""))
                                     .font(.caption).foregroundStyle(.secondary)
                                 if controller.saveFailedWorkspaces.contains(workspace.key) {
-                                    Text(CardPresentation.saveFailureNotice(workspace))
-                                        .font(.caption).foregroundStyle(.orange)
+                                    Label {
+                                        Text(CardPresentation.saveFailureNotice(workspace))
+                                    } icon: {
+                                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                                    }
+                                    .font(.caption)
                                     Button("저장 다시 시도") { controller.retrySave(workspace.key) }
                                         .disabled(controller.isRestoring)
                                 }
